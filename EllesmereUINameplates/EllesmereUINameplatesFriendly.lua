@@ -284,10 +284,10 @@ local function ShowNPCOverlay(nameplate, unit)
     -- Set name text
     local unitName = UnitName(unit) or ""
     overlay.name:SetText(unitName)
-    overlay.name:SetWidth(NPC_OVERLAY_WIDTH)
-    overlay.name:SetWordWrap(true)
+    overlay.name:SetWidth(0)
+    overlay.name:SetWordWrap(false)
     overlay.name:SetNonSpaceWrap(false)
-    overlay.name:SetMaxLines(0)
+    overlay.name:SetMaxLines(1)
     -- Apply our font
     local font = GetFont()
     overlay.name:SetFont(font, NPC_OVERLAY_FONT_SIZE, GetNPOutline())
@@ -1032,6 +1032,9 @@ function ns.UpdateFriendlyNameplateSystem()
     local nameOnly     = IsNameOnlyMode()           -- name-only mode
 
     -- In follower dungeons, force-hide friendly nameplates via CVars.
+    -- In instances (dungeons/raids/scenarios/arenas/PvP), force-hide
+    -- friendly NPC nameplates because GetNamePlateForUnit returns nil
+    -- for protected frames and our suppression can't run.
     -- SetCVar for nameplate CVars is protected in combat; skip to avoid taint.
     -- Friendly player CVars are only touched when the user has EUI managing
     -- friendly player nameplates. When disabled we leave those CVars alone
@@ -1040,11 +1043,19 @@ function ns.UpdateFriendlyNameplateSystem()
     if not InCombatLockdown() and SetCVar then
         local fp = FP()
         local euiManagesPlayers = fp and (fp.showFriendlyPlayers ~= false)
+        local _, iType = GetInstanceInfo()
+        local inInstance = (iType == "party" or iType == "raid" or iType == "scenario" or iType == "arena" or iType == "pvp")
         if IsInFollowerDungeon() then
             if euiManagesPlayers then
                 pcall(SetCVar, "nameplateShowFriendlyPlayers", 0)
                 pcall(SetCVar, "nameplateShowFriends", 0)
             end
+            pcall(SetCVar, "nameplateShowFriendlyNPCs", 0)
+            pcall(SetCVar, "nameplateShowFriendlyNpcs", 0)
+        elseif inInstance then
+            -- NPC plates only: force off in instances since our frame
+            -- suppression doesn't work on protected nameplate frames.
+            -- Player CVars are unaffected.
             pcall(SetCVar, "nameplateShowFriendlyNPCs", 0)
             pcall(SetCVar, "nameplateShowFriendlyNpcs", 0)
         else

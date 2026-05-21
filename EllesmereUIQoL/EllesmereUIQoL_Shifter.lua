@@ -107,8 +107,8 @@ local function SavePos(name, point, relPoint, x, y)
     EllesmereUIDB.shifterPositions[name] = {
         point = point, relPoint = relPoint, x = x, y = y,
     }
-    if EllesmereUI.InvalidatePageCache then
-        EllesmereUI:InvalidatePageCache()
+    if EllesmereUI.RefreshPage then
+        EllesmereUI:RefreshPage(true)
     end
 end
 

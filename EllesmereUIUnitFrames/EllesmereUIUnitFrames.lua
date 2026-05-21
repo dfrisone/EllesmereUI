@@ -2434,9 +2434,15 @@ local function CreatePowerBar(frame, unit, settings)
     local powerPos = settings.powerPosition or "below"
 
     local power = CreateFrame("StatusBar", nil, frame)
-    power:SetFrameStrata(frame:GetFrameStrata())
     local isDetached = (powerPos == "detached_top" or powerPos == "detached_bottom")
-    -- Detached power bar must render above the border (level +10)
+    if isDetached then
+        -- Bump strata so the detached power bar renders above the border
+        -- regardless of frame level. Frame level within the same strata is
+        -- fragile (oUF and absorb bar code can reset it).
+        power:SetFrameStrata("MEDIUM")
+    else
+        power:SetFrameStrata(frame:GetFrameStrata())
+    end
     power:SetFrameLevel(frame:GetFrameLevel() + (isDetached and 12 or 3))
     local pw = settings.frameWidth
     if isDetached and (settings.powerWidth or 0) > 0 then

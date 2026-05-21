@@ -56,19 +56,38 @@ function CategoryManager:InitCategories()
     local userOrder = EllesmereUIDB.bagCategoryOrder
 
     -- Build ordered list of default names
+    -- Index DEFAULT_CATEGORIES by name for fast lookup
+    local defByName = {}
+    for _, def in ipairs(DEFAULT_CATEGORIES) do
+        defByName[def.name] = def
+    end
+    -- Index user-created custom categories by key
+    local userCatByKey = {}
+    local userCats = EllesmereUIDB.bagUserCategories
+    if userCats then
+        for _, uc in ipairs(userCats) do
+            userCatByKey[uc.key] = uc
+        end
+    end
+
     local orderedDefs = {}
     if userOrder and #userOrder > 0 then
-        -- Use saved order, appending any new defaults not in the list
+        -- Use saved order, restoring both built-in and custom categories
+        -- at their saved positions
         local seen = {}
         for _, defName in ipairs(userOrder) do
-            for _, def in ipairs(DEFAULT_CATEGORIES) do
-                if def.name == defName then
-                    orderedDefs[#orderedDefs + 1] = def
-                    seen[defName] = true
-                    break
-                end
+            local def = defByName[defName]
+            if def then
+                orderedDefs[#orderedDefs + 1] = def
+                seen[defName] = true
+            elseif userCatByKey[defName] then
+                -- Custom category placeholder: mark with _isCustom so the
+                -- category builder below can create it at this position
+                orderedDefs[#orderedDefs + 1] = { name = defName, _isCustom = true }
+                seen[defName] = true
             end
         end
+        -- Append any new built-in defaults not in the saved order
         for _, def in ipairs(DEFAULT_CATEGORIES) do
             if not seen[def.name] then
                 if def.noMove then
@@ -108,47 +127,64 @@ function CategoryManager:InitCategories()
     for _, d in ipairs(pinned) do orderedDefs[#orderedDefs + 1] = d end
     for _, d in ipairs(rest) do orderedDefs[#orderedDefs + 1] = d end
 
-    -- Build runtime categories from ordered defaults + user state
+    -- Build runtime categories from ordered defaults + user state.
+    -- Custom category placeholders (_isCustom) are expanded inline so
+    -- they keep their saved position relative to built-in categories.
     local cats = {}
+    local customInserted = {}
     for _, def in ipairs(orderedDefs) do
-        local state = userState[def.name]
-        cats[#cats + 1] = {
-            _defaultName      = def.name,
-            name              = (state and state.rename) or def.name,
-            types             = def.types,
-            icon              = def.icon,
-            isAtlas           = def.isAtlas,
-            equipSlots        = def.equipSlots,
-            excludeEquipSlots = def.excludeEquipSlots,
-            isCatchAll        = def.isCatchAll,
-            isSetGear         = def.isSetGear,
-            isReagentBag      = def.isReagentBag,
-            isPinned          = def.isPinned,
-            isRecent          = def.isRecent,
-            noGroup           = def.noGroup,
-            noMove            = def.noMove,
-            groupName         = state and state.groupName,
-            groupNameCustom   = state and state.groupNameCustom,
-        }
+        if def._isCustom then
+            -- Expand custom category placeholder at its saved position
+            local uc = userCatByKey[def.name]
+            if uc then
+                local ucState = userState[uc.key]
+                local ucIcon = uc.icon or 134400
+                local ucIsAtlas = type(ucIcon) == "string"
+                cats[#cats + 1] = {
+                    _defaultName  = uc.key,
+                    name          = (ucState and ucState.rename) or uc.name,
+                    types         = {},
+                    icon          = ucIcon,
+                    isAtlas       = ucIsAtlas or nil,
+                    isUserCreated = true,
+                    groupName     = ucState and ucState.groupName,
+                    groupNameCustom = ucState and ucState.groupNameCustom,
+                }
+                customInserted[uc.key] = true
+            end
+        else
+            local state = userState[def.name]
+            cats[#cats + 1] = {
+                _defaultName      = def.name,
+                name              = (state and state.rename) or def.name,
+                types             = def.types,
+                icon              = def.icon,
+                isAtlas           = def.isAtlas,
+                equipSlots        = def.equipSlots,
+                excludeEquipSlots = def.excludeEquipSlots,
+                isCatchAll        = def.isCatchAll,
+                isSetGear         = def.isSetGear,
+                isReagentBag      = def.isReagentBag,
+                isPinned          = def.isPinned,
+                isRecent          = def.isRecent,
+                noGroup           = def.noGroup,
+                noMove            = def.noMove,
+                groupName         = state and state.groupName,
+                groupNameCustom   = state and state.groupNameCustom,
+            }
+        end
     end
 
-    -- Insert user-created custom categories before the catch-all.
-    -- Custom categories are stored in EllesmereUIDB.bagUserCategories as
-    -- an ordered array of { key = "Custom_<N>", name = "user name" }.
-    local userCats = EllesmereUIDB.bagUserCategories
+    -- Insert any new custom categories not in the saved order (freshly
+    -- created since the last save) before the catch-all.
     if userCats then
         local catchIdx
         for i, c in ipairs(cats) do
             if c.isCatchAll then catchIdx = i; break end
         end
         if not catchIdx then catchIdx = #cats + 1 end
-        -- Check if saved order already includes these (reorder scenario)
-        local alreadyInserted = {}
-        for _, c in ipairs(cats) do
-            if c.isUserCreated then alreadyInserted[c._defaultName] = true end
-        end
-        for ucIdx, uc in ipairs(userCats) do
-            if not alreadyInserted[uc.key] then
+        for _, uc in ipairs(userCats) do
+            if not customInserted[uc.key] then
                 local ucState = userState[uc.key]
                 local ucIcon = uc.icon or 134400
                 local ucIsAtlas = type(ucIcon) == "string"

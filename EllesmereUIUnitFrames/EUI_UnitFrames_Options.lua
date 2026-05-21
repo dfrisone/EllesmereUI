@@ -7076,7 +7076,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end
                   ReloadAndUpdate(); UpdatePreview()
               end },
-            { type="slider", text="Buff Size", min=10, max=40, step=1,
+            { type="slider", text="Buff Size", min=10, max=50, step=1,
               getValue=function() return SValSupported("buffSize", 22) end,
               setValue=function(v) SSetSupported("buffSize", v) end });  y = y - h
         SApplySupport(sharedAddRow2._leftRegion, "showBuffs")
@@ -7179,7 +7179,7 @@ initFrame:SetScript("OnEvent", function(self)
                   SwapAuraSlot(UNIT_DB_MAP[selectedUnit](), "debuffAnchor", v)
                   ReloadAndUpdate(); UpdatePreview()
               end },
-            { type="slider", text="Debuff Size", min=10, max=40, step=1,
+            { type="slider", text="Debuff Size", min=10, max=50, step=1,
               getValue=function() return SValSupported("debuffSize", 22) end,
               setValue=function(v) SSetSupported("debuffSize", v) end });  y = y - h
         -- Cog on Debuffs Location (Growth + Max Count + Show Own Only)

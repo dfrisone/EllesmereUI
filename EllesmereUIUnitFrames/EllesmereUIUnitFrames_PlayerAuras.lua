@@ -78,6 +78,12 @@ local function SkinAuraButton(btn, isDebuff)
             local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath() or STANDARD_TEXT_FONT
             local outline = EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag() or "OUTLINE"
             durFS:SetFont(fontPath, cfg.textSize or 11, outline)
+            if outline == "" then
+                durFS:SetShadowOffset(1, -1)
+                durFS:SetShadowColor(0, 0, 0, 1)
+            else
+                durFS:SetShadowOffset(0, 0)
+            end
             durFS:SetTextColor(1, 1, 1, 1)
         else
             durFS:SetTextColor(0, 0, 0, 0)
@@ -96,6 +102,12 @@ local function SkinAuraButton(btn, isDebuff)
         local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath() or STANDARD_TEXT_FONT
         local outline = EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag() or "OUTLINE"
         countFS:SetFont(fontPath, cfg.textSize or 11, outline)
+        if outline == "" then
+            countFS:SetShadowOffset(1, -1)
+            countFS:SetShadowColor(0, 0, 0, 1)
+        else
+            countFS:SetShadowOffset(0, 0)
+        end
     end
 
     -- Pixel-perfect border using raw texture edges. No BackdropTemplate,

@@ -2650,6 +2650,14 @@ function ns.SetupViewerHooks()
                         local pp = ECME.db and ECME.db.profile
                         if pp and pp.cdmBars and pp.cdmBars.useBlizzardBuffBars then return end
                     end
+                    -- CD/utility viewers: spell set is static (rebuilt only by
+                    -- FullCDMRebuild on spec/talent/equip). Pool churn from
+                    -- spell transforms (e.g. Monk Empty Barrel -> Keg Smash)
+                    -- re-acquires frames but does NOT queue a reanchor, so
+                    -- blanking here leaves icons invisible with nothing to
+                    -- restore them. The SetPoint hook already handles
+                    -- repositioning for these viewers.
+                    if not isBuff then return end
                     if itemFrame then
                         -- Only blank frames we haven't seen before. During
                         -- pool churn (e.g. Lightsmith Holy Armaments transform
