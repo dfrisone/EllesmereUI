@@ -7638,18 +7638,24 @@ local function SyncEditModeIconCounts()
     local ICON_COUNT_SETTING = 2
     local changed = false
 
+    -- HideBarArt setting: force to 1 (hidden) on all action bar layouts
+    local HIDE_BAR_ART_SETTING = Enum and Enum.EditModeActionBarSetting
+        and Enum.EditModeActionBarSetting.HideBarArt
+
     -- Check ALL layouts so switching never reverts to fewer icons.
     for _, layout in ipairs(layoutInfo.layouts) do
         if type(layout.systems) == "table" then
             for _, sysInfo in ipairs(layout.systems) do
                 if sysInfo.system == 0 and sysInfo.systemIndex and type(sysInfo.settings) == "table" then
                     local want = desired[sysInfo.systemIndex]
-                    if want then
-                        for _, s in ipairs(sysInfo.settings) do
-                            if s.setting == ICON_COUNT_SETTING and s.value < want then
-                                s.value = want
-                                changed = true
-                            end
+                    for _, s in ipairs(sysInfo.settings) do
+                        if want and s.setting == ICON_COUNT_SETTING and s.value < want then
+                            s.value = want
+                            changed = true
+                        end
+                        if HIDE_BAR_ART_SETTING and s.setting == HIDE_BAR_ART_SETTING and s.value ~= 1 then
+                            s.value = 1
+                            changed = true
                         end
                     end
                 end
@@ -7659,10 +7665,6 @@ local function SyncEditModeIconCounts()
 
     if changed then
         C_EditMode.SaveLayouts(layoutInfo)
-        -- Force Blizzard to re-apply the saved layout so numButtonsShowable
-        -- gets set natively (untainted).
-        pcall(ShowUIPanel, EditModeManagerFrame)
-        pcall(HideUIPanel, EditModeManagerFrame)
     end
 
     _editModeIconSyncDone = true

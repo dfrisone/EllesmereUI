@@ -1398,7 +1398,7 @@ end
 ShowWidgetTooltip = function(label, text, opts)
     -- Suppress tooltips in M+/raid/PvP combat -- frame APIs return secret
     -- values in tainted execution and tooltips aren't useful mid-pull.
-    do
+    if not (opts and opts.force) then
         local _, iType = IsInInstance()
         if iType == "party" and C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive
            and C_ChallengeMode.IsChallengeModeActive() then return end
@@ -1427,7 +1427,10 @@ ShowWidgetTooltip = function(label, text, opts)
     end
     tt.text:SetText(text)
     tt:ClearAllPoints()
-    if opts and opts.anchor == "cursor" then
+    if opts and opts.anchorPoint then
+        -- Custom anchor: opts.anchorPoint on tooltip -> opts.anchorTo on label
+        tt:SetPoint(opts.anchorPoint, label, opts.anchorTo or opts.anchorPoint, opts.anchorX or 0, opts.anchorY or 0)
+    elseif opts and opts.anchor == "cursor" then
         local scale = tt:GetEffectiveScale()
         local cx, cy = GetCursorPosition()
         tt:SetPoint("BOTTOM", UIParent, "BOTTOMLEFT", cx / scale, cy / scale + 4)

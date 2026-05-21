@@ -379,6 +379,7 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   Set("freeMoveIcons", v)
                   if ECHAT.ApplySidebarIcons then ECHAT.ApplySidebarIcons() end
+                  EllesmereUI:RefreshPage()
               end })
         do
             local lrgn = sizeRow._leftRegion
@@ -406,6 +407,31 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnEnter", function(s) s:SetAlpha(0.7) end)
             cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
             cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
+        end
+        -- "Reset" label next to the Free Move Icons toggle (only visible when enabled)
+        do
+            local rgn = sizeRow._rightRegion
+            local resetFS = rgn:CreateFontString(nil, "OVERLAY")
+            resetFS:SetFont(EllesmereUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 12, "")
+            resetFS:SetTextColor(1, 1, 1, 0.8)
+            resetFS:SetText("Reset")
+            resetFS:SetPoint("RIGHT", rgn._control, "LEFT", -8, 0)
+            local hitBtn = CreateFrame("Button", nil, rgn)
+            hitBtn:SetAllPoints(resetFS)
+            hitBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            hitBtn:SetScript("OnEnter", function() resetFS:SetTextColor(1, 0.3, 0.3, 1) end)
+            hitBtn:SetScript("OnLeave", function() resetFS:SetTextColor(1, 1, 1, 0.8) end)
+            hitBtn:SetScript("OnClick", function()
+                Set("iconPositions", {})
+                if ECHAT.ApplySidebarIcons then ECHAT.ApplySidebarIcons() end
+            end)
+            local function UpdateResetVis()
+                local on = Cfg("freeMoveIcons")
+                resetFS:SetShown(on)
+                hitBtn:SetShown(on)
+            end
+            UpdateResetVis()
+            EllesmereUI.RegisterWidgetRefresh(UpdateResetVis)
         end
         y = y - h
 

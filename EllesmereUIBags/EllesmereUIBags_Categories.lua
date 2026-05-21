@@ -132,11 +132,45 @@ function CategoryManager:InitCategories()
         }
     end
 
+    -- Insert user-created custom categories before the catch-all.
+    -- Custom categories are stored in EllesmereUIDB.bagUserCategories as
+    -- an ordered array of { key = "Custom_<N>", name = "user name" }.
+    local userCats = EllesmereUIDB.bagUserCategories
+    if userCats then
+        local catchIdx
+        for i, c in ipairs(cats) do
+            if c.isCatchAll then catchIdx = i; break end
+        end
+        if not catchIdx then catchIdx = #cats + 1 end
+        -- Check if saved order already includes these (reorder scenario)
+        local alreadyInserted = {}
+        for _, c in ipairs(cats) do
+            if c.isUserCreated then alreadyInserted[c._defaultName] = true end
+        end
+        for ucIdx, uc in ipairs(userCats) do
+            if not alreadyInserted[uc.key] then
+                local ucState = userState[uc.key]
+                local ucIcon = uc.icon or 134400
+                local ucIsAtlas = type(ucIcon) == "string"
+                table.insert(cats, catchIdx, {
+                    _defaultName  = uc.key,
+                    name          = (ucState and ucState.rename) or uc.name,
+                    types         = {},
+                    icon          = ucIcon,
+                    isAtlas       = ucIsAtlas or nil,
+                    isUserCreated = true,
+                    groupName     = ucState and ucState.groupName,
+                    groupNameCustom = ucState and ucState.groupNameCustom,
+                })
+                catchIdx = catchIdx + 1
+            end
+        end
+    end
+
     self._categories = cats
 
     -- Clean up legacy DB keys
     EllesmereUIDB.bagCategoryDefs = nil
-    EllesmereUIDB.customCategories = nil
     EllesmereUIDB.categoryItems = nil
     EllesmereUIDB.categoryPositions = nil
     EllesmereUIDB.categoryColumns = nil
@@ -172,6 +206,15 @@ function CategoryManager:SaveState()
     end
     EllesmereUIDB.bagCategoryState = userState
     EllesmereUIDB.bagCategoryOrder = userOrder
+
+    -- Rebuild user-created categories list from runtime state
+    local ucList = {}
+    for _, cat in ipairs(cats) do
+        if cat.isUserCreated then
+            ucList[#ucList + 1] = { key = cat._defaultName, name = cat._defaultName, icon = cat.icon }
+        end
+    end
+    EllesmereUIDB.bagUserCategories = #ucList > 0 and ucList or nil
 end
 
 -------------------------------------------------------------------------------
@@ -230,6 +273,18 @@ function CategoryManager:ClassifyItem(itemLink, itemID, bag, slot)
     if bag == 5 then
         for i, cat in ipairs(cats) do
             if cat.isReagentBag then return i end
+        end
+    end
+
+    -- User item assignments: itemID -> category _defaultName.
+    -- Checked before type matching so users can override auto-classification.
+    if itemID then
+        local assignments = EllesmereUIDB and EllesmereUIDB.bagItemAssignments
+        local assignedKey = assignments and assignments[itemID]
+        if assignedKey then
+            for i, cat in ipairs(cats) do
+                if cat._defaultName == assignedKey then return i end
+            end
         end
     end
 
@@ -542,6 +597,100 @@ end
 function CategoryManager:IsGrouped(catIndex)
     local cats = self:GetCategories()
     return cats[catIndex] and cats[catIndex].groupName or nil
+end
+
+-------------------------------------------------------------------------------
+--  Custom Category CRUD
+-------------------------------------------------------------------------------
+-- Create a new user category. Returns the new category index.
+function CategoryManager:AddCustomCategory(name)
+    if not name or name == "" then return nil end
+    if not EllesmereUIDB then EllesmereUIDB = {} end
+    if not EllesmereUIDB.bagUserCategories then EllesmereUIDB.bagUserCategories = {} end
+
+    -- Generate a unique key
+    local maxN = 0
+    for _, uc in ipairs(EllesmereUIDB.bagUserCategories) do
+        local n = tonumber(uc.key:match("Custom_(%d+)"))
+        if n and n > maxN then maxN = n end
+    end
+    local key = "Custom_" .. (maxN + 1)
+
+    EllesmereUIDB.bagUserCategories[#EllesmereUIDB.bagUserCategories + 1] = { key = key, name = name }
+
+    -- Insert into runtime list before catch-all
+    local cats = self:GetCategories()
+    local catchIdx = #cats + 1
+    for i, c in ipairs(cats) do
+        if c.isCatchAll then catchIdx = i; break end
+    end
+    table.insert(cats, catchIdx, {
+        _defaultName  = key,
+        name          = name,
+        types         = {},
+        icon          = "Petjournalv2-Icon-PlusButton",
+        isAtlas       = true,
+        isUserCreated = true,
+    })
+    self:SaveState()
+    return catchIdx
+end
+
+-- Remove a user-created category. Unassigns all items in it.
+function CategoryManager:RemoveCustomCategory(catIndex)
+    local cats = self:GetCategories()
+    local cat = cats[catIndex]
+    if not cat or not cat.isUserCreated then return false end
+    local key = cat._defaultName
+
+    -- Remove item assignments pointing to this category
+    local assignments = EllesmereUIDB and EllesmereUIDB.bagItemAssignments
+    if assignments then
+        for itemID, aKey in pairs(assignments) do
+            if aKey == key then assignments[itemID] = nil end
+        end
+    end
+
+    -- Remove from runtime list
+    table.remove(cats, catIndex)
+
+    -- Remove from disabled list
+    if EllesmereUIDB.bagDisabledCategories then
+        EllesmereUIDB.bagDisabledCategories[key] = nil
+    end
+
+    self:SaveState()
+    return true
+end
+
+-------------------------------------------------------------------------------
+--  Item Assignment (user overrides auto-classification)
+-------------------------------------------------------------------------------
+-- Assign an itemID to a category. Pass nil to unassign.
+function CategoryManager:AssignItem(itemID, categoryKey)
+    if not itemID then return end
+    if not EllesmereUIDB then EllesmereUIDB = {} end
+    if not EllesmereUIDB.bagItemAssignments then EllesmereUIDB.bagItemAssignments = {} end
+    EllesmereUIDB.bagItemAssignments[itemID] = categoryKey
+end
+
+-- Unassign an itemID (returns to auto-classification).
+function CategoryManager:UnassignItem(itemID)
+    if not itemID then return end
+    local assignments = EllesmereUIDB and EllesmereUIDB.bagItemAssignments
+    if assignments then
+        assignments[itemID] = nil
+    end
+end
+
+-- Check if a category can accept item assignments (drag targets).
+-- Excludes Pinned, Recent, Reagent Bag (physical bag, not logical).
+function CategoryManager:CanAssignToCategory(catIndex)
+    local cats = self:GetCategories()
+    local cat = cats[catIndex]
+    if not cat then return false end
+    if cat.isPinned or cat.isRecent or cat.isReagentBag then return false end
+    return true
 end
 
 -------------------------------------------------------------------------------

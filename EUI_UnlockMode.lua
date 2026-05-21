@@ -3855,6 +3855,8 @@ local BLIZZ_OWNED_OVERLAY_DEFS = {
     { label = "Micro Menu",    frame = function() return _G.MicroMenuContainer end },
     { label = "Bags",          frame = function() return _G.BagsBar end },
     { label = "Encounter Bar", frame = function() return _G.PlayerPowerBarAlt end, showAlways = true, fallbackW = 240, fallbackH = 36, yOffset = 44 },
+    { label = "Buffs",         frame = function() return _G.BuffFrame end },
+    { label = "Debuffs",       frame = function() return _G.DebuffFrame end },
 }
 
 local function CreateBlizzOwnedOverlay(def, parent)
@@ -7164,8 +7166,8 @@ local function CreateHUD(parent)
     local uiScale = GetScreenWidth() / physW
 
     hudFrame = CreateFrame("Frame", nil, parent)
-    hudFrame:SetFrameStrata("FULLSCREEN_DIALOG")
-    hudFrame:SetFrameLevel(500)
+    hudFrame:SetFrameStrata("TOOLTIP")
+    hudFrame:SetFrameLevel(900)
     hudFrame:SetSize(BANNER_PX_W, BANNER_PX_H)
     hudFrame:SetScale(uiScale)
     hudFrame:EnableMouse(false)  -- background only, clicks pass through

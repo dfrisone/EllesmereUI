@@ -1537,7 +1537,7 @@ local CDM_BAR_CATEGORIES = {
 }
 
 -- Maximum number of custom bars a user can create
-local MAX_CUSTOM_BARS = 10
+local MAX_CUSTOM_BARS = 20
 
 -- Cached player info (set once at PLAYER_LOGIN)
 local _playerRace, _playerClass

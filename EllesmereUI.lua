@@ -4418,10 +4418,12 @@ local function CreateMainFrame()
     end
 
     -- Apply initial theme at creation (no crossfade, just set correct texture + tint)
+    -- Resolve theme color directly -- ELLESMERE_GREEN is the UI accent which may differ
     local _initTheme = ResolveFactionTheme((EllesmereUIDB or {}).activeTheme or "EllesmereUI")
     local _initFile = THEME_BG_FILES[_initTheme] or THEME_BG_FILES["EllesmereUI"]
+    local _initR, _initG, _initB = EllesmereUI.ResolveThemeColor(_initTheme)
     bgA:SetTexture(MEDIA_PATH .. _initFile)
-    ApplyBgTintToLayer(bgA, _initTheme, ELLESMERE_GREEN.r, ELLESMERE_GREEN.g, ELLESMERE_GREEN.b)
+    ApplyBgTintToLayer(bgA, _initTheme, _initR, _initG, _initB)
     EllesmereUI._bgTexture = bgA
     EllesmereUI._applyBgTint = ApplyBgTint
     EllesmereUI._applyThemeBG = ApplyThemeBG
@@ -7667,7 +7669,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "7.8.1"
+EllesmereUI.VERSION = "7.8.2"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
