@@ -2357,6 +2357,20 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return not SVal("dispelShowAll", true) end,
               setValue=function(v) SSet("dispelShowAll", not v) end });  y = y - h
 
+        -- Private Dispel Overlay Position (for private auras in 12.0.5+)
+        local dispelOverlayPosValues = {
+            [0] = "Top",
+            [1] = "Bottom",
+            [2] = "Left",
+        }
+        local dispelOverlayPosOrder = { 0, 1, 2 }
+        local posRow, h = W:DualRow(parent, y,
+            { type="dropdown", text="Private Dispel Overlay Position", values=dispelOverlayPosValues, order=dispelOverlayPosOrder,
+              getValue=function() return SVal("dispelOverlayPosition", 0) end,
+              setValue=function(v) SSet("dispelOverlayPosition", v); ReloadAndUpdate() end },
+            { type="empty" }
+        ); y = y - h
+
         if onSection then onSection("dispels", _secY, y) end; _secY = y
 
         -------------------------------------------------------------------
