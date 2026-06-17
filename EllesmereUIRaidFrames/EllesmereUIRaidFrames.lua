@@ -9316,7 +9316,7 @@ local function GetConfiguredBuffSpells()
                     spells[#spells + 1] = {
                         id = sid, icon = iconTex,
                         indType = ind.type,
-                        color = ind.color,
+                        color = (ind.spellColors and ind.spellColors[sid]) or ind.color,
                         size = spellSz,
                         position = ind.position or "TOPLEFT",
                         offsetX = ind.offsetX or 0,
