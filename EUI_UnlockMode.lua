@@ -359,7 +359,7 @@ local MOVER_ALPHA  = 0.55        -- resting alpha for mover overlays
 local MOVER_HOVER  = 0.85        -- hover alpha
 local MOVER_DRAG   = 0.95        -- dragging alpha
 local TRANSITION_DUR = 0.35      -- seconds for the open/close fade-in
-local GEAR_ROTATION  = math.pi / 4  -- 45° rotation for gear effect
+local GEAR_ROTATION  = math.pi / 4  -- 45 deg rotation for gear effect
 
 -- Bar keys that can be moved (action bars + stance + micro + bag)
 -- These are populated by EAB if it's loaded; otherwise empty.
@@ -1945,8 +1945,10 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
     -- correct. The provider returns 0 while unlock mode is active, so this is a
     -- no-op when unlocked (and stays nil/0 until a feature opts in).
     if not isUnlocked and EllesmereUI._GetAnchorTargetShiftDir then
-        local dir = EllesmereUI._GetAnchorTargetShiftDir(targetKey, childKey)
-        if dir ~= 0 then cy = cy + dir * (tT - tB) end
+        -- extraY (optional 2nd return) tunes the shift magnitude by N pixels in
+        -- the shift direction. nil/0 keeps the bar-height-only behavior.
+        local dir, extraY = EllesmereUI._GetAnchorTargetShiftDir(targetKey, childKey)
+        if dir ~= 0 then cy = cy + dir * ((tT - tB) + (extraY or 0)) end
     end
 
     -- Convert child center to CENTER-relative offset for centralized positioning
@@ -2502,7 +2504,7 @@ ApplyCenterPosition = function(barKey, pos)
     else
         -- No anchor relationship -- use grow direction to pick fixed edge.
         -- Prefer growEdge (width-independent absolute edge offset) when
-        -- available. Fall back to CENTER ± width/2 (width-dependent) only
+        -- available. Fall back to CENTER +/- width/2 (width-dependent) only
         -- for legacy positions that predate growEdge.
         local ge = pos.growEdge
         if ge and ge.anchor and ge.x and ge.y then
@@ -2590,7 +2592,7 @@ SaveBarPosition = function(barKey, point, relPoint, x, y)
     -- exact center value: for odd-pixel-height frames the edges are integer
     -- pixels and the center is integer + 0.5 (e.g. 540.5). We DELIBERATELY
     -- do not snap that .5 away here -- the apply path uses raw fh/2 (also
-    -- ending in .5 for odd heights) so the round-trip cy ± fh/2 lands back
+    -- ending in .5 for odd heights) so the round-trip cy +/- fh/2 lands back
     -- on integer pixels. Snapping cy to integer here would force the apply
     -- path to compute a half-pixel edge, causing a 1px drift on save & exit.
     local cp, crp, cx, cy = ConvertToCenterPos(barKey, point, relPoint, x, y)

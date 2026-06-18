@@ -969,9 +969,9 @@ initFrame:SetScript("OnEvent", function(self)
                     local sideOff = DBVal("sideAuraXOffset") or defaults.sideAuraXOffset
                     raidFrame:SetPoint("LEFT", health, "RIGHT", sideOff + castIconRightPush + rmXOff, rmYOff)
                 elseif rmPos == "topleft" then
-                    raidFrame:SetPoint("BOTTOMLEFT", health, "TOPLEFT", -2 + rmXOff, cpPush + rmYOff)
+                    raidFrame:SetPoint("BOTTOMLEFT", health, "TOPLEFT", rmXOff, cpPush + rmYOff)
                 elseif rmPos == "topright" then
-                    raidFrame:SetPoint("BOTTOMRIGHT", health, "TOPRIGHT", 2 + rmXOff, cpPush + rmYOff)
+                    raidFrame:SetPoint("BOTTOMRIGHT", health, "TOPRIGHT", rmXOff, cpPush + rmYOff)
                 elseif rmPos == "bottom" then
                     raidFrame:SetPoint("TOP", cast, "BOTTOM", rmXOff, -2 + rmYOff)
                 end
@@ -1003,9 +1003,9 @@ initFrame:SetScript("OnEvent", function(self)
                     local sideOff = DBVal("sideAuraXOffset") or defaults.sideAuraXOffset
                     classIcon:SetPoint("LEFT", health, "RIGHT", sideOff + castIconRightPush + clXOff, clYOff)
                 elseif clPos == "topleft" then
-                    classIcon:SetPoint("BOTTOMLEFT", health, "TOPLEFT", -2 + clXOff, 2 + cpPush + clYOff)
+                    classIcon:SetPoint("BOTTOMLEFT", health, "TOPLEFT", clXOff, 2 + cpPush + clYOff)
                 elseif clPos == "topright" then
-                    classIcon:SetPoint("BOTTOMRIGHT", health, "TOPRIGHT", 2 + clXOff, 2 + cpPush + clYOff)
+                    classIcon:SetPoint("BOTTOMRIGHT", health, "TOPRIGHT", clXOff, 2 + cpPush + clYOff)
                 end
                 classIcon:Show()
                 if pf._classOverlay then pf._classOverlay:Show() end
@@ -1334,7 +1334,7 @@ initFrame:SetScript("OnEvent", function(self)
                 elseif slotName == "topleft" then
                     local growth = DBVal("topleftSlotGrowth") or defaults.topleftSlotGrowth
                     local idx = index - 1  -- 0 for icon 1, never moves
-                    local baseX = -2 + sxOff
+                    local baseX = sxOff
                     local baseY = debuffY + cpPush + syOff
                     if growth == "up" then
                         frame:SetPoint("BOTTOMLEFT", health, "TOPLEFT", baseX, baseY + idx * slotSpacingV)
@@ -1346,7 +1346,7 @@ initFrame:SetScript("OnEvent", function(self)
                 elseif slotName == "topright" then
                     local growth = DBVal("toprightSlotGrowth") or defaults.toprightSlotGrowth
                     local idx = index - 1  -- 0 for icon 1, never moves
-                    local baseX = 2 + sxOff
+                    local baseX = sxOff
                     local baseY = debuffY + cpPush + syOff
                     if growth == "up" then
                         frame:SetPoint("BOTTOMRIGHT", health, "TOPRIGHT", baseX, baseY + idx * slotSpacingV)

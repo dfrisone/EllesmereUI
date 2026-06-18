@@ -1385,8 +1385,10 @@ local function PositionAuraSlot(frames, count, slot, plate, sizeW, sizeH, gap, x
         local cpPush = GetClassPowerTopPush(plate)
         local growth = (p and p.topleftSlotGrowth) or defaults.topleftSlotGrowth
         -- Icon 1 is always flush with the top-left corner of the health bar.
-        -- Growth direction only affects where icons 2+ go from there.
-        local baseX = -2 + xOff
+        -- Growth direction only affects where icons 2+ go from there. (PP borders
+        -- are inset, so the bar's corner IS the nameplate's outer edge -- anchor
+        -- at offset 0 for true flush; xOff lets the user nudge.)
+        local baseX = xOff
         local baseY = debuffY + cpPush + yOff
         for i = 1, count do
             frames[i]:ClearAllPoints()
@@ -1408,8 +1410,9 @@ local function PositionAuraSlot(frames, count, slot, plate, sizeW, sizeH, gap, x
         local cpPush = GetClassPowerTopPush(plate)
         local growth = (p and p.toprightSlotGrowth) or defaults.toprightSlotGrowth
         -- Icon 1 is always flush with the top-right corner of the health bar.
-        -- Growth direction only affects where icons 2+ go from there.
-        local baseX = 2 + xOff
+        -- Growth direction only affects where icons 2+ go from there. (Offset 0 =
+        -- flush; PP borders are inset so the bar corner is the outer edge.)
+        local baseX = xOff
         local baseY = debuffY + cpPush + yOff
         for i = 1, count do
             frames[i]:ClearAllPoints()
@@ -1858,7 +1861,14 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     -- Text overlay frame: renders above focus stripe overlay (level +1)
     plate.healthTextFrame = CreateFrame("Frame", nil, plate)
     plate.healthTextFrame:SetAllPoints(plate.health)
-    plate.healthTextFrame:SetFrameLevel(plate.health:GetFrameLevel() + 7)
+    -- TEXT TIER (top of the hierarchy). All three layered groups -- text (900),
+    -- aura icons (800) and indicators (raid marker / classification, ~13-18) --
+    -- use an explicit MEDIUM strata so they are pulled out of the plate's
+    -- flattened render layer together and ordered purely by frame level. Without
+    -- the explicit strata this frame would stay in the flattened pass and render
+    -- BELOW the (strata-promoted) aura icons. Text > Auras > Indicators.
+    plate.healthTextFrame:SetFrameStrata("MEDIUM")
+    plate.healthTextFrame:SetFrameLevel(900)
     plate.hpText = plate.healthTextFrame:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.hpText, 10, GetNPOutline())
     PP.Point(plate.hpText, "RIGHT", plate.health, "RIGHT", -2, 0)
@@ -1878,7 +1888,11 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     -- Top text overlay: renders above health bar + borders so top-slot text is never hidden
     plate.topTextFrame = CreateFrame("Frame", nil, plate)
     plate.topTextFrame:SetAllPoints(plate.health)
-    plate.topTextFrame:SetFrameLevel(plate.health:GetFrameLevel() + 6)
+    -- TEXT TIER (see healthTextFrame). MEDIUM + level 900 so name text renders
+    -- above the aura icons (the name/health fontstrings are reparented between
+    -- this frame and healthTextFrame depending on the chosen text slot).
+    plate.topTextFrame:SetFrameStrata("MEDIUM")
+    plate.topTextFrame:SetFrameLevel(900)
     plate.name = plate:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.name, GetEnemyNameTextSize(), GetNPOutline())
     PP.Point(plate.name, "BOTTOM", plate.health, "TOP", 0, 4)
@@ -1888,13 +1902,12 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     plate.raidFrame = CreateFrame("Frame", nil, plate)
     local rmSize = GetRaidMarkerSize()
     PP.Size(plate.raidFrame, rmSize, rmSize)
-    -- Match the aura icons' strata (MEDIUM) so the two render in the SAME group
-    -- and frame level decides ordering: the marker (health+8 = 18) sits below
-    -- the aura icons (level 800) and is guaranteed to render BEHIND them.
-    -- Without an explicit strata the marker stays in the plate's flattened
-    -- render layer (SetFlattensRenderLayers) and composites ON TOP of the
-    -- strata-promoted aura icons regardless of frame level. The +8 still keeps
-    -- it above the name/health text frames (those are at health+6/+7).
+    -- INDICATOR TIER (bottom of the three layered groups). Explicit MEDIUM strata
+    -- like the aura icons and text, so frame level alone decides order within the
+    -- pulled-out group: the marker (health+8 = 18) sits BELOW the aura icons (800)
+    -- and the text (900) but above the flattened health bar. Sharing MEDIUM across
+    -- all three tiers is what keeps the order predictable -- a no-strata frame
+    -- would drop into the plate's flattened render layer instead.
     plate.raidFrame:SetFrameStrata("MEDIUM")
     plate.raidFrame:SetFrameLevel(plate.health:GetFrameLevel() + 8)
     plate.raidFrame:Hide()
@@ -1905,6 +1918,10 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     local _reIconSz = GetRareEliteIconSize()
     PP.Size(plate.classFrame, _reIconSz, _reIconSz)
     PP.Point(plate.classFrame, "LEFT", plate.health, "LEFT", 2, 0)
+    -- INDICATOR TIER (see raidFrame). MEDIUM strata + low level (health+3 = 13)
+    -- so the classification/elite/rare/quest indicator sits below the aura icons
+    -- (800) and text (900) but above the flattened health bar.
+    plate.classFrame:SetFrameStrata("MEDIUM")
     plate.classFrame:SetFrameLevel(plate.health:GetFrameLevel() + 3)
     plate.classFrame:Hide()
     plate.class = plate.classFrame:CreateTexture(nil, "ARTWORK")
@@ -2046,19 +2063,26 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     plate.kickReadyFill:Hide()
     -- Cast bar text: three independent fixed zones
     -- [castName LEFT 50%] [castTarget CENTER-RIGHT 25%] [castTimer RIGHT 15%]
-    plate.castName = plate.cast:CreateFontString(nil, "OVERLAY")
+    -- Hosted on an explicit MEDIUM frame so the cast text is pulled out of the
+    -- plate's flattened render layer and renders ABOVE the cast bar border (the
+    -- border sits in the flattened pass and would otherwise cover the text).
+    plate.castTextFrame = CreateFrame("Frame", nil, plate.cast)
+    plate.castTextFrame:SetAllPoints(plate.cast)
+    plate.castTextFrame:SetFrameStrata("MEDIUM")
+    plate.castTextFrame:SetFrameLevel(900)
+    plate.castName = plate.castTextFrame:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.castName, 10, GetNPOutline())
     plate.castName:SetPoint("LEFT", plate.cast, "LEFT", 5, 0)
     plate.castName:SetJustifyH("LEFT")
     plate.castName:SetWordWrap(false)
     plate.castName:SetMaxLines(1)
-    plate.castTarget = plate.cast:CreateFontString(nil, "OVERLAY")
+    plate.castTarget = plate.castTextFrame:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.castTarget, 10, GetNPOutline())
     plate.castTarget:SetJustifyH("RIGHT")
     plate.castTarget:SetWordWrap(false)
     plate.castTarget:SetNonSpaceWrap(false)
     plate.castTarget:SetMaxLines(1)
-    plate.castTimer = plate.cast:CreateFontString(nil, "OVERLAY")
+    plate.castTimer = plate.castTextFrame:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.castTimer, 10, GetNPOutline())
     plate.castTimer:SetPoint("RIGHT", plate.cast, "RIGHT", -3, 0)
     plate.castTimer:SetJustifyH("RIGHT")
@@ -4803,9 +4827,9 @@ function NameplateFrame:UpdateClassification()
         PP.Point(self.classFrame, "LEFT", self.health, "RIGHT",
             sideOff + iconPush + cxOff, cyOff)
     elseif slot == "topleft" then
-        PP.Point(self.classFrame, "BOTTOMLEFT", self.health, "TOPLEFT", -2 + cxOff, 2 + cpPush + cyOff)
+        PP.Point(self.classFrame, "BOTTOMLEFT", self.health, "TOPLEFT", cxOff, 2 + cpPush + cyOff)
     elseif slot == "topright" then
-        PP.Point(self.classFrame, "BOTTOMRIGHT", self.health, "TOPRIGHT", 2 + cxOff, 2 + cpPush + cyOff)
+        PP.Point(self.classFrame, "BOTTOMRIGHT", self.health, "TOPRIGHT", cxOff, 2 + cpPush + cyOff)
     end
     self.classFrame:Show()
     self:UpdateNameWidth()
@@ -4924,9 +4948,9 @@ function NameplateFrame:UpdateRaidIcon()
         PP.Point(self.raidFrame, "LEFT", self.health, "RIGHT",
             sideOff + iconPush + rxOff, ryOff)
     elseif pos == "topleft" then
-        PP.Point(self.raidFrame, "BOTTOMLEFT", self.health, "TOPLEFT", -2 + rxOff, cpPush + ryOff)
+        PP.Point(self.raidFrame, "BOTTOMLEFT", self.health, "TOPLEFT", rxOff, cpPush + ryOff)
     elseif pos == "topright" then
-        PP.Point(self.raidFrame, "BOTTOMRIGHT", self.health, "TOPRIGHT", 2 + rxOff, cpPush + ryOff)
+        PP.Point(self.raidFrame, "BOTTOMRIGHT", self.health, "TOPRIGHT", rxOff, cpPush + ryOff)
     elseif pos == "bottom" then
         -- Below the cast bar, centered (matches PositionAuraSlot "bottom" convention).
         PP.Point(self.raidFrame, "TOP", self.cast, "BOTTOM", rxOff, -2 + ryOff)

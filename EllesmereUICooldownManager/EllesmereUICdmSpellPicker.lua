@@ -115,6 +115,19 @@ ns.StoreVariantValue   = StoreVariantValue
 ns.ResolveVariantValue = ResolveVariantValue
 ns.IsVariantOf         = IsVariantOf
 
+-- Per-cooldownID cache of the last CLEAN frame:GetSpellID(). On an ACTIVE
+-- buff/HoT/DoT viewer frame GetSpellID()/GetAuraSpellID() return secret values,
+-- so while the aura is up we cannot read the live talent form (e.g. 432496
+-- Holy Bulwark) -- resolution would otherwise degrade to the generic
+-- cooldownInfo.spellID (e.g. 137029 Holy Paladin, a spec aura with a generic
+-- icon). We reuse the clean value captured when this same cooldownID's frame
+-- was last seen INACTIVE, so the picker/preview agree on the displayed spell
+-- regardless of aura state and never offer the generic variant. Shared (ns) so
+-- the reanchor pass can prime it at login. Self-heals: any later clean read
+-- overwrites the entry, so a re-talented cooldownID re-resolves on next scan.
+ns._cdmCleanSidByCDID = ns._cdmCleanSidByCDID or {}
+local _cleanSidByCDID = ns._cdmCleanSidByCDID
+
 -------------------------------------------------------------------------------
 --  GetCanonicalSpellIDForFrame
 --
@@ -141,7 +154,13 @@ local function GetCanonicalSpellIDForFrame(frame)
     local fnGetSpellID = frame.GetSpellID
     if type(fnGetSpellID) == "function" then
         local sid = fnGetSpellID(frame)
-        if _IsUsableSID(sid) then return sid end
+        if _IsUsableSID(sid) then
+            -- Clean read: cache it by cooldownID so an active (secret) read of
+            -- this same frame later still resolves to the live talent form.
+            local cdid = frame.cooldownID
+            if type(cdid) == "number" then _cleanSidByCDID[cdid] = sid end
+            return sid
+        end
     end
 
     -- 1b. frame:GetAuraSpellID() -- buff bar frames expose the actual aura
@@ -151,6 +170,16 @@ local function GetCanonicalSpellIDForFrame(frame)
     if type(fnGetAura) == "function" then
         local sid = fnGetAura(frame)
         if _IsUsableSID(sid) then return sid end
+    end
+
+    -- 1c. Active-frame fallback: GetSpellID/GetAuraSpellID returned secret/nil
+    -- (the aura is up). Reuse the clean GetSpellID captured for this cooldownID
+    -- while the frame was inactive, instead of degrading to the generic
+    -- cooldownInfo.spellID below.
+    local cdid = frame.cooldownID
+    if type(cdid) == "number" then
+        local cached = _cleanSidByCDID[cdid]
+        if cached then return cached end
     end
 
     -- Resolve cooldownInfo (frame.cooldownInfo OR frame:GetCooldownInfo())

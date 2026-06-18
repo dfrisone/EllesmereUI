@@ -370,11 +370,15 @@ initFrame:SetScript("OnEvent", function(self)
     -- Create a pixel glow cog popup for pandemic settings
     -- getDataFn: returns the settings table; refreshFn: called after changes
     local _sharedPgPopup, _sharedPgPopupOwner
-    local function ShowPandemicPixelGlowPopup(anchorBtn, getDataFn, refreshFn)
+    -- Default key set: pandemic glow. Other callers (e.g. Buff Glow) pass their
+    -- own keys so the shared popup reads/writes that feature's Lines/Thickness/Speed.
+    local PG_DEFAULT_KEYS = { lines = "pandemicGlowLines", thickness = "pandemicGlowThickness", speed = "pandemicGlowSpeed" }
+    local function ShowPandemicPixelGlowPopup(anchorBtn, getDataFn, refreshFn, keys)
         -- Bind data source before popup creation so slider getValue callbacks work
         if _sharedPgPopup then
             _sharedPgPopup._getData = getDataFn
             _sharedPgPopup._refresh = refreshFn
+            _sharedPgPopup._keys = keys or PG_DEFAULT_KEYS
         end
         if not _sharedPgPopup then
             local SolidTex   = EllesmereUI.SolidTex
@@ -403,6 +407,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- Bind data source before sliders are built so getValue callbacks work
             pf._getData = getDataFn
             pf._refresh = refreshFn
+            pf._keys = keys or PG_DEFAULT_KEYS
 
             local bg = SolidTex(pf, "BACKGROUND", 0.06, 0.08, 0.10, 0.95); bg:SetAllPoints()
             MakeBorder(pf, BORDER_COLOR.r, BORDER_COLOR.g, BORDER_COLOR.b, 0.15)
@@ -428,8 +433,8 @@ initFrame:SetScript("OnEvent", function(self)
             lbl1:SetText(EllesmereUI.L("Lines")); lbl1:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r1Y)
             local t1, v1 = BuildSliderCore(pf, SLIDER_W, 4, 12, INPUT_W, ROW_H, 11, POPUP_INPUT_A,
                 2, 16, 1,
-                function() local d = pf._getData(); return d and d.pandemicGlowLines or 8 end,
-                function(v) local d = pf._getData(); if d then d.pandemicGlowLines = v end; if pf._refresh then pf._refresh() end end, true)
+                function() local d = pf._getData(); return d and d[pf._keys.lines] or 8 end,
+                function(v) local d = pf._getData(); if d then d[pf._keys.lines] = v end; if pf._refresh then pf._refresh() end end, true)
             t1:SetPoint("TOPLEFT", pf, "TOPLEFT", SLIDER_LEFT, r1Y - 2)
             v1:ClearAllPoints(); v1:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -SIDE_PAD, r1Y)
 
@@ -438,8 +443,8 @@ initFrame:SetScript("OnEvent", function(self)
             lbl2:SetText(EllesmereUI.L("Thickness")); lbl2:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r2Y)
             local t2, v2 = BuildSliderCore(pf, SLIDER_W, 4, 12, INPUT_W, ROW_H, 11, POPUP_INPUT_A,
                 1, 4, 1,
-                function() local d = pf._getData(); return d and d.pandemicGlowThickness or 2 end,
-                function(v) local d = pf._getData(); if d then d.pandemicGlowThickness = v end; if pf._refresh then pf._refresh() end end, true)
+                function() local d = pf._getData(); return d and d[pf._keys.thickness] or 2 end,
+                function(v) local d = pf._getData(); if d then d[pf._keys.thickness] = v end; if pf._refresh then pf._refresh() end end, true)
             t2:SetPoint("TOPLEFT", pf, "TOPLEFT", SLIDER_LEFT, r2Y - 2)
             v2:ClearAllPoints(); v2:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -SIDE_PAD, r2Y)
 
@@ -448,8 +453,8 @@ initFrame:SetScript("OnEvent", function(self)
             lbl3:SetText(EllesmereUI.L("Speed")); lbl3:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r3Y)
             local t3, v3 = BuildSliderCore(pf, SLIDER_W, 4, 12, INPUT_W, ROW_H, 11, POPUP_INPUT_A,
                 1, 8, 1,
-                function() local d = pf._getData(); local p = d and d.pandemicGlowSpeed or 4; return 9 - p end,
-                function(v) local d = pf._getData(); if d then d.pandemicGlowSpeed = 9 - v end; if pf._refresh then pf._refresh() end end, true)
+                function() local d = pf._getData(); local p = d and d[pf._keys.speed] or 4; return 9 - p end,
+                function(v) local d = pf._getData(); if d then d[pf._keys.speed] = 9 - v end; if pf._refresh then pf._refresh() end end, true)
             t3:SetPoint("TOPLEFT", pf, "TOPLEFT", SLIDER_LEFT, r3Y - 2)
             v3:ClearAllPoints(); v3:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -SIDE_PAD, r3Y)
 
@@ -482,6 +487,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Bind data source and refresh callback for this invocation
         _sharedPgPopup._getData = getDataFn
         _sharedPgPopup._refresh = refreshFn
+        _sharedPgPopup._keys = keys or PG_DEFAULT_KEYS
         _sharedPgPopupOwner = anchorBtn
 
         _sharedPgPopup:ClearAllPoints()
@@ -497,7 +503,7 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     -- Build a pandemic glow cog button that opens the shared pixel glow popup
-    local function BuildPandemicCogButton(row, isAntsOffFn, getDataFn, refreshFn)
+    local function BuildPandemicCogButton(row, isAntsOffFn, getDataFn, refreshFn, keys)
         local leftRgn = row._leftRegion
         local btn = CreateFrame("Button", nil, leftRgn)
         btn:SetSize(26, 26)
@@ -517,7 +523,7 @@ initFrame:SetScript("OnEvent", function(self)
         end)
         btn:SetScript("OnClick", function(self)
             if isAntsOffFn() then return end
-            ShowPandemicPixelGlowPopup(self, getDataFn, refreshFn)
+            ShowPandemicPixelGlowPopup(self, getDataFn, refreshFn, keys)
         end)
         EllesmereUI.RegisterWidgetRefresh(function()
             if _sharedPgPopupOwner ~= btn then btn:SetAlpha(isAntsOffFn() and 0.15 or 0.4) end
@@ -3919,6 +3925,23 @@ initFrame:SetScript("OnEvent", function(self)
     -- Track which bar is selected in the CDM Bars tab
     local selectedCDMBarIndex = 1
 
+    -- Deep-link helper: select a CDM bar by key or barType (used by the What's
+    -- New "Always Show Buffs" card preSelect to land on the native buff bar,
+    -- whose per-bar toggle only renders when a buff-family bar is selected).
+    -- Sets the index immediately, like EllesmereUI._setUnitFrameUnit, so both the
+    -- content header and the rebuilt page reflect the chosen bar.
+    function EllesmereUI._setCDMBar(keyOrType)
+        local p = DB()
+        local bars = p and p.cdmBars and p.cdmBars.bars
+        if not bars then return end
+        for bi, bb in ipairs(bars) do
+            if bb.key == keyOrType or bb.barType == keyOrType then
+                selectedCDMBarIndex = bi
+                return
+            end
+        end
+    end
+
     -- CDM Bars preview state
     local _cdmPreview          -- reference to the preview frame
     local _cdmHeaderFixedH = 0
@@ -4158,13 +4181,65 @@ initFrame:SetScript("OnEvent", function(self)
             end
             local removed = sd.removedSpells
             for _, icon in ipairs(liveIcons) do
-                local _sid = ns._ecmeFC[icon] and ns._ecmeFC[icon].spellID
+                -- Resolve the live icon's DISPLAYED spell the same way the picker
+                -- does (canonical = GetSpellID-first, with the active-frame cache),
+                -- so a spell whose cooldownInfo base differs from its live talent
+                -- form (e.g. 137029 Holy Paladin vs 432496 Holy Bulwark) dedups
+                -- against the stored canonical ID instead of appending a generic
+                -- duplicate slot. Falls back to the raw FC spellID for our own
+                -- custom frames (no GetSpellID/cooldownInfo to resolve).
+                local _sid = (ns.GetCanonicalSpellIDForFrame and ns.GetCanonicalSpellIDForFrame(icon))
+                             or (ns._ecmeFC[icon] and ns._ecmeFC[icon].spellID)
                 if _sid and _sid > 0 then
                     _sid = NormalizeToBase(_sid)
                     if not seen[_sid] and not (removed and removed[_sid]) then
                         sd.assignedSpells[#sd.assignedSpells + 1] = _sid
                         seen[_sid] = true
                     end
+                end
+            end
+        end
+        -- Reconcile stale generic variants already saved before the canonical
+        -- resolver was cache-backed. A buff whose cooldownInfo base spellID
+        -- differs from its live talent form (e.g. 137029 Holy Paladin stored
+        -- next to 432496 Holy Bulwark) leaves a generic duplicate that variant
+        -- dedup cannot collapse -- there is no GetBaseSpell/override link
+        -- between them. Map each pooled buff frame's base spellID -> its
+        -- canonical live spellID (GetSpellID-first, cache-backed), then drop any
+        -- stored base whose canonical live form is ALSO present, never stranding
+        -- a lone entry.
+        if sd.assignedSpells and #sd.assignedSpells > 1
+           and ns.GetCanonicalSpellIDForFrame then
+            local viewer = _G.BuffIconCooldownViewer
+            local pool = viewer and viewer.itemFramePool
+            if pool and pool.EnumerateActive then
+                local canonOf
+                for frame in pool:EnumerateActive() do
+                    local info = frame.cooldownInfo
+                    local baseSID = info and info.spellID
+                    local canon = ns.GetCanonicalSpellIDForFrame(frame)
+                    if type(baseSID) == "number" and baseSID > 0
+                       and type(canon) == "number" and canon > 0 then
+                        local nb, nc = NormalizeToBase(baseSID), NormalizeToBase(canon)
+                        if nb ~= nc then
+                            canonOf = canonOf or {}
+                            canonOf[nb] = nc
+                        end
+                    end
+                end
+                if canonOf then
+                    local present = {}
+                    for _, sid in ipairs(sd.assignedSpells) do present[sid] = true end
+                    local writeIdx = 1
+                    for readIdx = 1, #sd.assignedSpells do
+                        local sid = sd.assignedSpells[readIdx]
+                        local canon = canonOf[sid]
+                        if not (canon and present[canon]) then
+                            sd.assignedSpells[writeIdx] = sid
+                            writeIdx = writeIdx + 1
+                        end
+                    end
+                    for i = writeIdx, #sd.assignedSpells do sd.assignedSpells[i] = nil end
                 end
             end
         end
@@ -6546,6 +6621,8 @@ initFrame:SetScript("OnEvent", function(self)
             local bd = SelectedCDMBar()
             if not bd then return nil, nil end
             local iconSz = bd.iconSize or 36
+            -- Match the preview render: width-matched bars show 32px icons.
+            if EllesmereUI.GetWidthMatchTarget and EllesmereUI.GetWidthMatchTarget("CDM_" .. bd.key) then iconSz = 36 end
             local spacing = bd.spacing or 2
             -- Preview always renders left-to-right regardless of bar growDirection,
             -- so drag logic must also use left-to-right ordering.
@@ -6694,6 +6771,8 @@ initFrame:SetScript("OnEvent", function(self)
 
             if not bd then return end
             local iconSz = bd.iconSize or 36
+            -- Match the preview render: width-matched bars show 32px icons.
+            if EllesmereUI.GetWidthMatchTarget and EllesmereUI.GetWidthMatchTarget("CDM_" .. bd.key) then iconSz = 36 end
             local spacing = bd.spacing or 2
             local nudge = math.floor((iconSz + spacing) * 0.15)
 
@@ -7303,6 +7382,11 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             local iconSize = bd.iconSize or 36
+            -- Width-matched bars derive their real icon size from the matched
+            -- target, so bd.iconSize (the disabled Icon Scale value) is ignored
+            -- at runtime. Show a neutral 32px in the preview rather than the
+            -- stale scale value.
+            if EllesmereUI.GetWidthMatchTarget and EllesmereUI.GetWidthMatchTarget("CDM_" .. bd.key) then iconSize = 36 end
             local iconH = iconSize
             local pvShape = bd.iconShape or "none"
             if pvShape == "cropped" then
@@ -7475,11 +7559,13 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Spell slot
                     local id = tracked[i]
                     slot._previewSpellID = nil  -- reset each update
+                    slot._previewItemID = nil
                     if id then
                         local tex
                         if id <= -100 then
                             -- On-use bag item: negated itemID
                             tex = C_Item.GetItemIconByID(-id)
+                            slot._previewItemID = -id
                         elseif id < 0 then
                             -- Trinket slot: get icon from equipped item
                             local itemID = GetInventoryItemID("player", -id)
@@ -7504,6 +7590,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Blank slot (empty grid filler)
                     slot._icon:SetTexture(nil)
                     slot._previewSpellID = nil
+                    slot._previewItemID = nil
                 end
 
                 local bSz = bd.borderSize or 1
@@ -7529,10 +7616,6 @@ initFrame:SetScript("OnEvent", function(self)
                 -- Stack count preview text
                 if slot._stackText then
                     if i <= count then
-                        SetPVFont(slot._stackText, FONT_PATH, bd.stackCountSize or 11)
-                        slot._stackText:ClearAllPoints()
-                        slot._stackText:SetPoint("BOTTOMRIGHT", bd.stackCountX or 0, (bd.stackCountY or 0) + 2)
-                        slot._stackText:SetTextColor(bd.stackCountR or 1, bd.stackCountG or 1, bd.stackCountB or 1)
                         -- Show charge count for charge-based spells (default: on)
                         -- Match real bar styling exactly (RefreshCDMIconAppearance)
                         local scFont = ns.GetCDMFont and ns.GetCDMFont() or FONT_PATH
@@ -7541,16 +7624,27 @@ initFrame:SetScript("OnEvent", function(self)
                         local scG = bd.stackCountG or 1
                         local scB = bd.stackCountB or 1
                         local scX = bd.stackCountX or 0
-                        local scY = (bd.stackCountY or 0) + 2
+                        local scY = bd.stackCountY or 0
+                        local scPoint = bd.stackCountPosition or "bottomright"
+                        if scPoint == "bottomleft" then scPoint = "BOTTOMLEFT"; scY = scY + 2
+                        elseif scPoint == "topright" then scPoint = "TOPRIGHT"
+                        elseif scPoint == "topleft" then scPoint = "TOPLEFT"
+                        elseif scPoint == "center" then scPoint = "CENTER"
+                        else scPoint = "BOTTOMRIGHT"; scY = scY + 2 end
                         EllesmereUI.ApplyIconTextFont(slot._stackText, scFont, scSize, "cdm")
                         slot._stackText:SetTextColor(scR, scG, scB)
                         slot._stackText:ClearAllPoints()
-                        slot._stackText:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT", scX, scY)
+                        slot._stackText:SetPoint(scPoint, slot, scPoint, scX, scY)
                         local sid = slot._previewSpellID
                         local chargeInfo = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
                         local maxC = chargeInfo and chargeInfo.maxCharges
                         if (bd.showCharges ~= false) and maxC and maxC > 1 then
                             slot._stackText:SetText(tostring(maxC))
+                            slot._stackText:Show()
+                        elseif slot._previewItemID and (bd.showItemCount ~= false) then
+                            -- Preset potions/healthstones: fake item count so users can
+                            -- preview and style the count text (mirrors charge preview).
+                            slot._stackText:SetText("5")
                             slot._stackText:Show()
                         else
                             slot._stackText:Hide()
@@ -8865,24 +8959,22 @@ initFrame:SetScript("OnEvent", function(self)
         local isBuffGlowBar = isBuffBar or (barData.barType == "custom_buff")
         local scaleAnimRow
         if isBuffGlowBar then
-            -- Row 1: Always Show Buffs | Icon Scale
+            -- Row 1: Always Show Buffs (native buff bars only) | Icon Scale.
+            -- Per-bar now: shows a greyed placeholder icon for each inactive
+            -- tracked buff. No edit-mode change, no reload. custom_buff bars
+            -- draw their own always-on icons, so the toggle is hidden there.
             local row1Left
-            row1Left = { type="toggle", text="Always Show Buffs",
-                getValue=function() return DB().cdmBars.showInactiveBuffIcons == true end,
-                setValue=function(v)
-                    DB().cdmBars.showInactiveBuffIcons = v
-                    if ns.ReapplyEditModePolicy then
-                        ns.ReapplyEditModePolicy()
-                    end
-                    EllesmereUI:ShowConfirmPopup({
-                        title = "Reload Required",
-                        message = "This setting requires a UI reload to take effect.",
-                        confirmText = "Reload UI",
-                        cancelText = "Later",
-                        onConfirm = function() ReloadUI() end,
-                    })
-                    EllesmereUI:RefreshPage()
-                end }
+            if isBuffBar then
+                row1Left = { type="toggle", text="Always Show Buffs",
+                    getValue=function() return BD().showInactiveBuffIcons == true end,
+                    setValue=function(v)
+                        BD().showInactiveBuffIcons = v
+                        ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                        EllesmereUI:RefreshPage()
+                    end }
+            else
+                row1Left = { type="label", text="" }
+            end
             local icsWDis, icsWTip, icsWRaw = EllesmereUI.MatchGuard("CDM_" .. barKey, "Width")
             local icsHDis, icsHTip = EllesmereUI.MatchGuard("CDM_" .. barKey, "Height")
             local icsDis = function() return icsWDis() or icsHDis() end
@@ -8906,21 +8998,21 @@ initFrame:SetScript("OnEvent", function(self)
                       ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
                   end });  y = y - h
 
-            -- Inline cog on Always Show Buffs toggle
-            do
+            -- Inline cog on Always Show Buffs toggle (per-bar; native buff bars)
+            if isBuffBar then
                 local _, asbCogShow = EllesmereUI.BuildCogPopup({
                     title = "Always Show Buffs",
                     rows = {
                         { type="toggle", label="Desaturate Off CD",
-                          get=function() return DB().cdmBars.desaturateInactiveBuffs ~= false end,
+                          get=function() return BD().desaturateInactiveBuffs ~= false end,
                           set=function(v)
-                              DB().cdmBars.desaturateInactiveBuffs = v
+                              BD().desaturateInactiveBuffs = v
                           end },
                     },
                 })
                 local leftRgn = scaleAnimRow._leftRegion
                 local asbCog = MakeCogBtn(leftRgn, asbCogShow, leftRgn._control, EllesmereUI.COGS_ICON)
-                local function asbCogOff() return not DB().cdmBars.showInactiveBuffIcons end
+                local function asbCogOff() return not BD().showInactiveBuffIcons end
                 asbCog:SetAlpha(asbCogOff() and 0.15 or 0.4)
                 local asbBlock = CreateFrame("Frame", nil, asbCog)
                 asbBlock:SetAllPoints(); asbBlock:SetFrameLevel(asbCog:GetFrameLevel() + 10); asbBlock:EnableMouse(true)
@@ -9016,6 +9108,9 @@ initFrame:SetScript("OnEvent", function(self)
                     if origGlowClick then origGlowClick(self, ...) end
                 end)
 
+                -- Anchor for the inline pixel-glow cog (placed left of the swatches).
+                leftRgn._lastInline = glowSwatch
+
                 local function UpdateBuffGlowState()
                     local gt = BD().buffGlowType or 0
                     local noGlow = gt == 0 or IsCustomShape()
@@ -9025,6 +9120,20 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 EllesmereUI.RegisterWidgetRefresh(function() updateGlowSwatch(); updateClassSwatch(); UpdateBuffGlowState() end)
                 UpdateBuffGlowState()
+            end
+
+            -- Inline pixel-glow cog on Buff Glow: 1:1 replica of the Pandemic Glow
+            -- cog (Lines / Thickness / Speed), enabled only when Pixel Glow is chosen.
+            do
+                local function buffAntsOff()
+                    return (BD().buffGlowType or 0) ~= 1 or IsCustomShape()
+                end
+                BuildPandemicCogButton(buffGlowRow, buffAntsOff, BD, function()
+                    ns.BuildAllCDMBars()
+                    -- Re-apply to already-active glows so the permanent custom aura
+                    -- preview reflects the new Lines/Thickness/Speed immediately.
+                    if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
+                end, { lines = "buffGlowLines", thickness = "buffGlowThickness", speed = "buffGlowSpeed" })
             end
 
             -- Row 3: Custom Icon Shape | Icon Zoom
@@ -9808,7 +9917,7 @@ initFrame:SetScript("OnEvent", function(self)
                   BD().cooldownFontSize = v
                   ns.RefreshCDMIconAppearance(BD().key); Refresh(); UpdateCDMPreview()
               end },
-            { type="slider", text="Stack Size",
+            { type="slider", text="Charge/Stack Size",
               min=6, max=24, step=1, trackWidth=120,
               getValue=function() return BD().stackCountSize or 11 end,
               setValue=function(v)
@@ -9906,13 +10015,21 @@ initFrame:SetScript("OnEvent", function(self)
             if on then scBlock:Hide() else scBlock:Show() end
 
             local _, scCogShow = EllesmereUI.BuildCogPopup({
-                title = "Stack Count",
+                title = "Charge/Stack Text",
                 rows = {
                     { type="toggle", label="Show Item Count",
                       get=function() return BD().showItemCount ~= false end,
                       set=function(v)
                           BD().showItemCount = v
                           ns.RefreshCDMIconAppearance(BD().key); ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview(); EllesmereUI:RefreshPage()
+                      end },
+                    { type="dropdown", label="Position",
+                      values={ bottomright="Bottom Right", bottomleft="Bottom Left", topright="Top Right", topleft="Top Left", center="Center" },
+                      order={ "bottomright", "bottomleft", "topright", "topleft", "center" },
+                      get=function() return BD().stackCountPosition or "bottomright" end,
+                      set=function(v)
+                          BD().stackCountPosition = v
+                          ns.RefreshCDMIconAppearance(BD().key); ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview()
                       end },
                     { type="slider", label="X Offset", min=-50, max=50, step=1,
                       get=function() return BD().stackCountX or 0 end,
@@ -9931,16 +10048,45 @@ initFrame:SetScript("OnEvent", function(self)
             MakeCogBtn(rightRgn, scCogShow, scSwatch, EllesmereUI.DIRECTIONS_ICON)
         end
 
-        -- Suppress GCD (CD/utility bars only)
+        -- Suppress GCD (CD/utility bars only) | Pixel Glow Thickness (+ cog: Lines/Speed)
         if not isBuffGlowBar then
         local isCDOrUtility = (barData.barType == "cooldowns" or barData.barType == "utility")
         if isCDOrUtility then
-            _, h = W:DualRow(parent, y,
+            local sgcdRow
+            sgcdRow, h = W:DualRow(parent, y,
                 { type="toggle", text="Suppress GCD",
                   tooltip="Hide the brief GCD swipe that flashes when you cast any spell. The actual ability cooldown swipe still shows.",
                   getValue=function() return BD().suppressGCD == true end,
                   setValue=function(v) BD().suppressGCD = v and true or false; Refresh() end },
-                { type="label", text="" });  y = y - h
+                { type="slider", text="Pixel Glow Thickness", min=1, max=4, step=1, trackWidth=120,
+                  tooltip="Thickness of any Pixel Glow assigned to this bar's buttons. Assign glows by right-clicking an icon in the preview.",
+                  getValue=function() return BD().pixelGlowThickness or 2 end,
+                  setValue=function(v)
+                      BD().pixelGlowThickness = v
+                      ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end; Refresh()
+                  end });  y = y - h
+            -- Inline cog on Pixel Glow Thickness: Lines + Speed
+            do
+                local rightRgn = sgcdRow._rightRegion
+                local _, pgCogShow = EllesmereUI.BuildCogPopup({
+                    title = "Pixel Glow",
+                    rows = {
+                        { type="slider", label="Lines", min=2, max=16, step=1,
+                          get=function() return BD().pixelGlowLines or 8 end,
+                          set=function(v)
+                              BD().pixelGlowLines = v
+                              ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end
+                          end },
+                        { type="slider", label="Speed", min=1, max=8, step=1,
+                          get=function() return 9 - (BD().pixelGlowSpeed or 4) end,
+                          set=function(v)
+                              BD().pixelGlowSpeed = 9 - v
+                              ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end
+                          end },
+                    },
+                })
+                MakeCogBtn(rightRgn, pgCogShow, nil, EllesmereUI.RESIZE_ICON)
+            end
         end
         end
 

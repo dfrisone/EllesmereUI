@@ -5728,10 +5728,22 @@ function ERB:OnInitialize()
     end
     -- Consulted inside ApplyAnchorPosition. Returns 0 while unlock mode is
     -- active so the layout shows normal (and movers capture true positions).
+    -- Returns dir (+1/-1/0) and an optional extra-pixel offset added to the shift
+    -- magnitude ("Extra Y Offset"). The extra is only meaningful when dir ~= 0.
     EllesmereUI._GetAnchorTargetShiftDir = function(targetKey, childKey)
         if EllesmereUI._unlockActive then return 0 end
-        if targetKey == "ERB_ClassResource" then return ResolveShiftDir() end
-        if targetKey == "ERB_Power" then return ResolveShiftDirPower() end
+        if targetKey == "ERB_ClassResource" then
+            local dir = ResolveShiftDir()
+            if dir == 0 then return 0 end
+            local sp = ERB.db and ERB.db.profile and ERB.db.profile.secondary
+            return dir, (sp and sp.shiftElementsIfNoResourceExtraY) or 0
+        end
+        if targetKey == "ERB_Power" then
+            local dir = ResolveShiftDirPower()
+            if dir == 0 then return 0 end
+            local pp = ERB.db and ERB.db.profile and ERB.db.profile.primary
+            return dir, (pp and pp.shiftElementsIfNoPowerExtraY) or 0
+        end
         return 0
     end
     -- Whether a shift WOULD apply outside unlock mode (unlock entry uses this to

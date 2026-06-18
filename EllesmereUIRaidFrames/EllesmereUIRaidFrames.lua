@@ -223,6 +223,10 @@ local ABSORB_STYLE_TEX = {
     clean           = "Interface\\Buttons\\WHITE8X8",
     blizzard        = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\blizzard.tga",
     healBlizzModern = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\louis-absorb.png",
+    largeOutlinedStripes  = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-left.png",
+    largeOutlinedStripesR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-right.png",
+    largeStripes          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-left.png",
+    largeStripesR         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-right.png",
 }
 local ABSORB_STYLE_ALPHA = {
     striped         = 0.8,
@@ -431,6 +435,7 @@ local defaults = {
 
         -- Text
         nameSize         = 10,
+        nameMaxLength    = 15,  -- max characters shown for unit names (0 = off / no cap)
         nameColorMode    = "custom",  -- "class", "accent", "custom"
         nameCustomColor  = { r = 1, g = 1, b = 1 },
         namePosition     = "topleft", -- "topleft", "top", "topright", "left", "center", "right", "bottomleft", "bottom"
@@ -1165,6 +1170,33 @@ local function GetHealthColor(unit, s)
     end
 end
 
+-- UTF-8 aware character-count cap for an in-frame display name. Shared by the
+-- live frames (via ResolveDisplayName) and every preview surface so they stay in
+-- sync. Skips secret strings entirely (#, string.byte and string.sub all throw
+-- on a secret value), so a secret name is shown verbatim and uncapped. The cap
+-- reads db.profile.nameMaxLength (0 = off). On ns (not a file-scope local) to
+-- stay clear of the main-chunk 200-local cap.
+function ns.CapName(display)
+    if type(display) ~= "string" then return display end
+    if issecretvalue and issecretvalue(display) then return display end
+    if display == "" then return display end
+    local maxLen = db and db.profile and db.profile.nameMaxLength or 15
+    if not maxLen or maxLen <= 0 then return display end
+    local bytes = #display
+    local i, chars, endByte = 1, 0, nil
+    while i <= bytes do
+        local b = string.byte(display, i)
+        local sz = (b < 128 and 1) or (b < 224 and 2) or (b < 240 and 3) or 4
+        chars = chars + 1
+        if chars == maxLen then endByte = i + sz - 1; break end
+        i = i + sz
+    end
+    if endByte and endByte < bytes then
+        return string.sub(display, 1, endByte)
+    end
+    return display
+end
+
 -- Resolve the display name for a unit. Nickname sources are consulted in order:
 -- Northern Sky Raid Tools (NSAPI) first, then Timeline Reminders (TimelineReminders),
 -- falling back to the short character name. For NSRT we pass our addon key "EUI"
@@ -1173,13 +1205,14 @@ end
 -- user controls nicknames entirely through NSRT (no EUI-side toggle). GetName returns
 -- the short name when no nickname is set, which falls through to the next source.
 -- pcall keeps a misbehaving external API from ever breaking name rendering.
-local function ResolveDisplayName(unit)
+local function ResolveDisplayName(unit, applyCap)
     local name = UnitName(unit) or ""
+    local display
     if NSAPI and NSAPI.GetName then
         local ok, dn = pcall(NSAPI.GetName, NSAPI, name, "EUI")
         if ok and type(dn) == "string"
            and not (issecretvalue and issecretvalue(dn)) and dn ~= "" and dn ~= name then
-            return dn
+            display = dn
         end
     end
     -- Timeline Reminders nicknames (secondary source, consulted when NSRT did not
@@ -1187,22 +1220,29 @@ local function ResolveDisplayName(unit)
     -- controls these entirely through TR (no EUI-side toggle). GetNickname falls
     -- back to the plain unit name when no nickname is set, so HasNickname is
     -- checked first to keep the normal Ambiguate path for un-nicknamed units.
-    local TR = TimelineReminders
-    if TR and TR.GetNickname and TR.HasNickname and TR.NicknamesEnabledForAddOn then
-        local okGate, enabled = pcall(TR.NicknamesEnabledForAddOn, TR, ns.NICK_ADDON)
-        if okGate and enabled then
-            local okHas, has = pcall(TR.HasNickname, TR, unit)
-            if okHas and has then
-                local ok, dn = pcall(TR.GetNickname, TR, unit)
-                if ok and type(dn) == "string"
-                   and not (issecretvalue and issecretvalue(dn)) and dn ~= "" then
-                    return dn
+    if not display then
+        local TR = TimelineReminders
+        if TR and TR.GetNickname and TR.HasNickname and TR.NicknamesEnabledForAddOn then
+            local okGate, enabled = pcall(TR.NicknamesEnabledForAddOn, TR, ns.NICK_ADDON)
+            if okGate and enabled then
+                local okHas, has = pcall(TR.HasNickname, TR, unit)
+                if okHas and has then
+                    local ok, dn = pcall(TR.GetNickname, TR, unit)
+                    if ok and type(dn) == "string"
+                       and not (issecretvalue and issecretvalue(dn)) and dn ~= "" then
+                        display = dn
+                    end
                 end
             end
         end
     end
-    if Ambiguate then name = Ambiguate(name, "short") end
-    return name
+    if not display then
+        if Ambiguate then name = Ambiguate(name, "short") end
+        display = name
+    end
+    -- Cap only the in-frame name (applyCap), not the top name bar banner.
+    if applyCap then display = ns.CapName(display) end
+    return display
 end
 
 local function GetNameColor(unit, s)
@@ -1296,7 +1336,7 @@ function ns.RefreshAllNames()
     local function refresh(unit, btn)
         local d = GetFFD(btn)
         if d and d.nameText then
-            d.nameText:SetText(ResolveDisplayName(unit))
+            d.nameText:SetText(ResolveDisplayName(unit, true))
             local nr, ng, nb = GetNameColor(unit, s)
             d.nameText:SetTextColor(nr, ng, nb)
         end
@@ -1434,7 +1474,7 @@ local function ApplyAbsorbStyle(absorbBar, style, settings)
     local ac = settings and settings.absorbColor or { r = 1, g = 1, b = 1 }
     absorbBar:SetStatusBarTexture(tex)
     absorbBar:SetStatusBarColor(ac.r, ac.g, ac.b, alpha)
-    local tiled = (style == "striped" or style == "stripedReversed")
+    local tiled = (style == "striped" or style == "stripedReversed" or style == "largeStripes" or style == "largeStripesR" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR")
     local fill = absorbBar:GetStatusBarTexture()
     if fill then
         fill:SetDrawLayer("ARTWORK", 1)
@@ -1460,12 +1500,13 @@ ns.ApplyHealAbsorbStyle = function(haBar, style, settings)
     local tex = ABSORB_STYLE_TEX[style] or "Interface\\Buttons\\WHITE8X8"
     local alpha = settings and (settings.healAbsorbOpacity or 75) / 100 or 0.65
     local hc = settings and settings.healAbsorbColor or { r = 0.8, g = 0.15, b = 0.15 }
-    -- "Default Blizz Frames" heal style: hardcoded white (its color swatch is disabled).
-    if style == "healBlizzModern" then hc = { r = 1, g = 1, b = 1 } end
+    -- "Default Blizz Frames" and "Large Outlined Stripes" heal styles are
+    -- pre-colored: hardcoded white tint (their color swatch is disabled).
+    if style == "healBlizzModern" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR" then hc = { r = 1, g = 1, b = 1 } end
     local mask = haBar._absorbMask
     haBar:SetStatusBarTexture(tex)
     haBar:SetStatusBarColor(hc.r, hc.g, hc.b, alpha)
-    local tiled = (style == "striped" or style == "stripedReversed")
+    local tiled = (style == "striped" or style == "stripedReversed" or style == "largeStripes" or style == "largeStripesR" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR")
     local fill = haBar:GetStatusBarTexture()
     if fill then
         fill:SetDrawLayer("ARTWORK", 2)
@@ -1602,7 +1643,7 @@ local function CreateAbsorbBar(button, healthBar)
     -- nil guards inside ReanchorAbsorbToFill simply skip them. Without this,
     -- they resolved to globals (nil) inside the closure, so the heal absorb
     -- never re-anchored to the right edge in "Show Absorbs from Right Edge".
-    local healAbsorbBar, healPredBar
+    local healAbsorbBar, healPredBar, healClip
 
     -- Re-anchor clip frames and forward bar to the current health fill texture.
     -- Must be called whenever SetStatusBarTexture replaces the fill object.
@@ -1651,9 +1692,20 @@ local function CreateAbsorbBar(button, healthBar)
             backfillBar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
         end
 
-        -- Heal absorb placement (independent of shield absorb).
+        -- Heal absorb placement (independent of shield absorb). Its own clip
+        -- frame spans the full bar for right/left, filled health for overlay.
         if healAbsorbBar then
             local healMode = db.profile.healAbsorbEdgeMode or "overlay"
+            if healClip then
+                healClip:ClearAllPoints()
+                if healMode == "right" or healMode == "left" then
+                    healClip:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
+                    healClip:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
+                else
+                    healClip:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
+                    healClip:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT", 0, 0)
+                end
+            end
             healAbsorbBar:ClearAllPoints()
             if healMode == "right" then
                 healAbsorbBar:SetReverseFill(true)
@@ -1687,8 +1739,16 @@ local function CreateAbsorbBar(button, healthBar)
         end
     end
 
+    -- Heal absorb has its OWN clip frame (not the shield's curClip) so its
+    -- placement is independent: overlay clips to the filled health, while
+    -- right/left span the FULL bar (filled + missing health). Bounds are set
+    -- per healAbsorbEdgeMode in ReanchorAbsorbToFill (initial = overlay).
+    healClip = CreateFrame("Frame", nil, healthBar)
+    healClip:SetClipsChildren(true)
+    healClip:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
+    healClip:SetPoint("BOTTOMRIGHT", healthBar:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
     -- Heal absorb bar: red overlay eating into filled health
-    healAbsorbBar = CreateFrame("StatusBar", nil, curClip)
+    healAbsorbBar = CreateFrame("StatusBar", nil, healClip)
     healAbsorbBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     healAbsorbBar._absorbMask = absorbMask
     local haFill = healAbsorbBar:GetStatusBarTexture()
@@ -1778,7 +1838,11 @@ local function UpdateAbsorb(button, unit)
     local topBar = ab._topBar
     local barOn = topBar and s.absorbBarEnabled
     local styleOn = s.absorbStyle and s.absorbStyle ~= "none"
-    if not styleOn and not barOn then
+    -- Heal absorb is INDEPENDENT of the shield absorb (matches Unit Frames):
+    -- it renders whenever its own style is on, so keep going if it is enabled
+    -- even when both the shield style and the Absorb Bar are off.
+    local healOn = (s.healAbsorbStyle or "clean") ~= "none"
+    if not styleOn and not barOn and not healOn then
         ab:Hide()
         if fw then fw:Hide() end
         if fw and fw._edgeSpark then fw._edgeSpark:Hide() end
@@ -1818,14 +1882,44 @@ local function UpdateAbsorb(button, unit)
         end
     end
 
+    -- Heal absorb renders INDEPENDENTLY of the shield absorb / Absorb Bar, so it
+    -- shows whenever its own style is enabled (even with shield Absorb Style
+    -- "none"). Drawn under the shield bars (heal level +1 < shield +3). Done
+    -- before the shield gate below so it survives when the shield style is off.
+    if ha then
+        local haStyle = s.healAbsorbStyle or "clean"
+        if haStyle == "none" then
+            ha:Hide()
+        else
+            local hc = s.healAbsorbColor or { r = 0.8, g = 0.15, b = 0.15 }
+            local haKey = (haStyle or "") .. (s.healAbsorbOpacity or 75) .. hc.r .. hc.g .. hc.b
+            if ha._lastHaKey ~= haKey then
+                ha._lastHaKey = haKey
+                ns.ApplyHealAbsorbStyle(ha, haStyle, s)
+            end
+            local healAbsorbAmt = UnitGetTotalHealAbsorbs and UnitGetTotalHealAbsorbs(unit) or 0
+            ha:SetWidth(hp:GetWidth()); ha:SetHeight(hp:GetHeight())
+            ha:SetMinMaxValues(0, maxHealth)
+            ha:SetValue(healAbsorbAmt)
+            ha:Show()
+            -- Black backing: track the heal-absorb fill rect, opacity from settings.
+            local hbg = ha._bg
+            if hbg then
+                hbg:SetColorTexture(0, 0, 0, (s.healAbsorbBgOpacity or 25) / 100)
+                hbg:SetAllPoints(ha:GetStatusBarTexture())
+                hbg:Show()
+            end
+        end
+    end
+
     -- Absorb styles disabled: only the Absorb Bar is active. Keep the
-    -- pre-existing behavior for the in-frame bars and stop here.
+    -- pre-existing behavior for the in-frame bars and stop here. Heal absorb is
+    -- rendered above (independent), so this gate no longer hides it.
     if not styleOn then
         ab:Hide()
         if fw then fw:Hide() end
         if fw and fw._edgeSpark then fw._edgeSpark:Hide() end
         if fw and fw._bfSpark then fw._bfSpark:Hide() end
-        if ha then ha:Hide() end
         return
     end
 
@@ -1890,33 +1984,6 @@ local function UpdateAbsorb(button, unit)
     elseif fw and fw._edgeSpark then
         fw._edgeSpark:Hide()
         if fw._bfSpark then fw._bfSpark:Hide() end
-    end
-
-    -- Heal absorb: feed directly without Lua comparison
-    if ha then
-        local haStyle = s.healAbsorbStyle or "clean"
-        if haStyle == "none" then
-            ha:Hide()
-        else
-            local hc = s.healAbsorbColor or { r = 0.8, g = 0.15, b = 0.15 }
-            local haKey = (haStyle or "") .. (s.healAbsorbOpacity or 75) .. hc.r .. hc.g .. hc.b
-            if ha._lastHaKey ~= haKey then
-                ha._lastHaKey = haKey
-                ns.ApplyHealAbsorbStyle(ha, haStyle, s)
-            end
-            local healAbsorbAmt = UnitGetTotalHealAbsorbs and UnitGetTotalHealAbsorbs(unit) or 0
-            ha:SetWidth(hpW); ha:SetHeight(hpH)
-            ha:SetMinMaxValues(0, maxHealth)
-            ha:SetValue(healAbsorbAmt)
-            ha:Show()
-            -- Black backing: track the heal-absorb fill rect, opacity from settings.
-            local hbg = ha._bg
-            if hbg then
-                hbg:SetColorTexture(0, 0, 0, (s.healAbsorbBgOpacity or 25) / 100)
-                hbg:SetAllPoints(ha:GetStatusBarTexture())
-                hbg:Show()
-            end
-        end
     end
 
     -- Heal prediction: extends from current HP into missing health
@@ -3133,7 +3200,7 @@ local function UpdateButton(button)
     -- Name (visibility owned by AnchorNameText, which hides it when the Top Name
     -- Bar is enabled; setting text/color on a hidden FS is harmless)
     if d.nameText then
-        d.nameText:SetText(ResolveDisplayName(unit))
+        d.nameText:SetText(ResolveDisplayName(unit, true))
         local nr, ng, nb = GetNameColor(unit, s)
         d.nameText:SetTextColor(nr, ng, nb)
     end
@@ -4865,7 +4932,7 @@ FB.Update = function(b)
         fbc and fbc.b or 49/255, (s.healthBarOpacity or 100) / 100)
 
     if b._nameText then
-        b._nameText:SetText(ResolveDisplayName(unit))
+        b._nameText:SetText(ResolveDisplayName(unit, true))
         local nr, ng, nb = GetNameColor(unit, s)
         b._nameText:SetTextColor(nr, ng, nb)
     end
@@ -9879,7 +9946,14 @@ local function CreatePreviewFrame(index)
 
     -- Heal absorb bar (preview): red overlay eating into filled health from HP edge
     do
-        local ha = CreateFrame("StatusBar", nil, curClip)
+        -- Own clip frame (mirrors live): right/left span the full bar, overlay
+        -- clips to filled health. Bounds set per healAbsorbEdgeMode in render.
+        local healClip = CreateFrame("Frame", nil, health)
+        healClip:SetClipsChildren(true)
+        healClip:SetPoint("TOPLEFT", health, "TOPLEFT", 0, 0)
+        healClip:SetPoint("BOTTOMRIGHT", health:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
+        f._healClip = healClip
+        local ha = CreateFrame("StatusBar", nil, healClip)
         ha:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
         local hf = ha:GetStatusBarTexture()
         if hf then hf:SetDrawLayer("ARTWORK", 2); hf:AddMaskTexture(absorbMask) end
@@ -10570,7 +10644,7 @@ local function ApplyPreviewData(f, index)
             local modern = (absStyle == "blizzardModern")
             local tex = ABSORB_STYLE_TEX[absStyle] or "Interface\\Buttons\\WHITE8X8"
             local alpha = (s.absorbOpacity or 90) / 100
-            local tiled = (absStyle == "striped" or absStyle == "stripedReversed")
+            local tiled = (absStyle == "striped" or absStyle == "stripedReversed" or absStyle == "largeStripes" or absStyle == "largeStripesR" or absStyle == "largeOutlinedStripes" or absStyle == "largeOutlinedStripesR")
             local hpW = w
             local hpH = healthH
             local mask = f._absorbBar._mask
@@ -10719,8 +10793,8 @@ local function ApplyPreviewData(f, index)
             local haTex = ABSORB_STYLE_TEX[haStyle] or "Interface\\Buttons\\WHITE8X8"
             local haAlpha = (s.healAbsorbOpacity or 75) / 100
             local hc = s.healAbsorbColor or { r = 0.8, g = 0.15, b = 0.15 }
-            if haStyle == "healBlizzModern" then hc = { r = 1, g = 1, b = 1 } end
-            local tiled = (haStyle == "striped" or haStyle == "stripedReversed")
+            if haStyle == "healBlizzModern" or haStyle == "largeOutlinedStripes" or haStyle == "largeOutlinedStripesR" then hc = { r = 1, g = 1, b = 1 } end
+            local tiled = (haStyle == "striped" or haStyle == "stripedReversed" or haStyle == "largeStripes" or haStyle == "largeStripesR" or haStyle == "largeOutlinedStripes" or haStyle == "largeOutlinedStripesR")
             local hpW = w
             local hpH = healthH
             local mask = f._healAbsorbBar._mask
@@ -10750,6 +10824,16 @@ local function ApplyPreviewData(f, index)
         -- Heal absorb placement (independent of shield absorb; mirrors live).
         if f._health then
             local healMode = s.healAbsorbEdgeMode or "overlay"
+            if f._healClip then
+                f._healClip:ClearAllPoints()
+                if healMode == "right" or healMode == "left" then
+                    f._healClip:SetPoint("TOPLEFT", f._health, "TOPLEFT", 0, 0)
+                    f._healClip:SetPoint("BOTTOMRIGHT", f._health, "BOTTOMRIGHT", 0, 0)
+                else
+                    f._healClip:SetPoint("TOPLEFT", f._health, "TOPLEFT", 0, 0)
+                    f._healClip:SetPoint("BOTTOMRIGHT", f._health:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
+                end
+            end
             f._healAbsorbBar:ClearAllPoints()
             if healMode == "right" then
                 f._healAbsorbBar:SetReverseFill(true)
@@ -11188,7 +11272,7 @@ local function ApplyPreviewData(f, index)
         end
         -- Force text re-render (WoW doesn't visually re-layout on JustifyH change alone)
         f._nameText:SetText("")
-        f._nameText:SetText(name)
+        f._nameText:SetText(ns.CapName(name))
         ApplyFont(f._nameText, s.nameSize or 10)
         local nameMode = s.nameColorMode or "class"
         if nameMode == "accent" then
@@ -12240,7 +12324,7 @@ ns._ShowSizePreview = function(tier)
             local name = NAMES[((i - 1) % #NAMES) + 1]
             if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(f._nameText, GetOutline() == "" and GetUseShadow()) end
             f._nameText:SetFont(fontPath, nameSize, GetOutline())
-            f._nameText:SetText(name)
+            f._nameText:SetText(ns.CapName(name))
             f._nameText:SetWidth(bw * 0.75)
             -- Name color
             if cc then

@@ -268,6 +268,85 @@ end
 -------------------------------------------------------------------------------
 EllesmereUI._WHATSNEW_PATCHES = {
     {
+        version = "8.2.1",
+        heroes = {
+            {
+                module = "Cooldown Manager",
+                title = "Always Show Buffs, Now Per-Bar",
+                desc  = "Always Show Buffs is now a per-bar toggle, so each buff bar can independently keep its tracked buffs on screen even when they are off cooldown, with its own option to grey out the inactive ones.",
+                nav   = { module = "EllesmereUICooldownManager", page = "CDM Bars", section = "Icon Display", highlight = "Always Show Buffs",
+                    preSelect = function()
+                        if EllesmereUI._setCDMBar then EllesmereUI._setCDMBar("buffs") end
+                    end },
+            },
+            {
+                module = "Action Bars",
+                title = "Two New Action Bars",
+                desc  = "Action Bars has two new bars (9 + 10) for all of you demons that need more than 96 slots. Each has its own keybinds and stays hidden until you set its Visibility.",
+                nav   = { module = "EllesmereUIActionBars", page = "Bar Display", section = "VISIBILITY", highlight = "Visibility" },
+            },
+            {
+                module = "Unit Frames",
+                title = "Heal Absorb Overhaul",
+                desc  = "New heal absorb and absorb textures for Unit and Raid Frames: Large Stripes and Outlined Stripes. Unit Frames got a live preview toggle for heal absorbs, and Right/Left edge placement fixes.",
+                nav   = { module = "EllesmereUIUnitFrames", page = "Main Frames", section = "ABSORBS", highlight = "Heal Absorb Style",
+                    preSelect = function()
+                        if EllesmereUI._setUnitFrameUnit then EllesmereUI._setUnitFrameUnit("player") end
+                        EllesmereUI._pendingUnitSelect = "player"
+                    end },
+            },
+            {
+                module = "Character Sheet",
+                title = "Mastery Tooltip",
+                desc  = "Hovering Mastery on the character sheet now shows your spec's real mastery (its name and effect, e.g. Mastery: Razor Claws) instead of a generic line.",
+                nav   = { module = "EllesmereUIBlizzardSkin", page = "Character Sheet", section = "CORE OPTIONS", highlight = "Enable Character Sheet" },
+            },
+        },
+        features = {
+            {
+                module = "Action Bars",
+                title = "Menu, Bags & XP Bars Tab",
+                desc  = "Micro Menu, Bag Bar, and XP and Reputation bar settings now live on their own dedicated options tab.",
+                nav   = { module = "EllesmereUIActionBars", page = "Menu, Bags & XP Bars", section = "MICRO MENU & BAGS", highlight = "Micro Menu Visibility" },
+            },
+            {
+                module = "Cooldown Manager",
+                title = "Customizable Pixel Glow",
+                desc  = "CD and Utility bars get a Pixel Glow Thickness slider plus a cog for Lines and Speed, and the Buff Glow's Pixel Glow gets a matching Lines, Thickness, and Speed cog.",
+                nav   = { module = "EllesmereUICooldownManager", page = "CDM Bars", section = "Icon Display", highlight = "Pixel Glow Thickness" },
+            },
+            {
+                module = "Cooldown Manager",
+                title = "Charge & Stack Text Positioning",
+                desc  = "Place the charge or stack count in any corner or the center, and preset potions and healthstones now show a sample count in the preview.",
+                nav   = { module = "EllesmereUICooldownManager", page = "CDM Bars", section = "Icon Display", highlight = "Charge/Stack Size" },
+            },
+            {
+                module = "Raid Frames",
+                title = "Max Name Length",
+                desc  = "A new cog on Name Size caps how many characters of a long unit name show on raid frames.",
+                nav   = { module = "EllesmereUIRaidFrames", page = "Frames", section = "TEXT DISPLAY", highlight = "Name Size" },
+            },
+            {
+                module = "Resource Bars",
+                title = "Extra Shift Offset",
+                desc  = "The Shift Elements if No Resource and No Power settings get a cog with an Extra Y Offset slider to fine-tune how far anchored elements move.",
+                nav   = { module = "EllesmereUIResourceBars", page = "Class, Power and Health Bars", section = "BAR DISPLAY", highlight = "Shift Elements if No Resource" },
+            },
+        },
+        fixes = {
+            { module = "Cooldown Manager", text = "Adding a tracked buff to a custom buff bar no longer shows a duplicate or a generic icon for talent transformed spells." },
+            { module = "Action Bars", text = "A mouseover bar no longer vanishes the instant you drop a spell onto it while your cursor is still over it." },
+            { module = "Action Bars", text = "The main bar's page-swap arrows now follow its mouseover fade and visibility settings." },
+            { module = "Action Bars", text = "The Pet Bar no longer stays visible after exiting Quick Keybind mode." },
+            { module = "Nameplates", text = "Cast bar spell text is no longer hidden behind the border, the unit name sits above aura icons, and raid and elite markers sit beneath them." },
+            { module = "Nameplates", text = "Top Left and Top Right auras, raid markers, and classification icons now sit flush against the plate edge." },
+            { module = "Aura Reminders", text = "The GCD, Modern, and Classic glow styles now render at the correct size." },
+            { module = "Bags", text = "Shift-right-clicking a stack inside a category now shows the split-in-OneBag hint." },
+            { module = "Profiles", text = "The profile sync popup now closes when you close the options window." },
+        },
+    },
+    {
         version = "8.2.0",
         heroes = {
             {

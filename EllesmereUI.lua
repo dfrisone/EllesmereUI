@@ -1509,7 +1509,7 @@ local function RowBg(frame, parent)
     local bgParent = splitParent or frame
     local bg = bgParent:CreateTexture(nil, "BACKGROUND")
     bg:SetColorTexture(0, 0, 0, alpha)
-    -- RowBg is always panel context â€” use PanelPP (resolved lazily since
+    -- RowBg is always panel context -- use PanelPP (resolved lazily since
     -- PanelPP is defined after this function in the file)
     local ppp = EllesmereUI.PanelPP or PP
     ppp.DisablePixelSnap(bg)
@@ -1810,7 +1810,7 @@ do
     end
 
     ---------------------------------------------------------------------------
-    --  Scale(x)  â€” snap a value to the nearest physical-pixel boundary.
+    --  Scale(x)  -- snap a value to the nearest physical-pixel boundary.
     --  Used for frame sizes, positions, and offsets.
     --
     --  Divides x into whole-pixel chunks of size `mult`, then truncates
@@ -1914,7 +1914,7 @@ do
     end
 
     ---------------------------------------------------------------------------
-    --  Convenience wrappers â€” pixel-snapped frame geometry
+    --  Convenience wrappers -- pixel-snapped frame geometry
     ---------------------------------------------------------------------------
     function PP.Size(frame, w, h)
         frame:SetSize(PP.Scale(w), h and PP.Scale(h) or PP.Scale(w))
@@ -1958,7 +1958,7 @@ do
     end
 
     ---------------------------------------------------------------------------
-    --  DisablePixelSnap â€” prevent WoW's engine from rounding texture
+    --  DisablePixelSnap -- prevent WoW's engine from rounding texture
     --  coordinates to the nearest pixel, which causes blurry edges on
     --  sub-pixel-sized elements.
     ---------------------------------------------------------------------------
@@ -2163,7 +2163,7 @@ do
     end
 
     ---------------------------------------------------------------------------
-    --  Border registry â€” tracks all border containers for centralized re-snap
+    --  Border registry -- tracks all border containers for centralized re-snap
     --  when UI scale or resolution changes. Avoids per-border OnUpdate overhead.
     ---------------------------------------------------------------------------
     local allBorders = {}
@@ -2315,7 +2315,7 @@ do
     scaleWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
     scaleWatcher:SetScript("OnEvent", function(_, event)
         if event == "DISPLAY_SIZE_CHANGED" then
-            -- Resolution changed â€” recalculate perfect and re-apply scale
+            -- Resolution changed -- recalculate perfect and re-apply scale
             PP.physicalWidth, PP.physicalHeight = GetPhysicalScreenSize()
             PP.perfect = 768 / PP.physicalHeight
             -- Only auto-update if user explicitly opted into auto scale
@@ -2351,7 +2351,7 @@ PP = EllesmereUI.PP
 --  Panel Pixel Perfect (PanelPP)
 --  The options panel runs at effective scale = baseScale * userScale.
 --  At userScale 1.0, 1 unit = 1 physical pixel and integer rounding suffices.
---  At other scales (e.g. 101%), 1 unit â‰  1 pixel, so PanelPP computes its
+--  At other scales (e.g. 101%), 1 unit ~ 1 pixel, so PanelPP computes its
 --  own mult (size of 1 physical pixel in panel units) and snaps to that grid,
 --  exactly like PP does for UIParent but using the panel's own scale.
 -------------------------------------------------------------------------------
@@ -2425,7 +2425,7 @@ do
         obj:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", x, -y)
     end
 
-    -- DisablePixelSnap is scale-independent â€” just reuse PP's version
+    -- DisablePixelSnap is scale-independent -- just reuse PP's version
     PanelPP.DisablePixelSnap = PP.DisablePixelSnap
 
     -- Panel borders delegate to the unified PP border system
@@ -2849,7 +2849,7 @@ end
 -------------------------------------------------------------------------------
 --  Global Font System
 -------------------------------------------------------------------------------
--- Canonical font name â†’ filename mapping (shared across all addons)
+-- Canonical font name -> filename mapping (shared across all addons)
 EllesmereUI.FONT_FILES = {
     ["Expressway"]          = "Expressway.TTF",
     ["Avant Garde"]         = "Avant Garde Naowh.ttf",
@@ -3554,9 +3554,9 @@ do
 end
 
 -- Get DH Soul Fragment count (current, max)
--- Vengeance: C_Spell.GetSpellCastCount(228477) â€” returns a SECRET value
+-- Vengeance: C_Spell.GetSpellCastCount(228477) -- returns a SECRET value
 -- in 12.0+.  The caller must handle it via StatusBar or similar.
--- Devourer (hero spec 1480): aura 1225789/1227702 â€” WHITELISTED, safe to read.
+-- Devourer (hero spec 1480): aura 1225789/1227702 -- WHITELISTED, safe to read.
 function EllesmereUI.GetSoulFragments()
     local spec = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization()
     local specID = spec and C_SpecializationInfo.GetSpecializationInfo(spec)
@@ -3584,7 +3584,7 @@ function EllesmereUI.GetSoulFragments()
 end
 
 -- Get Enhancement Shaman Maelstrom Weapon stacks (current, max)
--- Buff spell 344179 â€” WHITELISTED by Blizzard, safe to read in combat.
+-- Buff spell 344179 -- WHITELISTED by Blizzard, safe to read in combat.
 -- Base max 5 stacks (10 with Raging Maelstrom talent 384143)
 function EllesmereUI.GetMaelstromWeapon()
     local aura = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(344179)
@@ -4044,9 +4044,9 @@ end
 -- Resolve a texture key to a file path. Handles "sm:" prefixed keys by
 -- falling back to LSM:Fetch when the key isn't in the local lookup table.
 -- This covers the case where a SharedMedia addon loads after our init.
---   texTable  â€“ the addon's local texture lookup (e.g. TBB_TEXTURES)
---   key       â€“ the saved texture key (e.g. "sm:ElvUI Gloss" or "beautiful")
---   fallback  â€“ path to use if nothing resolves (optional)
+--   texTable  - the addon's local texture lookup (e.g. TBB_TEXTURES)
+--   key       - the saved texture key (e.g. "sm:ElvUI Gloss" or "beautiful")
+--   fallback  - path to use if nothing resolves (optional)
 function EllesmereUI.ResolveTexturePath(texTable, key, fallback)
     if not key then return fallback end
     local path = texTable and texTable[key]
@@ -4070,10 +4070,10 @@ end
 -------------------------------------------------------------------------------
 --  Append LibSharedMedia-3.0 statusbar textures into a runtime texture table.
 --  Signature: AppendSharedMediaTextures(names, order, castBarNames, textures)
---    names        â€“ key â†’ display-name string table
---    order        â€“ ordered array of keys (receives "---" + SM keys appended)
---    castBarNames â€“ optional secondary names table (may be nil)
---    textures     â€“ key â†’ texture-path table
+--    names        - key -> display-name string table
+--    order        - ordered array of keys (receives "---" + SM keys appended)
+--    castBarNames - optional secondary names table (may be nil)
+--    textures     - key -> texture-path table
 --  Safe to call multiple times; duplicate keys are skipped via the textures
 --  table guard.
 --
@@ -4164,9 +4164,9 @@ end
 -------------------------------------------------------------------------------
 --  Append LibSharedMedia-3.0 sounds into a runtime sound dropdown table.
 --  Signature: AppendSharedMediaSounds(paths, names, order)
---    paths   â€“ key â†’ sound file path table
---    names   â€“ key â†’ display name string table
---    order   â€“ ordered array of keys (receives "---" + SM keys appended)
+--    paths   - key -> sound file path table
+--    names   - key -> display name string table
+--    order   - ordered array of keys (receives "---" + SM keys appended)
 --  Safe to call multiple times; duplicate keys are skipped via the paths
 --  table guard.
 -------------------------------------------------------------------------------
@@ -4198,9 +4198,9 @@ end
 -------------------------------------------------------------------------------
 --  Append LibSharedMedia-3.0 fonts into a runtime font dropdown table.
 --  Signature: AppendSharedMediaFonts(values, order, opts)
---    values  â€“ key â†’ { text, font } table (or key â†’ path when keyByName=true)
---    order   â€“ ordered array of keys
---    opts    â€“ optional { keyByName = true } â€” use display name as key
+--    values  - key -> { text, font } table (or key -> path when keyByName=true)
+--    order   - ordered array of keys
+--    opts    - optional { keyByName = true } -- use display name as key
 --  Safe to call multiple times; duplicate keys are skipped.
 -------------------------------------------------------------------------------
 function EllesmereUI.AppendSharedMediaFonts(values, order, opts)
@@ -4366,7 +4366,7 @@ local function CreateConfirmPopup()
     popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
 
     -- Pixel-perfect scale (match main frame, including user panel scale)
-    -- Popups render at default UI scale â€” no custom scaling needed.
+    -- Popups render at default UI scale -- no custom scaling needed.
     -- (Dimmer stays at scale 1 so it covers the full screen.)
 
     -- Background: flat dark default, optional stone atlas for modern style
@@ -5290,6 +5290,9 @@ local function CreateMainFrame()
         for _, fn in ipairs(_onShowCallbacks) do fn() end
     end)
     mainFrame:SetScript("OnHide", function()
+        -- Close the sidebar sync popup so it never lingers after the options
+        -- window is dismissed (Hide button, Escape, etc.).
+        if EllesmereUI.CloseSyncPopup then EllesmereUI.CloseSyncPopup() end
         if _onHideCallbacks then
             for _, fn in ipairs(_onHideCallbacks) do fn() end
         end
@@ -5536,7 +5539,7 @@ local function CreateMainFrame()
     end
 
     -------------------------------------------------------------------
-    --  Unlock Mode button  (always top, not a module â€” just triggers unlock)
+    --  Unlock Mode button  (always top, not a module -- just triggers unlock)
     -------------------------------------------------------------------
     do
         local btn = CreateFrame("Button", nil, sidebar)
@@ -5719,9 +5722,9 @@ local function CreateMainFrame()
     sbClearBtn:SetPoint("RIGHT", sidebarSearchFrame, "RIGHT", -4, 0)
     sbClearBtn:SetFrameLevel(sbEdit:GetFrameLevel() + 2)
     sbClearBtn:Hide()
-    local sbClearLabel = MakeFont(sbClearBtn, 20, nil, TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.35)
+    local sbClearLabel = MakeFont(sbClearBtn, 15, nil, TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.35)
     sbClearLabel:SetPoint("CENTER")
-    sbClearLabel:SetText("Ã—")
+    sbClearLabel:SetText("x")
     sbClearBtn:SetScript("OnEnter", function() sbClearLabel:SetTextColor(1, 1, 1, 1) end)
     sbClearBtn:SetScript("OnLeave", function() sbClearLabel:SetTextColor(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.35) end)
     sbClearBtn:SetScript("OnClick", function()
@@ -7330,15 +7333,15 @@ BuildTabs = function(pageNames, disabledPages, disabledTooltips)
         placeholder:SetPoint("LEFT", searchFrame, "LEFT", 10, 0)
         placeholder:SetText(EllesmereUI.L("Search Module Settings..."))
 
-        -- Clear button (X) on right side â€” frame level above editBox so clicks register
+        -- Clear button (X) on right side -- frame level above editBox so clicks register
         local clearBtn = CreateFrame("Button", nil, searchFrame)
         clearBtn:SetSize(20, 20)
         clearBtn:SetPoint("RIGHT", searchFrame, "RIGHT", -4, 0)
         clearBtn:SetFrameLevel(editBox:GetFrameLevel() + 2)
         clearBtn:Hide()
-        local clearLabel = MakeFont(clearBtn, 20, nil, TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B, 0.35)
+        local clearLabel = MakeFont(clearBtn, 15, nil, TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B, 0.35)
         clearLabel:SetPoint("CENTER")
-        clearLabel:SetText("Ã—")
+        clearLabel:SetText("x")
         clearBtn:SetScript("OnEnter", function() clearLabel:SetTextColor(1, 1, 1, 1) end)
         clearBtn:SetScript("OnLeave", function() clearLabel:SetTextColor(TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B, 0.35) end)
         clearBtn:SetScript("OnClick", function()
@@ -7764,7 +7767,7 @@ function EllesmereUI:ApplyInlineSearch(query, skipHighlights)
 
     for _, vs in ipairs(visibleSections) do
         for _, m in ipairs(vs.sec.members) do
-            -- Skip spacer frames â€” they have no content to highlight
+            -- Skip spacer frames -- they have no content to highlight
             if m._isSpacer then
                 -- still counts as nothing
             else
@@ -7833,7 +7836,7 @@ function EllesmereUI:ApplyInlineSearch(query, skipHighlights)
         y = y - sec.header:GetHeight()
 
         for _, m in ipairs(sec.members) do
-            -- Hide spacers during search â€” they're just empty gaps
+            -- Hide spacers during search -- they're just empty gaps
             if m._isSpacer then
                 m:Hide()
             else
@@ -8097,7 +8100,7 @@ function EllesmereUI:SelectPage(pageName)
     if not activeModule or not modules[activeModule] then return end
     if pageName == activePage then return end
 
-    -- "Unlock Mode" is a fake nav item â€” fire unlock mode without changing page state.
+    -- "Unlock Mode" is a fake nav item -- fire unlock mode without changing page state.
     -- Capture the current module + page so DoClose can restore them exactly.
     if pageName == "Unlock Mode" then
         if EllesmereUI._openUnlockMode then
@@ -8108,7 +8111,7 @@ function EllesmereUI:SelectPage(pageName)
         return
     end
 
-    -- "Disable Addons" is a fake nav item â€” close EUI and open the Blizzard addon list.
+    -- "Disable Addons" is a fake nav item -- close EUI and open the Blizzard addon list.
     if pageName == "Disable Addons" then
         if EllesmereUI._mainFrame then EllesmereUI._mainFrame:Hide() end
         C_Timer.After(0, function()
@@ -8765,7 +8768,7 @@ function EllesmereUI:GetScrollFrame() return scrollFrame end
 function EllesmereUI:GetActivePage() return activePage end
 
 --- Apply a user-defined panel scale on top of the pixel-perfect base scale.
---- @param userScale number  multiplier (1.0 = default, 0.5â€“1.5 range)
+--- @param userScale number  multiplier (1.0 = default, 0.5-1.5 range)
 do
     local scaleAnimFrame = CreateFrame("Frame")
     local scaleFrom, scaleTo, scaleElapsed
@@ -8812,7 +8815,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "8.2.0"
+EllesmereUI.VERSION = "8.2.1"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -9851,7 +9854,7 @@ initFrame:SetScript("OnEvent", function(self, event)
     local demoConfigs = {
         -- Only list addons that do NOT have their own EUI_*_Options.lua yet.
         -- Addons with real options files register via PLAYER_LOGIN and must NOT
-        -- appear here â€” the demo would race and win due to page caching.
+        -- appear here -- the demo would race and win due to page caching.
         { folder = "EllesmereBeaconReminder",     title = "Beacon Reminders", desc = "Configure alerts for missing Beacon of Light or Faith.",  pages = { "General", "Alerts" } },
         { folder = "EllesmereConsumablesTracker", title = "Consumables",      desc = "Track consumables and raid buffs for instanced content.", pages = { "General", "Tracking" } },
     }

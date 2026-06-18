@@ -1858,7 +1858,8 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Row 4: Shift Elements if No Resource | Expand Power Bar if No Resource
-        _, h = W:DualRow(parent, y,
+        local shiftResRow
+        shiftResRow, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Shift Elements if No Resource",
               tooltip = "Shifts any elements anchored to the class resource bar up or down to offset the missing class resource.",
               -- Mutually exclusive with "Expand Power Bar if No Resource": grey this
@@ -1928,9 +1929,27 @@ initFrame:SetScript("OnEvent", function(self)
                   EllesmereUI:RefreshPage()
               end }
         );  y = y - h
+        -- Inline reposition cog on "Shift Elements if No Resource": Extra Y Offset
+        do
+            local rgn = shiftResRow._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Shift Offset",
+                rows = {
+                    { type = "slider", label = "Extra Y Offset", min = -50, max = 50, step = 1,
+                      get = function() local p = DB(); return (p and p.secondary.shiftElementsIfNoResourceExtraY) or 0 end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.secondary.shiftElementsIfNoResourceExtraY = v
+                          RebuildClass()
+                      end },
+                },
+            })
+            MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
+        end
 
         -- Row 5: Shift Elements if No Power | (blank)
-        _, h = W:DualRow(parent, y,
+        local shiftPowRow
+        shiftPowRow, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Shift Elements if No Power",
               tooltip = "Shifts any elements anchored to the power bar up or down to offset the missing power bar. Applies both when the Power Bar is disabled and for specs that have no power (for example, Beast Mastery and Marksmanship Hunters, whose Focus shows as the class resource bar).",
               -- Intentionally NOT disabled when the Power Bar is off: this setting
@@ -1947,6 +1966,23 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type = "label", text = "" }
         );  y = y - h
+        -- Inline reposition cog on "Shift Elements if No Power": Extra Y Offset
+        do
+            local rgn = shiftPowRow._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Shift Offset",
+                rows = {
+                    { type = "slider", label = "Extra Y Offset", min = -50, max = 50, step = 1,
+                      get = function() local p = DB(); return (p and p.primary.shiftElementsIfNoPowerExtraY) or 0 end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.primary.shiftElementsIfNoPowerExtraY = v
+                          RebuildPower()
+                      end },
+                },
+            })
+            MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
+        end
 
         _, h = W:Spacer(parent, y, 16);  y = y - h
 
@@ -4999,7 +5035,7 @@ initFrame:SetScript("OnEvent", function(self)
         local w, h = Snap(cb.width), Snap(cb.height)
         local bs = cb.borderSize
 
-        -- Container size: icon (h×h) + bar (only when icon shown)
+        -- Container size: icon (hxh) + bar (only when icon shown)
         local hasIcon = cb.showIcon ~= false
         local iconW = hasIcon and Snap(h) or 0
         pf.container:SetSize(w + iconW, h)

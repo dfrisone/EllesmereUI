@@ -4,7 +4,7 @@
 ## Group: EllesmereUI
 ## Notes: Modern action bars built for performance and clarity.
 ## Author: Ellesmere
-## Version: 8.2.0
+## Version: 8.2.1
 ## Dependencies: EllesmereUI
 ## SavedVariables: EllesmereUIActionBarsDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
@@ -15,3 +15,8 @@ EUI_ActionBars_Flyout.lua
 
 # Options
 EUI_ActionBars_Options.lua
+
+# Note: Bindings.xml (custom Bar9/Bar10 keybind commands) is intentionally NOT
+# listed here -- WoW auto-loads a file named Bindings.xml from the addon root.
+# Listing it would load it a second time through the UI-XML parser ("Unrecognized
+# XML: Binding").

@@ -14,6 +14,7 @@ local function GetEABOptUseShadow() return EllesmereUI.GetFontUseShadow and Elle
 --  Section / page names  (edit here to rename everywhere)
 -------------------------------------------------------------------------------
 local PAGE_DISPLAY        = "Bar Display"
+local PAGE_MENUBAGSXP     = "Menu, Bags & XP Bars"
 local PAGE_ANIMATIONS     = "Bar Animations"
 local SECTION_ICON_APPEARANCE = "ICONS"
 local SECTION_LAYOUT      = "LAYOUT"
@@ -80,29 +81,31 @@ initFrame:SetScript("OnEvent", function(self)
         return DATA_BAR[SelectedKey()]
     end
 
+    -- First actual button of a bar, used to read its default size. Prefers our
+    -- own EABButton; falls back to the native Blizzard button. Returns nil for
+    -- custom bars (Bar9/Bar10), which have no native button -- callers default
+    -- the size. (Avoids concatenating a nil buttonPrefix.)
+    local function FirstBarButton(key)
+        local eb = ns.barButtons and ns.barButtons[key]
+        if eb and eb[1] then return eb[1] end
+        local bi = BAR_LOOKUP[key]
+        if bi and bi.buttonPrefix then return _G[bi.buttonPrefix .. "1"] end
+        return nil
+    end
+
     ---------------------------------------------------------------------------
     --  Ordered dropdown values for the bar selector
     ---------------------------------------------------------------------------
     local barLabels = {}
     local barOrder  = {}
     for _, key in ipairs(BAR_DROPDOWN_ORDER) do
-        -- Skip individual MicroBar/BagBar and XPBar/RepBar — replaced by combined entries
+        -- Skip MicroBar/BagBar and XPBar/RepBar — these live on the dedicated
+        -- "Menu, Bags & XP Bars" tab, not the Bar Display bar selector.
         if key ~= "MicroBar" and key ~= "BagBar" and key ~= "XPBar" and key ~= "RepBar" then
             barLabels[key] = BAR_DROPDOWN_VALUES[key]
             barOrder[#barOrder + 1] = key
         end
-        -- Insert combined entries after PetBar (last real bar before extras)
-        if key == "PetBar" then
-            barLabels["MicroBagBars"] = "Micro Menu / Bag Bars"
-            barOrder[#barOrder + 1] = "MicroBagBars"
-            barLabels["XPRepBars"] = "XP / Rep Bars"
-            barOrder[#barOrder + 1] = "XPRepBars"
-        end
     end
-
-    -- Register combined keys as visibility-only so normal LAYOUT/ICON sections are suppressed
-    ns.VISIBILITY_ONLY["MicroBagBars"] = true
-    ns.VISIBILITY_ONLY["XPRepBars"]    = true
 
     ---------------------------------------------------------------------------
     --  Edit Overlay System
@@ -283,7 +286,10 @@ initFrame:SetScript("OnEvent", function(self)
     local function BuildLivePreview(parent, yOff)
         local barKey  = SelectedKey()
         local barInfo = BAR_LOOKUP[barKey]
-        if not barInfo or not barInfo.buttonPrefix or not barInfo.count then
+        -- Skip visibility-only / data bars (no button count). Custom bars
+        -- (Bar9/Bar10) have a count but no native buttonPrefix, so key the guard
+        -- off count -- they render from our own EABButtons like any action bar.
+        if not barInfo or not barInfo.count then
             activePreview = nil
             return 0
         end
@@ -296,7 +302,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Read the real button size from the first actual button.
         -- Round to nearest integer to eliminate floating-point noise.
-        local btn1 = _G[barInfo.buttonPrefix .. "1"]
+        local btn1 = FirstBarButton(barKey)
         local realBtnW = math.floor((btn1 and btn1:GetWidth() or 0) + 0.5)
         local realBtnH = math.floor((btn1 and btn1:GetHeight() or 0) + 0.5)
         if realBtnW < 1 then realBtnW = 36 end
@@ -749,7 +755,7 @@ initFrame:SetScript("OnEvent", function(self)
 
                     -- Icon texture from our EABButton (not the hidden Blizzard button)
                     local eabBtns = ns.barButtons and ns.barButtons[info.key]
-                    local realBtn = eabBtns and eabBtns[i] or _G[info.buttonPrefix .. i]
+                    local realBtn = (eabBtns and eabBtns[i]) or (info.buttonPrefix and _G[info.buttonPrefix .. i])
                     local hasAction = realBtn and ns.ButtonHasAction(realBtn, info.buttonPrefix)
                     local iconTex = hasAction and realBtn.icon and realBtn.icon:GetTexture()
 
@@ -1145,17 +1151,26 @@ initFrame:SetScript("OnEvent", function(self)
     --  Unified bar settings builder
     ---------------------------------------------------------------------------
     ---------------------------------------------------------------------------
-    --  Micro Menu / Bag Bars combined page
+    --  Menu, Bags & XP Bars page  (dedicated tab)
     ---------------------------------------------------------------------------
-    local function BuildMicroBagPage(parent, y)
+    local function BuildMenuBagsXPPage(pageName, parent, yOffset)
         local W = EllesmereUI.Widgets
+        local y = yOffset
         local _, h
 
-        local function BuildVisRow(barKey, sectionTitle)
-            _, h = W:SectionHeader(parent, sectionTitle, y);  y = y - h
+        -- Global settings page, no bar selector header
+        EllesmereUI:ClearContentHeader()
+        parent._showRowDivider = true
+
+        local BLIZZ_DIS_TIP = "This option does not work with Blizzard Bars. Please use Blizzard Edit Mode."
+        local function _blizzDis() return EAB.db.profile.useBlizzardDataBars end
+
+        -- Shared visibility row: left vis dropdown + right "Visibility Options" checkbox dropdown
+        local function BuildVisRow(barKey, leftLabel, disabledFn, disTip)
             local visRow, visH = W:DualRow(parent, y,
-                { type="dropdown", text="Visibility",
+                { type="dropdown", text=leftLabel,
                   values=EllesmereUI.VIS_VALUES, order=EllesmereUI.VIS_ORDER,
+                  disabled=disabledFn, disabledTooltip=disTip, rawTooltip=disTip and true or nil,
                   getValue=function() return GetVisibilityKey(EAB.db.profile.bars[barKey]) end,
                   setValue=function(v)
                       ApplyVisibilityKey(EAB.db.profile.bars[barKey], v)
@@ -1170,52 +1185,44 @@ initFrame:SetScript("OnEvent", function(self)
                   setValue=function() end });  y = y - visH
 
             -- Replace the dummy right dropdown with checkbox dropdown
-            do
-                local rightRgn = visRow._rightRegion
-                if rightRgn._control then rightRgn._control:Hide() end
-                local PP = EllesmereUI.PanelPP
-                local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
-                    rightRgn, 210, rightRgn:GetFrameLevel() + 2,
-                    EllesmereUI.VIS_OPT_ITEMS,
-                    function(k) return EAB.db.profile.bars[barKey][k] or false end,
-                    function(k, v)
-                        EAB.db.profile.bars[barKey][k] = v
-                        EAB:UpdateHousingVisibility()
-                        EAB:ApplyCombatVisibility()
-                        EllesmereUI:RefreshPage()
-                    end)
-                PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
-                rightRgn._control = cbDD
-                rightRgn._lastInline = nil
-                EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
-            end
+            local rightRgn = visRow._rightRegion
+            if rightRgn._control then rightRgn._control:Hide() end
+            local PP = EllesmereUI.PanelPP
+            local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+                rightRgn, 210, rightRgn:GetFrameLevel() + 2,
+                EllesmereUI.VIS_OPT_ITEMS,
+                function(k) return EAB.db.profile.bars[barKey][k] or false end,
+                function(k, v)
+                    EAB.db.profile.bars[barKey][k] = v
+                    EAB:UpdateHousingVisibility()
+                    EAB:ApplyCombatVisibility()
+                    EllesmereUI:RefreshPage()
+                end)
+            PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
+            rightRgn._control = cbDD
+            rightRgn._lastInline = nil
+            EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
         end
 
-        BuildVisRow("MicroBar", "MICRO MENU")
+        -------------------------------------------------------------------
+        --  MICRO MENU & BAGS
+        -------------------------------------------------------------------
+        _, h = W:SectionHeader(parent, "MICRO MENU & BAGS", y);  y = y - h
+        BuildVisRow("MicroBar", "Micro Menu Visibility")
+        BuildVisRow("BagBar",   "Bag Bar Visibility")
+
         _, h = W:Spacer(parent, y, 12);  y = y - h
-        BuildVisRow("BagBar", "BAG BAR")
 
-        return math.abs(y)
-    end
-
-    ---------------------------------------------------------------------------
-    --  XP / Rep Bars combined page
-    ---------------------------------------------------------------------------
-    local function BuildXPRepPage(parent, y)
-        local W = EllesmereUI.Widgets
-        local _, h
-
-        local BLIZZ_DIS_TIP = "This option does not work with Blizzard Bars. Please use Blizzard Edit Mode."
-        local function _blizzDis() return EAB.db.profile.useBlizzardDataBars end
-
-        -- GENERAL section
-        _, h = W:SectionHeader(parent, "GENERAL", y);  y = y - h
+        -------------------------------------------------------------------
+        --  XP / REP BAR STYLE
+        -------------------------------------------------------------------
+        _, h = W:SectionHeader(parent, "XP/REP BAR STYLE", y);  y = y - h
 
         local orientValues = { HORIZONTAL = "Horizontal", VERTICAL = "Vertical" }
         local orientOrder  = { "HORIZONTAL", "VERTICAL" }
 
         _, h = W:DualRow(parent, y,
-            { type="toggle", text="Use Blizzard Bars",
+            { type="toggle", text="Use Blizzard's XP/Rep Bars",
               getValue=function() return EAB.db.profile.useBlizzardDataBars end,
               setValue=function(v)
                   EAB.db.profile.useBlizzardDataBars = v
@@ -1269,47 +1276,12 @@ initFrame:SetScript("OnEvent", function(self)
 
         _, h = W:Spacer(parent, y, 12);  y = y - h
 
-        -- Per-bar section builder
-        local function BuildDataBarSection(barKey, sectionTitle)
+        -------------------------------------------------------------------
+        --  EXPERIENCE BAR / REPUTATION BAR
+        -------------------------------------------------------------------
+        local function BuildDataBarSection(barKey, sectionTitle, visLabel)
             _, h = W:SectionHeader(parent, sectionTitle, y);  y = y - h
-
-            local visRow, visH = W:DualRow(parent, y,
-                { type="dropdown", text="Visibility",
-                  values=EllesmereUI.VIS_VALUES, order=EllesmereUI.VIS_ORDER,
-                  disabled=_blizzDis, disabledTooltip=BLIZZ_DIS_TIP, rawTooltip=true,
-                  getValue=function() return GetVisibilityKey(EAB.db.profile.bars[barKey]) end,
-                  setValue=function(v)
-                      ApplyVisibilityKey(EAB.db.profile.bars[barKey], v)
-                      EAB:RefreshRuntimeVisibility()
-                      EAB:RefreshMouseover()
-                      EAB:ApplyCombatVisibility()
-                      EllesmereUI:RefreshPage()
-                  end },
-                { type="dropdown", text="Visibility Options",
-                  values={ __placeholder = "..." }, order={ "__placeholder" },
-                  getValue=function() return "__placeholder" end,
-                  setValue=function() end });  y = y - visH
-
-            -- Replace the dummy right dropdown with checkbox dropdown
-            do
-                local rightRgn = visRow._rightRegion
-                if rightRgn._control then rightRgn._control:Hide() end
-                local PP = EllesmereUI.PanelPP
-                local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
-                    rightRgn, 210, rightRgn:GetFrameLevel() + 2,
-                    EllesmereUI.VIS_OPT_ITEMS,
-                    function(k) return EAB.db.profile.bars[barKey][k] or false end,
-                    function(k, v)
-                        EAB.db.profile.bars[barKey][k] = v
-                        EAB:UpdateHousingVisibility()
-                        EAB:ApplyCombatVisibility()
-                        EllesmereUI:RefreshPage()
-                    end)
-                PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
-                rightRgn._control = cbDD
-                rightRgn._lastInline = nil
-                EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
-            end
+            BuildVisRow(barKey, visLabel, _blizzDis, BLIZZ_DIS_TIP)
 
             local wDis, wTip, wRaw = EllesmereUI.MatchGuard(barKey, "Width", _blizzDis, BLIZZ_DIS_TIP)
             local hDis, hTip, hRaw = EllesmereUI.MatchGuard(barKey, "Height", _blizzDis, BLIZZ_DIS_TIP)
@@ -1330,24 +1302,14 @@ initFrame:SetScript("OnEvent", function(self)
                   end });  y = y - h
         end
 
-        BuildDataBarSection("XPBar",  "EXPERIENCE BAR")
+        BuildDataBarSection("XPBar",  "EXPERIENCE BAR", "XP Bar Visibility")
         _, h = W:Spacer(parent, y, 12);  y = y - h
-        BuildDataBarSection("RepBar", "REPUTATION BAR")
+        BuildDataBarSection("RepBar", "REPUTATION BAR", "Rep Bar Visibility")
 
         return math.abs(y)
     end
 
     local function BuildSharedBarSettings(parent, y)
-        -- Route combined virtual keys to their dedicated page builders
-        local sk = SelectedKey()
-        if sk == "MicroBagBars" then
-            BuildMicroBagPage(parent, y)
-            return y
-        elseif sk == "XPRepBars" then
-            BuildXPRepPage(parent, y)
-            return y
-        end
-
         local W = EllesmereUI.Widgets
         local _, h
 
@@ -1637,7 +1599,7 @@ initFrame:SetScript("OnEvent", function(self)
                       local s = SB()
                       if s.buttonWidth and s.buttonWidth > 0 then return s.buttonWidth end
                       local info = BAR_LOOKUP[SelectedKey()]
-                      local btn1 = info and _G[info.buttonPrefix .. "1"]
+                      local btn1 = FirstBarButton(SelectedKey())
                       return btn1 and math.floor((btn1:GetWidth() or 36) + 0.5) or 36
                   end,
                   setValue=function(v)
@@ -1664,7 +1626,7 @@ initFrame:SetScript("OnEvent", function(self)
                     onClick = function()
                         local s = SB()
                         local info = BAR_LOOKUP[SelectedKey()]
-                        local btn1 = info and _G[info.buttonPrefix .. "1"]
+                        local btn1 = FirstBarButton(SelectedKey())
                         local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
                             or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
                         for _, key in ipairs(GROUP_BAR_ORDER) do
@@ -1677,7 +1639,7 @@ initFrame:SetScript("OnEvent", function(self)
                     isSynced = function()
                         local s = SB()
                         local info = BAR_LOOKUP[SelectedKey()]
-                        local btn1 = info and _G[info.buttonPrefix .. "1"]
+                        local btn1 = FirstBarButton(SelectedKey())
                         local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
                             or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
                         for _, key in ipairs(GROUP_BAR_ORDER) do
@@ -1695,7 +1657,7 @@ initFrame:SetScript("OnEvent", function(self)
                         onApply       = function(checkedKeys)
                             local s = SB()
                             local info = BAR_LOOKUP[SelectedKey()]
-                            local btn1 = info and _G[info.buttonPrefix .. "1"]
+                            local btn1 = FirstBarButton(SelectedKey())
                             local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
                                 or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
                             for _, key in ipairs(checkedKeys) do
@@ -3040,6 +3002,8 @@ initFrame:SetScript("OnEvent", function(self)
                         { key = "Bar6",    label = "Action Bar 6" },
                         { key = "Bar7",    label = "Action Bar 7" },
                         { key = "Bar8",    label = "Action Bar 8" },
+                        { key = "Bar9",    label = "Action Bar 9" },
+                        { key = "Bar10",   label = "Action Bar 10" },
                     }
                     for _, bl in ipairs(barList) do
                         -- Skip self (can't page a bar to itself)
@@ -3911,9 +3875,9 @@ initFrame:SetScript("OnEvent", function(self)
                     _selectedBarKey = v
                     EllesmereUI:InvalidateContentHeaderCache()
                     EllesmereUI:SetContentHeader(_barsHeaderBuilder)
-                    -- Always force full rebuild — combined keys (MicroBagBars,
-                    -- XPRepBars) and StanceBar share the same visOnly/dataBar
-                    -- flags, so the old conditional missed transitions between them.
+                    -- Always force full rebuild — visibility-only bars and
+                    -- StanceBar share the same visOnly/dataBar flags, so the
+                    -- old conditional missed transitions between them.
                     EllesmereUI:RefreshPage(true)
                     -- MicroBar / BagBar have very little content; reset scroll
                     -- so the page isn't stuck at a stale offset from a taller bar.
@@ -3923,7 +3887,13 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Show/hide edit overlay for the newly selected bar
                     ShowEditOverlay(v)
                 end,
-                function(key) if not IsBarEnabled(key) then return EllesmereUI.DisabledTooltip("this action bar") end end
+                function(key)
+                    -- Bar9/Bar10 default to Hidden visibility, but must stay
+                    -- selectable in this dropdown so the user can pick and
+                    -- configure them -- never show the disabled effect on them.
+                    if key == "Bar9" or key == "Bar10" then return nil end
+                    if not IsBarEnabled(key) then return EllesmereUI.DisabledTooltip("this action bar") end
+                end
             )
             PP.Point(ddBtn, "TOP", hdr, "TOP", 0, fy)
             ddBtn:SetHeight(DD_H)
@@ -4666,13 +4636,15 @@ initFrame:SetScript("OnEvent", function(self)
     EllesmereUI:RegisterModule("EllesmereUIActionBars", {
         title       = "Action Bars",
         description = "Configure visuals and behavior for your action bars.",
-        pages       = { PAGE_DISPLAY, PAGE_ANIMATIONS },
+        pages       = { PAGE_DISPLAY, PAGE_MENUBAGSXP, PAGE_ANIMATIONS },
         buildPage   = function(pageName, parent, yOffset)
             if pageName ~= PAGE_DISPLAY then
                 HideEditOverlay()
             end
             if pageName == PAGE_DISPLAY then
                 return BuildBarDisplayPage(pageName, parent, yOffset)
+            elseif pageName == PAGE_MENUBAGSXP then
+                return BuildMenuBagsXPPage(pageName, parent, yOffset)
             elseif pageName == PAGE_ANIMATIONS then
                 return BuildAnimationsPage(pageName, parent, yOffset)
             end

@@ -487,6 +487,11 @@ local DEFAULTS = {
                 {
                     key = "buffs", name = "Buffs", enabled = true,
                     barType = "buffs",
+                    -- Always Show Buffs (per-bar): show a greyed placeholder icon
+                    -- for each inactive tracked buff. desaturateInactiveBuffs is
+                    -- the inline cog. Off by default for new installs; the
+                    -- migration turns it on for users who had the old global on.
+                    showInactiveBuffIcons = false, desaturateInactiveBuffs = true,
                     iconSize = 32, numRows = 1, spacing = 2,
                     borderSize = 1, borderR = 0, borderG = 0, borderB = 0, borderA = 1,
                     borderClassColor = false, borderTexture = "solid",
@@ -1264,9 +1269,20 @@ StartNativeGlow = function(overlay, style, cr, cg, cb, opts)
             shapeMask  = ifc2 and ifc2.shapeMask,
         })
     elseif entry.procedural then
-        local N = opts and opts.N or 8
-        local th = opts and opts.th or 2
-        local period = opts and opts.period or 4
+        -- Pixel Glow params. The pandemic glow passes explicit opts; per-button
+        -- glows (active-state, CD-ready, bar glows) pass none, so resolve the
+        -- owning CD/utility bar's Pixel Glow settings. Falls back to defaults for
+        -- action-bar overlays and bars that never set the values.
+        local N, th, period
+        if opts then
+            N = opts.N or 8; th = opts.th or 2; period = opts.period or 4
+        else
+            local pfc = _ecmeFC[parent]
+            local pbd = pfc and pfc.barKey and ns.GetBarData and ns.GetBarData(pfc.barKey)
+            N = (pbd and pbd.pixelGlowLines) or 8
+            th = (pbd and pbd.pixelGlowThickness) or 2
+            period = (pbd and pbd.pixelGlowSpeed) or 4
+        end
         local lineLen = math.floor((pW + pH) * (2 / N - 0.1))
         lineLen = math.min(lineLen, math.min(pW, pH))
         if lineLen < 1 then lineLen = 1 end
@@ -1281,7 +1297,7 @@ StartNativeGlow = function(overlay, style, cr, cg, cb, opts)
 
     overlay._glowActive = true
     overlay:SetAlpha(1)
-    -- No Show()/Hide() — overlay is always shown (created in DecorateFrame).
+    -- No Show()/Hide() -- overlay is always shown (created in DecorateFrame).
     -- Toggling visibility on a child of a Blizzard viewer frame triggers
     -- Layout hooks and causes position cascades.
 end
@@ -1291,7 +1307,7 @@ StopNativeGlow = function(overlay)
     _G_Glows.StopAllGlows(overlay)
     overlay._glowActive = false
     overlay:SetAlpha(0)
-    -- No Hide() — just alpha 0. Same reason as above.
+    -- No Hide() -- just alpha 0. Same reason as above.
 end
 ns.StartNativeGlow = StartNativeGlow
 ns.StopNativeGlow = StopNativeGlow
@@ -1796,26 +1812,10 @@ local function EnforceCooldownViewerEditModeSettings()
     -- preset resets on next login. Skip enforcement for presets and warn
     -- the user once per session.
     if numPresets > 0 and type(layoutInfo.activeLayout) == "number" and layoutInfo.activeLayout <= numPresets then
+        -- Preset layouts are read-only; we never modify them. Always Show Buffs
+        -- no longer requires a layout change (it draws placeholder icons), so
+        -- there is nothing to enforce or warn about on a preset layout.
         _editModePolicyApplied = true
-        -- Only warn about preset layouts when Always Show Buffs is enabled,
-        -- since that's the only setting that requires modifying the layout.
-        local p = ECME.db and ECME.db.profile
-        if not _suppressPolicyPopup and p and p.cdmBars and p.cdmBars.showInactiveBuffIcons then
-            C_Timer.After(0, function()
-                if not EllesmereUI or not EllesmereUI.ShowConfirmPopup then return end
-                EllesmereUI:ShowConfirmPopup({
-                    title = "Edit Mode Layout",
-                    message = "Your Edit Mode layout is a Blizzard preset which cannot be modified by addons. Please switch to a custom Edit Mode layout so EllesmereUI can manage your CDM settings.\n\nOpen Edit Mode to create or select a custom layout.",
-                    confirmText = "Open Edit Mode",
-                    cancelText = "Close",
-                    onConfirm = function()
-                        if not InCombatLockdown() and EditModeManagerFrame and EditModeManagerFrame.Show then
-                            EditModeManagerFrame:Show()
-                        end
-                    end,
-                })
-            end)
-        end
         return
     end
 
@@ -1859,17 +1859,13 @@ local function EnforceCooldownViewerEditModeSettings()
             if UpsertSetting(sysInfo.settings, visSetting, visAlways, visAlways) then
                 changed = true
             end
-            -- HideWhenInactive on buff icon viewer: 0 if user wants
-            -- always-visible buff icons, 1 otherwise. BuffBar viewer
-            -- (tracked bars) always stays at 1 -- "Always Show Buffs"
-            -- only applies to icon-based buff bars. Blizzard default is 1.
-            if sysInfo.systemIndex == buffIconIdx then
-                local p = ECME.db and ECME.db.profile
-                local hideVal = (p and p.cdmBars and p.cdmBars.showInactiveBuffIcons) and 0 or 1
-                if UpsertSetting(sysInfo.settings, hideEnum, hideVal, 1) then
-                    changed = true
-                end
-            elseif sysInfo.systemIndex == buffBarIdx then
+            -- Both buff viewers keep Blizzard's default HideWhenInactive=1
+            -- (inactive entries stay hidden). Always Show Buffs is now drawn by
+            -- our own per-bar placeholder icons, NOT by Blizzard's layout, so we
+            -- reset any stale HideWhenInactive=0 an older version wrote. New
+            -- installs are already at the default, so nothing changes here and
+            -- no reload is triggered -- only upgraders get a one-time reset.
+            if sysInfo.systemIndex == buffIconIdx or sysInfo.systemIndex == buffBarIdx then
                 if UpsertSetting(sysInfo.settings, hideEnum, 1, 1) then
                     changed = true
                 end
@@ -1930,6 +1926,28 @@ function ns.ReapplyEditModePolicy()
     _suppressPolicyPopup = false
 end
 
+-- One-time per-profile migration: the old GLOBAL Always Show Buffs settings
+-- (cdmBars.showInactiveBuffIcons / .desaturateInactiveBuffs) become PER-BAR
+-- fields. A profile that had the global ON turns every buff bar ON, so
+-- upgraders keep the same look (now via placeholder icons, no reload to toggle).
+-- Runs once per profile (flag on cdmBars); re-runs on profile swap to a
+-- pre-migration profile because that profile carries no flag.
+function ns.MigrateAlwaysShowBuffsToPerBar()
+    local p = ECME.db and ECME.db.profile
+    if not p or not p.cdmBars or p.cdmBars._asbPerBarMigrated then return end
+    p.cdmBars._asbPerBarMigrated = true
+    local oldOn = p.cdmBars.showInactiveBuffIcons
+    local oldDesat = p.cdmBars.desaturateInactiveBuffs
+    if oldOn == nil and oldDesat == nil then return end
+    if type(p.cdmBars.bars) ~= "table" then return end
+    for _, bd in ipairs(p.cdmBars.bars) do
+        if bd.barType == "buffs" then
+            if oldOn ~= nil then bd.showInactiveBuffIcons = oldOn and true or false end
+            if oldDesat ~= nil then bd.desaturateInactiveBuffs = oldDesat end
+        end
+    end
+end
+
 -------------------------------------------------------------------------------
 --  Hide / Restore Blizzard CDM
 -------------------------------------------------------------------------------
@@ -1958,7 +1976,7 @@ HideBlizzardCDM = function()
                 end
                 fc.hidden = true
             end
-            -- Don't reposition primary viewers (Essential/Utility/BuffIcon) —
+            -- Don't reposition primary viewers (Essential/Utility/BuffIcon) --
             -- individual icon anchoring handles positioning.
             -- BuffBarCooldownViewer is secondary: hide it via alpha since
             -- TBB renders its own bars and we don't hook its Cooldown widgets.
@@ -2166,7 +2184,7 @@ local function CDMFrameAnchorPoint(anchorSide, grow, centered)
 end
 
 -------------------------------------------------------------------------------
---  Recursive click-through helper ΓÇö disables/restores mouse on a frame tree
+--  Recursive click-through helper -- disables/restores mouse on a frame tree
 -------------------------------------------------------------------------------
 local function SetFrameClickThrough(frame, clickThrough)
     if not frame then return end
@@ -2496,7 +2514,7 @@ BuildCDMBar = function(barIndex)
             elseif anchorPos == "bottom" then
                 ok = pcall(frame.SetPoint, frame, fp, erbFrame, "BOTTOM", oX, -gap + oY)
             end
-            -- Circular anchor detected ΓÇö fall back to center
+            -- Circular anchor detected -- fall back to center
             if not ok then
                 frame:ClearAllPoints()
                 frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -3440,7 +3458,16 @@ local function RefreshCDMIconAppearance(barKey)
         local scFont = GetCDMFont()
         local scSize = (barData.stackCountSize or 11) * fontScale
         local scR, scG, scB = barData.stackCountR or 1, barData.stackCountG or 1, barData.stackCountB or 1
-        local scX, scY = barData.stackCountX or 0, (barData.stackCountY or 0) + 2
+        local scX, scY = barData.stackCountX or 0, barData.stackCountY or 0
+        -- Stack/charge/item-count text anchor. Default bottom-right keeps the
+        -- historical +2 vertical nudge so existing bars stay pixel-identical;
+        -- top and center positions sit flush with no baseline nudge.
+        local scPoint = barData.stackCountPosition or "bottomright"
+        if scPoint == "bottomleft" then scPoint = "BOTTOMLEFT"; scY = scY + 2
+        elseif scPoint == "topright" then scPoint = "TOPRIGHT"
+        elseif scPoint == "topleft" then scPoint = "TOPLEFT"
+        elseif scPoint == "center" then scPoint = "CENTER"
+        else scPoint = "BOTTOMRIGHT"; scY = scY + 2 end
         local showItemCount = barData.showItemCount ~= false
         -- Text must render above borders. Levels are relative to the
         -- icon's own frame level (CdmHooks: border +13, text +23).
@@ -3454,7 +3481,7 @@ local function RefreshCDMIconAppearance(barKey)
                 local appsFS = icon.Applications.Applications
                 SetBlizzCDMFont(appsFS, scFont, scSize, scR, scG, scB)
                 appsFS:ClearAllPoints()
-                appsFS:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", scX, scY)
+                appsFS:SetPoint(scPoint, icon, scPoint, scX, scY)
             end
         end
         -- ChargeCount (spell charges like Sigil/Roll) -- not an item count.
@@ -3465,7 +3492,7 @@ local function RefreshCDMIconAppearance(barKey)
                 local chargeFS = icon.ChargeCount.Current
                 SetBlizzCDMFont(chargeFS, scFont, scSize, scR, scG, scB)
                 chargeFS:ClearAllPoints()
-                chargeFS:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", scX, scY)
+                chargeFS:SetPoint(scPoint, icon, scPoint, scX, scY)
             end
         end
         -- Item count text (potions/healthstones) -- our own frame, safe to reparent
@@ -3473,7 +3500,7 @@ local function RefreshCDMIconAppearance(barKey)
             if txOverlay then icon._itemCountText:SetParent(txOverlay) end
             SetBlizzCDMFont(icon._itemCountText, scFont, scSize, scR, scG, scB)
             icon._itemCountText:ClearAllPoints()
-            icon._itemCountText:SetPoint("BOTTOMRIGHT", txOverlay or icon, "BOTTOMRIGHT", scX, scY)
+            icon._itemCountText:SetPoint(scPoint, txOverlay or icon, scPoint, scX, scY)
             if showItemCount then icon._itemCountText:Show() else icon._itemCountText:Hide() end
         end
 
@@ -3676,7 +3703,7 @@ local function EnsureFocusKickBar()
         anchorTo = "none", anchorPosition = "left",
         anchorOffsetX = 0, anchorOffsetY = 0,
         barVisibility = "always",
-        showStackCount = false, stackCountSize = 11,
+        showStackCount = false, stackCountSize = 11, stackCountPosition = "bottomright",
         outOfRangeOverlay = false,
         pandemicGlow = false,
         -- FocusKick-specific: nameplate side + offsets
@@ -4533,6 +4560,7 @@ ns.ApplyBarOpacity = ApplyBarOpacity
 function GetBarData(barKey)
     return barDataByKey[barKey]
 end
+ns.GetBarData = GetBarData
 
 
 
@@ -4549,12 +4577,12 @@ end
 
 -------------------------------------------------------------------------------
 --  Keybind cache for CDM icons
---  Reads HotKey text directly from action button frames ΓÇö the same source
+--  Reads HotKey text directly from action button frames -- the same source
 --  the action bar itself uses, so it's always correct regardless of bar addon.
 --  Deferred if called during combat; fires on PLAYER_REGEN_ENABLED instead.
 -------------------------------------------------------------------------------
 
--- Action bar slot ΓåÆ binding name map. Non-bar-1 entries listed first so that
+-- Action bar slot -> binding name map. Non-bar-1 entries listed first so that
 -- if a spell appears on multiple bars, the more specific bar wins over bar 1.
 local _barBindingDefs = {
     { prefix = "MULTIACTIONBAR1BUTTON", startSlot = 61  },  -- bar 2 bottom left
@@ -4738,6 +4766,10 @@ BuildAllCDMBars = function()
         end
         return
     end
+
+    -- Migrate the old global Always Show Buffs settings to per-bar before
+    -- anything reads them (placeholder injection / desaturate ticker).
+    if ns.MigrateAlwaysShowBuffsToPerBar then ns.MigrateAlwaysShowBuffsToPerBar() end
 
     -- Force Blizzard's EditMode CooldownViewer to "Always Visible" so
     -- hideWhenInactive and other viewer settings don't fight with CDM.

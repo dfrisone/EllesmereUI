@@ -1114,10 +1114,10 @@ local GLOW_TYPES = {
     { name = "Action Button Glow",   buttonGlow = true },
     { name = "Pixel Glow",           procedural = true },
     { name = "Auto-Cast Shine",      autocast = true },
-    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook",  scale = 1.6 },
-    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook",  scale = 1.6 },
+    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook",  texPadding = 1.6 },
+    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook",  texPadding = 1.4 },
     { name = "Classic WoW Glow",     texture = "Interface\\SpellActivationOverlay\\IconAlertAnts",
-      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, scale = 1.09 },
+      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, texPadding = 1.25 },
 }
 
 local GLOW_VALUES = { [0] = "None" }

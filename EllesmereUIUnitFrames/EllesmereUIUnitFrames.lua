@@ -2357,6 +2357,10 @@ local ABSORB_STYLE_TEX = {
     stripedReversed = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-5-reversed.png",
     clean           = "Interface\\Buttons\\WHITE8X8",
     blizzard        = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\blizzard.tga",
+    largeOutlinedStripes  = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-left.png",
+    largeOutlinedStripesR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-right.png",
+    largeStripes          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-left.png",
+    largeStripesR         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-right.png",
 }
 local ABSORB_STYLE_ALPHA = {
     striped         = 0.8,
@@ -2386,7 +2390,7 @@ local function ApplyAbsorbStyle(absorbBar, style, settings)
     local ac = (settings and settings.absorbColor) or { r = 1, g = 1, b = 1 }
     -- striped-5-reversed.png is a repeating tile (the striped3 shield texture
     -- is a stretch texture; do not change how it renders)
-    local tiled = (style == "stripedReversed")
+    local tiled = (style == "stripedReversed" or style == "largeStripes" or style == "largeStripesR" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR")
     local mask = absorbBar._absorbMask
     absorbBar:SetStatusBarTexture(tex)
     absorbBar:SetStatusBarColor(ac.r, ac.g, ac.b, alpha)
@@ -2418,7 +2422,9 @@ local function ApplyHealAbsorbStyle(haBar, style, settings)
     local tex = ABSORB_STYLE_TEX[style] or "Interface\\Buttons\\WHITE8X8"
     local alpha = ((settings and settings.healAbsorbOpacity) or 65) / 100
     local hc = (settings and settings.healAbsorbColor) or { r = 0.8, g = 0.15, b = 0.15 }
-    local tiled = (style == "stripedReversed")
+    -- The "Large Outlined Stripes" styles are pre-colored; render them untinted.
+    if style == "largeOutlinedStripes" or style == "largeOutlinedStripesR" then hc = { r = 1, g = 1, b = 1 } end
+    local tiled = (style == "stripedReversed" or style == "largeStripes" or style == "largeStripesR" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR")
     local mask = haBar._absorbMask
     haBar:SetStatusBarTexture(tex)
     haBar:SetStatusBarColor(hc.r, hc.g, hc.b, alpha)
@@ -2535,8 +2541,24 @@ local function UpdateAbsorbBarReverseFill(frame, isReversed)
         ab:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
     end
 
-    -- Heal absorb placement (independent of shield absorb)
+    -- Heal absorb placement (independent of shield absorb). The heal absorb
+    -- has its OWN clip frame (ab._healClip) so right/left span the full bar
+    -- (filled + missing health) while overlay stays clipped to filled health.
     local ha = ab._healAbsorb
+    local healClip = ab._healClip
+    if healClip then
+        healClip:ClearAllPoints()
+        if healMode == "right" or healMode == "left" then
+            healClip:SetPoint("TOPLEFT",     hpBar, "TOPLEFT",     0, 0)
+            healClip:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
+        elseif isReversed then
+            healClip:SetPoint("TOPRIGHT",   hpBar, "TOPRIGHT",   0, 0)
+            healClip:SetPoint("BOTTOMLEFT", hpTex, "BOTTOMLEFT", 0, 0)
+        else
+            healClip:SetPoint("TOPLEFT",     hpBar, "TOPLEFT",     0, 0)
+            healClip:SetPoint("BOTTOMRIGHT", hpTex, "BOTTOMRIGHT", 0, 0)
+        end
+    end
     if ha then
         ha:ClearAllPoints()
         if healMode == "right" then
@@ -2649,9 +2671,21 @@ local function CreateAbsorbBar(frame, unit, settings)
     end
 
     -- Heal absorb bar: overlays the filled-health area in red.
-    -- Uses curClip so it's clipped to the filled portion of the health bar.
     -- Reverse-fills from the health texture edge inward (eats into green).
-    local healAbsorbBar = CreateFrame("StatusBar", nil, curClip)
+    -- Heal absorb has its OWN clip frame (not the shield's curClip) so its
+    -- placement is independent: overlay clips to the filled health, while
+    -- right/left span the FULL bar (filled + missing health). Bounds are set
+    -- per healAbsorbEdgeMode in UpdateAbsorbBarReverseFill.
+    local healClip = CreateFrame("Frame", nil, hpBar)
+    if isReversed then
+        healClip:SetPoint("TOPRIGHT",   hpBar, "TOPRIGHT", 0, 0)
+        healClip:SetPoint("BOTTOMLEFT", hpBar:GetStatusBarTexture(), "BOTTOMLEFT", 0, 0)
+    else
+        healClip:SetPoint("TOPLEFT",     hpBar, "TOPLEFT", 0, 0)
+        healClip:SetPoint("BOTTOMRIGHT", hpBar:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
+    end
+    healClip:SetClipsChildren(true)
+    local healAbsorbBar = CreateFrame("StatusBar", nil, healClip)
     healAbsorbBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     healAbsorbBar._absorbMask = absorbMask
     local haFill = healAbsorbBar:GetStatusBarTexture()
@@ -2670,6 +2704,16 @@ local function CreateAbsorbBar(frame, unit, settings)
     healAbsorbBar:SetFrameLevel(hpBar:GetFrameLevel() + 1)
     healAbsorbBar:Hide()
 
+    -- Black backing behind the heal-absorb texture (all styles; opacity user-set
+    -- via healAbsorbBgOpacity). Drawn UNDER the fill (ARTWORK sublevel 1 < the
+    -- fill's 2), masked + SetAllPoints'd to the fill rect each update so it
+    -- tracks the secret heal-absorb amount and collapses when there is none.
+    local haBg = healAbsorbBar:CreateTexture(nil, "ARTWORK", nil, 1)
+    haBg:SetColorTexture(0, 0, 0, 0.15)
+    if absorbMask then haBg:AddMaskTexture(absorbMask) end
+    haBg:Hide()
+    healAbsorbBar._bg = haBg
+
     -- Attach extras to the main bar (backfill) so anything that references
     -- HealthPrediction.damageAbsorb can hide/show both segments together.
     backfillBar._forward      = forwardBar
@@ -2677,6 +2721,7 @@ local function CreateAbsorbBar(frame, unit, settings)
     backfillBar._hpBar        = hpBar
     backfillBar._hpCalculator = hpCalc
     backfillBar._curClip      = curClip
+    backfillBar._healClip     = healClip
     backfillBar._missClip     = missClip
     backfillBar._absorbMask   = absorbMask
     backfillBar._isReversed   = isReversed
@@ -2726,12 +2771,17 @@ local function CreateAbsorbBar(frame, unit, settings)
             local calc = ab._hpCalculator
             if not hp then return end
 
-            -- Respect the user's absorb style setting: hide both segments
-            -- and skip the update when absorbs are "none". Without this,
-            -- every unit event would re-Show() them after ReloadFrames hid them.
+            -- Heal absorb renders independently of the shield absorb. The
+            -- shield "none" setting hides only the shield segments below; we
+            -- skip the whole update only when BOTH the shield and the heal
+            -- absorb are off, so unit events don't re-Show() bars ReloadFrames
+            -- hid. (Heal Absorb Style defaults to "clean", so it shows even
+            -- when the shield Absorb Style is "none".)
             local s = GetSettingsForUnit(updUnit)
             local ha = ab._healAbsorb
-            if s and (not s.showPlayerAbsorb or s.showPlayerAbsorb == "none") then
+            local shieldOff = s and (not s.showPlayerAbsorb or s.showPlayerAbsorb == "none")
+            local healOff = (((s and s.healAbsorbStyle) or "clean") == "none")
+            if shieldOff and healOff then
                 ab:Hide()
                 if fw then fw:Hide() end
                 if ha then ha:Hide() end
@@ -2763,31 +2813,39 @@ local function CreateAbsorbBar(frame, unit, settings)
                 UpdateAbsorbBarReverseFill(self, ab._isReversed)
             end
 
-            -- Re-apply absorb style only when the style setting changes
-            -- (not on every health event). Calling SetStatusBarTexture on
-            -- every update causes the bar to flash visible even at zero absorb.
-            -- Opacity/color edits re-apply via ReloadFrames' direct call.
-            local absStyle = s and s.showPlayerAbsorb
-            if absStyle and absStyle ~= "none" and ab._lastAbsStyle ~= absStyle then
-                ab._lastAbsStyle = absStyle
-                ApplyAbsorbStyle(ab, absStyle, s)
-            end
+            -- Shield (damage) absorb segments render only when enabled. When
+            -- the shield style is "none" we hide them and fall through to the
+            -- heal absorb below (which is independent of the shield).
+            if shieldOff then
+                ab:Hide()
+                if fw then fw:Hide() end
+            else
+                -- Re-apply absorb style only when the style setting changes
+                -- (not on every health event). Calling SetStatusBarTexture on
+                -- every update causes the bar to flash visible even at zero absorb.
+                -- Opacity/color edits re-apply via ReloadFrames' direct call.
+                local absStyle = s and s.showPlayerAbsorb
+                if absStyle and absStyle ~= "none" and ab._lastAbsStyle ~= absStyle then
+                    ab._lastAbsStyle = absStyle
+                    ApplyAbsorbStyle(ab, absStyle, s)
+                end
 
-            -- Both bars get the raw absorb value and the normal maxHealth.
-            -- The clip frames do the "min(absorb, curHealth)" and
-            -- "max(0, absorb - curHealth)" math visually so we never need
-            -- Lua arithmetic on the (possibly secret) absorb value.
-            ab:SetMinMaxValues(0, maxHealth)
-            ab:SetValue(absorbAmt)
-            ab:Show()
+                -- Both bars get the raw absorb value and the normal maxHealth.
+                -- The clip frames do the "min(absorb, curHealth)" and
+                -- "max(0, absorb - curHealth)" math visually so we never need
+                -- Lua arithmetic on the (possibly secret) absorb value.
+                ab:SetMinMaxValues(0, maxHealth)
+                ab:SetValue(absorbAmt)
+                ab:Show()
 
-            if fw then
-                fw:SetMinMaxValues(0, maxHealth)
-                fw:SetValue(absorbAmt)
-                fw:Show()
-                -- Edge modes: the full-bar backfill shows the whole absorb,
-                -- so the overlay-only forward bar is not needed.
-                if absorbMode ~= "overlay" then fw:Hide() end
+                if fw then
+                    fw:SetMinMaxValues(0, maxHealth)
+                    fw:SetValue(absorbAmt)
+                    fw:Show()
+                    -- Edge modes: the full-bar backfill shows the whole absorb,
+                    -- so the overlay-only forward bar is not needed.
+                    if absorbMode ~= "overlay" then fw:Hide() end
+                end
             end
 
             -- Heal absorb: overlay eating into filled health.
@@ -2810,6 +2868,13 @@ local function CreateAbsorbBar(frame, unit, settings)
                     ha:SetMinMaxValues(0, maxHealth)
                     ha:SetValue(healAbsorbAmt)
                     ha:Show()
+                    -- Black backing: track the heal-absorb fill rect, opacity from settings.
+                    local hbg = ha._bg
+                    if hbg then
+                        hbg:SetColorTexture(0, 0, 0, ((s and s.healAbsorbBgOpacity) or 15) / 100)
+                        hbg:SetAllPoints(ha:GetStatusBarTexture())
+                        hbg:Show()
+                    end
                 end
             end
         end,
@@ -7097,6 +7162,15 @@ local function ReloadFrames()
                             end
                         else
                             frame.HealthPrediction.damageAbsorb:Hide()
+                            -- Decoupled heal absorb: hiding the shield bar above
+                            -- cascades (via the backfill OnHide hook) into hiding
+                            -- the heal-absorb bar too. Re-run the prediction so the
+                            -- heal absorb re-shows immediately after a reload even
+                            -- with the shield absorb off, instead of staying hidden
+                            -- until the next UNIT_ABSORB_AMOUNT_CHANGED event.
+                            if frame.HealthPrediction.Override then
+                                frame.HealthPrediction.Override(frame, "UNIT_ABSORB_AMOUNT_CHANGED", unit)
+                            end
                         end
                     end
 

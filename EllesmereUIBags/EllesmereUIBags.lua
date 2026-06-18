@@ -1966,7 +1966,7 @@ local function GetOrCreateSlot(idx)
     -- viewing a category (not OneBag), show a brief tooltip that stacks
     -- auto-merge in categories and splitting should be done in OneBag.
     btn:HookScript("PostClick", function(self, button)
-        if button ~= "LeftButton" then return end
+        if button ~= "LeftButton" and button ~= "RightButton" then return end
         if not IsShiftKeyDown() then return end
         if selectedCategoryIndex == -1 or selectedCategoryIndex == -2 then return end
         local bagID = self:GetParent():GetID()

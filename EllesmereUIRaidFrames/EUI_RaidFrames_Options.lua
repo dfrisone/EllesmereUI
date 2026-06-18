@@ -515,11 +515,15 @@ initFrame:SetScript("OnEvent", function(self)
         ["blizzard"]        = "Classic WoW",          -- DB key stays "blizzard"; label only
         ["blizzardModern"]  = "Default Blizz Frames", -- compound: solid base + tiled stripes (shield only)
         ["healBlizzModern"] = "Default Blizz Frames", -- heal-absorb only: louis-absorb.png texture
+        ["largeOutlinedStripes"]  = "Large Outlined Stripes",  -- heal-absorb only: large-habsorb-left.png
+        ["largeOutlinedStripesR"] = "Large Outlined Stripes R", -- heal-absorb only: large-habsorb-right.png
+        ["largeStripes"]          = "Large Stripes",            -- large-absorb-left.png
+        ["largeStripesR"]         = "Large Stripes R",          -- large-absorb-right.png
     }
     -- Shield absorb dropdown shows every style including Blizzard (Modern).
-    local absorbStyleOrder = { "none", "striped", "stripedReversed", "clean", "blizzard", "blizzardModern" }
+    local absorbStyleOrder = { "none", "striped", "stripedReversed", "clean", "blizzard", "blizzardModern", "largeStripes", "largeStripesR" }
     -- Heal absorb shares the values table but EXCLUDES Blizzard (Modern).
-    local healAbsorbStyleOrder = { "none", "striped", "stripedReversed", "clean", "blizzard", "healBlizzModern" }
+    local healAbsorbStyleOrder = { "none", "striped", "stripedReversed", "clean", "blizzard", "healBlizzModern", "largeOutlinedStripes", "largeOutlinedStripesR", "largeStripes", "largeStripesR" }
 
     local growthValues = {
         DOWN  = "Down",
@@ -1261,7 +1265,7 @@ initFrame:SetScript("OnEvent", function(self)
             swatchBlock:Hide()
             local function UpdateHealAbsorbSwatchVis()
                 local st = SVal("healAbsorbStyle", "clean")
-                local off = (st == "none" or st == "healBlizzModern")
+                local off = (st == "none" or st == "healBlizzModern" or st == "largeOutlinedStripes" or st == "largeOutlinedStripesR")
                 swatch:SetAlpha(off and 0.3 or 1)
                 if off then swatchBlock:Show() else swatchBlock:Hide() end
             end
@@ -1628,6 +1632,29 @@ initFrame:SetScript("OnEvent", function(self)
                       return SVal("nameColorMode", "class") == "accent" and 1 or 0.3
                   end },
               } });  y = y - h
+        -- Cog for name character-count cap (lives on the Name Size slider).
+        do
+            local rgn = row._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Name Length",
+                rows = {
+                    { type="slider", label="Max Characters (0=off)", min=0, max=30, step=1,
+                      get=function() return SVal("nameMaxLength", 15) end,
+                      set=function(v) SSet("nameMaxLength", v) end },
+                },
+            })
+            local cogBtn = CreateFrame("Button", nil, rgn)
+            cogBtn:SetSize(26, 26)
+            cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+            rgn._lastInline = cogBtn
+            cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            cogBtn:SetAlpha(0.4)
+            local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
+            cogTex:SetAllPoints(); cogTex:SetTexture(EllesmereUI.COGS_ICON)
+            cogBtn:SetScript("OnEnter", function(s) s:SetAlpha(0.7) end)
+            cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
+            cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
+        end
 
         -- Row 2: Name Position (+ cog for X/Y) | Health Text
         row, h = W:DualRow(parent, y,

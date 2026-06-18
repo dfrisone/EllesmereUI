@@ -76,6 +76,24 @@ ns._spellOrderDirty = true  -- start dirty so first reanchor builds caches
 local hookFrameData = setmetatable({}, { __mode = "k" })
 ns._hookFrameData = hookFrameData
 
+-- Force any currently-active buff glows to re-apply on the next buff tick
+-- (<=0.1s). The buff tick only (re)starts a glow when fd.buffGlowActive is
+-- false, so live option changes (Buff Glow color, or the pixel Lines/Thickness/
+-- Speed) would otherwise never reach an already-glowing icon. Clearing the flag
+-- lets the tick restart the glow with the current parameters -- used by the
+-- permanently-shown custom aura preview while CDM Bars options are open.
+function ns.RefreshBuffGlows()
+    for _, icons in pairs(cdmBarIcons) do
+        for fi = 1, #icons do
+            local frame = icons[fi]
+            local fd = frame and hookFrameData[frame]
+            if fd and fd.buffGlowActive then
+                fd.buffGlowActive = false
+            end
+        end
+    end
+end
+
 -- External frame cache from main file
 local _ecmeFC = ns._ecmeFC
 local FC = ns.FC
@@ -1151,6 +1169,67 @@ end
 local _presetFrames = {}
 ns._presetFrames = _presetFrames
 
+-------------------------------------------------------------------------------
+--  Always Show Buffs placeholders
+--  Our-owned icon frames that hold an INACTIVE tracked buff's slot so the buff
+--  "always shows" (greyed) without editing Blizzard's Edit Mode layout. Mirrors
+--  _presetFrames (a UIParent Frame + .Icon + .Cooldown) so the existing
+--  DecorateFrame / LayoutCDMBar pipeline styles and positions them like any
+--  real icon. Keyed barKey:ph:spellID. Never armed with a cooldown (no strobe).
+-------------------------------------------------------------------------------
+local _placeholderFrames = {}
+ns._placeholderFrames = _placeholderFrames
+
+-- Hide every placeholder. Called once at the start of each collect pass; the
+-- pass then re-shows only the placeholders it injects, so a placeholder whose
+-- buff went active, or whose bar was toggled off/disabled, ends up hidden.
+local function HideAllPlaceholders()
+    for _, f in pairs(_placeholderFrames) do
+        if f:IsShown() then f:Hide() end
+    end
+end
+ns.HideAllPlaceholders = HideAllPlaceholders
+
+local function GetOrCreatePlaceholderFrame(barKey, spellID, iconID)
+    local fkey = barKey .. ":ph:" .. spellID
+    local f = _placeholderFrames[fkey]
+    if not f then
+        f = CreateFrame("Frame", nil, UIParent)
+        f:SetSize(36, 36); f:Hide()
+        f:EnableMouse(true)
+        if f.SetMouseClickEnabled then f:SetMouseClickEnabled(false) end
+        local tex = f:CreateTexture(nil, "ARTWORK")
+        tex:SetAllPoints(); tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        f.Icon = tex; f._tex = tex
+        local cd = CreateFrame("Cooldown", nil, f, "CooldownFrameTemplate")
+        cd:SetAllPoints(); cd:SetDrawEdge(false); cd:SetDrawBling(false)
+        cd:SetHideCountdownNumbers(true); cd:EnableMouse(false)
+        if cd.SetMouseClickEnabled then cd:SetMouseClickEnabled(false) end
+        if cd.SetMouseMotionEnabled then cd:SetMouseMotionEnabled(false) end
+        cd:Clear()  -- permanent placeholder: never arm a 0-duration swipe (strobe)
+        f.Cooldown = cd; f._cooldown = cd
+        f._isPlaceholderFrame = true
+        f._phSpellID = spellID
+        -- Never claimed/routed like a Blizzard frame; carries no live aura state.
+        f.cooldownID = nil; f.cooldownInfo = nil
+        f.auraInstanceID = nil; f.wasSetFromAura = nil
+        f:SetScript("OnEnter", function(self)
+            local ffc = _ecmeFC[self]
+            local bd2 = ffc and ffc.barKey and barDataByKey[ffc.barKey]
+            if not bd2 or not bd2.showTooltip then return end
+            if not self._phSpellID then return end
+            GameTooltip_SetDefaultAnchor(GameTooltip, self)
+            GameTooltip:SetSpellByID(self._phSpellID)
+            GameTooltip:Show()
+        end)
+        f:SetScript("OnLeave", GameTooltip_Hide)
+        _placeholderFrames[fkey] = f
+    end
+    if iconID then f._tex:SetTexture(iconID) end
+    return f
+end
+
+
 -- Guard: after ENCOUNTER_END clears item-preset caches, subsequent events
 -- fire before Blizzard has finished resetting potion CDs. Without this guard
 -- the update loop re-caches stale cooldown data from C_Item.GetItemCooldown.
@@ -1521,6 +1600,11 @@ local function CollectAndReanchor()
     local allActiveFrames = _scratch_activeFrames
     local usedFrames = _scratch_usedFrames
 
+    -- Always Show Buffs: hide every placeholder up front; the routing path below
+    -- re-shows only the placeholders it injects this pass, so stale ones (buff
+    -- went active, bar toggled off/disabled, spec swap) end up hidden.
+    HideAllPlaceholders()
+
 
     -- Buff bars: existing entry-based collection (unchanged)
     local barLists = _scratch_barLists
@@ -1549,19 +1633,69 @@ local function CollectAndReanchor()
                         -------------------------------------------------------
                         --  BUFF PATH: CategorizeFrame + dedup
                         -------------------------------------------------------
-                        -- When the EUI options panel is open, treat hidden
-                        -- buff frames as shown so icons populate the bar
-                        if frame:IsShown() then
-                            local targetBar, displaySID, baseSID = CategorizeFrame(frame, defaultBarKey)
-                            if targetBar and displaySID and displaySID > 0 then
-                                local barSeen = seenSpell[targetBar]
-                                if not barSeen then barSeen = {}; seenSpell[targetBar] = barSeen end
-                                local dedupKey = frame.cooldownID
-                                if dedupKey and not barSeen[dedupKey] then
+                        local targetBar, displaySID, baseSID = CategorizeFrame(frame, defaultBarKey)
+                        if targetBar and displaySID and displaySID > 0 then
+                            local barSeen = seenSpell[targetBar]
+                            if not barSeen then barSeen = {}; seenSpell[targetBar] = barSeen end
+                            local dedupKey = frame.cooldownID
+                            if dedupKey and not barSeen[dedupKey] then
+                                if frame:IsShown() then
+                                    -- Active buff: route Blizzard's real frame.
                                     if not barLists[targetBar] then barLists[targetBar] = {} end
                                     barLists[targetBar][#barLists[targetBar] + 1] =
                                         AcquireEntry(frame, displaySID, baseSID or displaySID, frame.layoutIndex or 0)
                                     barSeen[dedupKey] = true
+                                else
+                                    -- This buff is DISPLAYED in the viewer but currently OFF
+                                    -- (Blizzard pools the frame but hides it). Use the frame's
+                                    -- LIVE resolved spell (GetSpellID) for the icon/identity:
+                                    -- cooldownInfo's override can point at a base spec spell with
+                                    -- a generic icon (e.g. 137029 Holy Paladin) while GetSpellID is
+                                    -- the real talent form the viewer shows (e.g. 432496 Holy
+                                    -- Bulwark). GetSpellID can return a SECRET number on a live
+                                    -- frame; type() reports "number" for a secret, so guard with
+                                    -- issecretvalue BEFORE the <= 0 compare (an order the
+                                    -- short-circuit relies on) and fall back to the clean
+                                    -- cooldownInfo-resolved displaySID.
+                                    local realSID = frame.GetSpellID and frame:GetSpellID()
+                                    if type(realSID) ~= "number"
+                                       or (issecretvalue and issecretvalue(realSID))
+                                       or realSID <= 0 then
+                                        realSID = displaySID
+                                    elseif ns._cdmCleanSidByCDID and dedupKey then
+                                        -- Inactive frame -> CLEAN GetSpellID. Prime the shared cache
+                                        -- (keyed by cooldownID) so the custom-buff picker/preview
+                                        -- can resolve this spell to its live form even later while
+                                        -- the aura is ACTIVE (GetSpellID secret then). Done for ALL
+                                        -- inactive buff frames, not just opted-in bars.
+                                        ns._cdmCleanSidByCDID[dedupKey] = realSID
+                                    end
+                                    -- Always Show Buffs: draw OUR OWN placeholder icon for the
+                                    -- inactive buff on the bar it routes to, when that bar has the
+                                    -- toggle on. We never touch Blizzard's hidden frame, so nothing
+                                    -- fights its hide state.
+                                    local bd = barDataByKey[targetBar]
+                                    if bd and bd.enabled and bd.barType == "buffs"
+                                       and bd.showInactiveBuffIcons and targetBar ~= ns.FOCUSKICK_BAR_KEY then
+                                        -- Two displayed-but-inactive viewer items can resolve to the
+                                        -- SAME live spell (split-form talents share one override
+                                        -- target). They share one pooled placeholder frame, so guard
+                                        -- against injecting that single frame twice (a second
+                                        -- AcquireEntry reserves a phantom slot and over-sizes the
+                                        -- bar). Dedup placeholders per bar by resolved spell.
+                                        local phKey = "ph:" .. realSID
+                                        if not barSeen[phKey] then
+                                            barSeen[phKey] = true
+                                            local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(realSID)
+                                            local ph = GetOrCreatePlaceholderFrame(targetBar, realSID, icon)
+                                            ph.layoutIndex = frame.layoutIndex or 0
+                                            ph:Show()
+                                            if not barLists[targetBar] then barLists[targetBar] = {} end
+                                            barLists[targetBar][#barLists[targetBar] + 1] =
+                                                AcquireEntry(ph, realSID, realSID, frame.layoutIndex or 0)
+                                        end
+                                        barSeen[dedupKey] = true
+                                    end
                                 end
                             end
                         end
@@ -1606,6 +1740,9 @@ local function CollectAndReanchor()
         if barData and barData.enabled and barData.barType ~= "custom_buff" then
             local container = cdmBarFrames[barKey]
             if container then
+                -- Placeholders for displayed-but-inactive buffs were injected as
+                -- our-owned frames during the routing path above, so they sort
+                -- and lay out alongside the live frames here.
                 table.sort(list, _sortByLayoutIndex)
 
                 local icons = cdmBarIcons[barKey]
@@ -2941,9 +3078,13 @@ function ns.SetupViewerHooks()
                                 -- enabled. When Always Show Buffs is off,
                                 -- desaturation is ignored (no inactive icons
                                 -- should be visible anyway).
+                                -- Placeholder icons (and any inactive buff) are
+                                -- greyed when this bar's Always Show Buffs +
+                                -- Desaturate Off CD are on. Per-bar now -- not a
+                                -- global. Active real auras stay full color.
                                 if isBuff and bd.barType ~= "custom_buff" and fd and fd.tex then
-                                    if p.cdmBars.showInactiveBuffIcons
-                                       and (p.cdmBars.desaturateInactiveBuffs ~= false)
+                                    if bd.showInactiveBuffIcons
+                                       and (bd.desaturateInactiveBuffs ~= false)
                                        and not isActiveBuff then
                                         fd.tex:SetDesaturated(true)
                                     elseif fd.tex:IsDesaturated() then
@@ -2972,7 +3113,11 @@ function ns.SetupViewerHooks()
                                             if cc then cr, cg, cb = cc.r, cc.g, cc.b end
                                         end
                                         fd.buffGlowOverlay:SetAlpha(1)
-                                        ns.StartNativeGlow(fd.buffGlowOverlay, buffGlowType, cr, cg, cb)
+                                        ns.StartNativeGlow(fd.buffGlowOverlay, buffGlowType, cr, cg, cb, {
+                                            N      = bd.buffGlowLines or 8,
+                                            th     = bd.buffGlowThickness or 2,
+                                            period = bd.buffGlowSpeed or 4,
+                                        })
                                         fd.buffGlowActive = true
                                     end
                                 elseif fd and fd.buffGlowActive and fd.buffGlowOverlay then

@@ -804,9 +804,11 @@ function FriendlyFrame:UpdateRaidIcon()
     elseif pos == "right" then
         self.raidFrame:SetPoint("LEFT", self.health, "RIGHT", ns.GetSideAuraXOffset(), 0)
     elseif pos == "topleft" then
-        self.raidFrame:SetPoint("BOTTOMLEFT", self.health, "TOPLEFT", -2, rmY)
+        -- Flush with the nameplate's left edge (PP borders inset -> bar corner is
+        -- the outer edge; offset 0 = flush). Matches the enemy plate convention.
+        self.raidFrame:SetPoint("BOTTOMLEFT", self.health, "TOPLEFT", 0, rmY)
     elseif pos == "topright" then
-        self.raidFrame:SetPoint("BOTTOMRIGHT", self.health, "TOPRIGHT", 2, rmY)
+        self.raidFrame:SetPoint("BOTTOMRIGHT", self.health, "TOPRIGHT", 0, rmY)
     end
     self.raidFrame:Show()
 end

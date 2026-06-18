@@ -53,6 +53,7 @@ initFrame:SetScript("OnEvent", function(self)
     local allPreviews = {}
 
     local showCombatIndicatorPreview = false
+    local showHealAbsorbPreview      = false  -- eyeball toggle for the Heal Absorb Style preview
     -- Preview hover-highlight hint text (shared across Single/Multi tabs)
     local _ufPreviewHintFS_display     -- hint FontString for the Main Frames page
     local _displayHeaderBaseH = 0      -- display header height WITHOUT hint
@@ -1674,16 +1675,52 @@ initFrame:SetScript("OnEvent", function(self)
         EllesmereUI.ApplyBorderStyle(border, bdrSize, bdrColor.r, bdrColor.g, bdrColor.b, settings.borderAlpha or 1, bdrTexKey, settings.borderTextureOffset, settings.borderTextureOffsetY, settings.borderTextureShiftX, settings.borderTextureShiftY, "unitframes", bdrSize)
         if bdrSize == 0 and bdrTexKey == "solid" then border:Hide() end
 
-        -- Absorb bar (style-aware preview for player, target, focus)
-        local absorbBar
+        -- Position an absorb-style StatusBar per its edge mode, mirroring
+        -- UpdateAbsorbBarReverseFill in EllesmereUIUnitFrames.lua:
+        --   overlay = eat into the filled health from the current-HP edge
+        --   right   = pinned to the health bar's right edge, fills leftward
+        --   left    = pinned to the health bar's left edge, fills rightward
+        -- right/left are absolute (independent of reverse fill); overlay mirrors.
+        local function PositionPreviewAbsorb(bar, mode, isRev)
+            if not bar then return end
+            bar:ClearAllPoints()
+            if mode == "right" then
+                bar:SetReverseFill(true)
+                bar:SetPoint("TOPRIGHT",    health, "TOPRIGHT",    0, 0)
+                bar:SetPoint("BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
+            elseif mode == "left" then
+                bar:SetReverseFill(false)
+                bar:SetPoint("TOPLEFT",    health, "TOPLEFT",    0, 0)
+                bar:SetPoint("BOTTOMLEFT", health, "BOTTOMLEFT", 0, 0)
+            elseif isRev then
+                bar:SetReverseFill(false)
+                bar:SetPoint("TOPLEFT",    healthFill, "TOPLEFT",    0, 0)
+                bar:SetPoint("BOTTOMLEFT", healthFill, "BOTTOMLEFT", 0, 0)
+            else
+                bar:SetReverseFill(true)
+                bar:SetPoint("TOPRIGHT",    healthFill, "TOPRIGHT",    0, 0)
+                bar:SetPoint("BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
+            end
+        end
+
+        -- Absorb bars (style-aware preview for player, target, focus):
+        --   absorbBar     = shield (damage) absorb, white/shield, drawn below
+        --   healAbsorbBar = heal absorb, red, drawn one sublevel above; shown
+        --                   only when the Heal Absorb Style eyeball is toggled on
+        local absorbBar, healAbsorbBar
         if unitKey == "player" or unitKey == "target" or unitKey == "focus" then
-            local absStyle = settings.showPlayerAbsorb
             local PREV_ABS_TEX = {
                 striped         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped3.tga",
                 stripedReversed = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-5-reversed.png",
                 clean           = "Interface\\Buttons\\WHITE8X8",
                 blizzard        = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\blizzard.tga",
+                largeOutlinedStripes  = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-left.png",
+                largeOutlinedStripesR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-right.png",
+                largeStripes          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-left.png",
+                largeStripesR         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-right.png",
             }
+            -- Shield (damage) absorb
+            local absStyle = settings.showPlayerAbsorb
             local PREV_ABS_ALPHA = { striped = 0.8, stripedReversed = 0.8, clean = (settings.absorbCleanAlpha or 30) / 100, blizzard = 0.8 }
             local tex   = PREV_ABS_TEX[absStyle] or PREV_ABS_TEX.striped
             -- Effective opacity/color: mirrors GetAbsorbOpacity in EllesmereUIUnitFrames.lua
@@ -1693,27 +1730,52 @@ initFrame:SetScript("OnEvent", function(self)
             absorbBar:SetStatusBarTexture(tex)
             local absFillTex = absorbBar:GetStatusBarTexture()
             if absFillTex then
-                local absTiled = (absStyle == "stripedReversed")
+                absFillTex:SetDrawLayer("ARTWORK", 1)
+                local absTiled = (absStyle == "stripedReversed" or absStyle == "largeStripes" or absStyle == "largeStripesR" or absStyle == "largeOutlinedStripes" or absStyle == "largeOutlinedStripesR")
                 absFillTex:SetHorizTile(absTiled); absFillTex:SetVertTile(absTiled)
             end
             absorbBar:SetStatusBarColor(ac.r, ac.g, ac.b, alpha)
-            if settings.healthReverseFill then
-                absorbBar:SetReverseFill(false)
-                PP.Point(absorbBar, "TOPLEFT", healthFill, "TOPLEFT", 0, 0)
-                PP.Point(absorbBar, "BOTTOMLEFT", healthFill, "BOTTOMLEFT", 0, 0)
-            else
-                absorbBar:SetReverseFill(true)
-                PP.Point(absorbBar, "TOPRIGHT", healthFill, "TOPRIGHT", 0, 0)
-                PP.Point(absorbBar, "BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
-            end
+            PositionPreviewAbsorb(absorbBar, settings.absorbEdgeMode or "overlay", settings.healthReverseFill)
             PP.Width(absorbBar, frameW)
             PP.Height(absorbBar, healthH)
             absorbBar:SetMinMaxValues(0, 1)
             absorbBar:SetValue(0.14)
             absorbBar:SetFrameLevel(health:GetFrameLevel() + 1)
             if not absStyle or absStyle == "none" then absorbBar:Hide() end
+
+            -- Heal absorb (red, draws one sublevel above the shield absorb).
+            -- Mutually exclusive with the shield absorb on the preview: only
+            -- visible while the eyeball is on, at which point absorbBar hides.
+            local haStyle = settings.healAbsorbStyle or "clean"
+            local haTex   = PREV_ABS_TEX[haStyle] or "Interface\\Buttons\\WHITE8X8"
+            local haAlpha = ((settings.healAbsorbOpacity) or 65) / 100
+            local hc = settings.healAbsorbColor or { r = 0.8, g = 0.15, b = 0.15 }
+            if haStyle == "largeOutlinedStripes" or haStyle == "largeOutlinedStripesR" then hc = { r = 1, g = 1, b = 1 } end
+            healAbsorbBar = CreateFrame("StatusBar", nil, health)
+            healAbsorbBar:SetStatusBarTexture(haTex)
+            local haFillTex = healAbsorbBar:GetStatusBarTexture()
+            if haFillTex then
+                haFillTex:SetDrawLayer("ARTWORK", 2)
+                local haTiled = (haStyle == "stripedReversed" or haStyle == "largeStripes" or haStyle == "largeStripesR" or haStyle == "largeOutlinedStripes" or haStyle == "largeOutlinedStripesR")
+                haFillTex:SetHorizTile(haTiled); haFillTex:SetVertTile(haTiled)
+            end
+            healAbsorbBar:SetStatusBarColor(hc.r, hc.g, hc.b, haAlpha)
+            PositionPreviewAbsorb(healAbsorbBar, settings.healAbsorbEdgeMode or "overlay", settings.healthReverseFill)
+            PP.Width(healAbsorbBar, frameW)
+            PP.Height(healAbsorbBar, healthH)
+            healAbsorbBar:SetMinMaxValues(0, 1)
+            healAbsorbBar:SetValue(0.14)
+            healAbsorbBar:SetFrameLevel(health:GetFrameLevel() + 1)
+            healAbsorbBar:Hide()
+            -- Black backing behind the heal-absorb fill (opacity via healAbsorbBgOpacity),
+            -- drawn one sublevel under the fill and tracking its rect.
+            local haBgPv = healAbsorbBar:CreateTexture(nil, "ARTWORK", nil, 1)
+            haBgPv:SetColorTexture(0, 0, 0, ((settings.healAbsorbBgOpacity) or 15) / 100)
+            haBgPv:SetAllPoints(healAbsorbBar:GetStatusBarTexture())
+            healAbsorbBar._bg = haBgPv
         end
         pf._absorbBar = absorbBar
+        pf._healAbsorbBar = healAbsorbBar
 
         -- Fake buff icons (all units, shown when showBuffs is on and anchor is not "none")
         local buffIcons = {}
@@ -2573,15 +2635,26 @@ initFrame:SetScript("OnEvent", function(self)
                 end
             end
 
-            -- Absorb bar (player only) -- update texture + alpha on style change
+            -- Absorb bars (player/target/focus). The Heal Absorb Style eyeball
+            -- preview, when on, replaces the shield absorb with the heal absorb.
+            -- Both honor their placement cog (absorbEdgeMode / healAbsorbEdgeMode).
+            local _healPrev = showHealAbsorbPreview
+            -- The eyeball only replaces the shield when there is actually a heal
+            -- absorb to show; if Heal Absorb Style is "none" we leave the shield
+            -- preview alone instead of blanking the absorb area.
+            local _healWillShow = _healPrev and (s.healAbsorbStyle or "clean") ~= "none"
             if absorbBar then
                 local absS = s.showPlayerAbsorb
-                if absS and absS ~= "none" then
+                if (not _healWillShow) and absS and absS ~= "none" then
                     local _paTex = {
                         striped         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped3.tga",
                         stripedReversed = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-5-reversed.png",
                         clean           = "Interface\\Buttons\\WHITE8X8",
                         blizzard        = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\blizzard.tga",
+                        largeOutlinedStripes  = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-left.png",
+                        largeOutlinedStripesR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-right.png",
+                        largeStripes          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-left.png",
+                        largeStripesR         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-right.png",
                     }
                     local _paAlpha = { striped = 0.8, stripedReversed = 0.8, clean = (s.absorbCleanAlpha or 30) / 100, blizzard = 0.8 }
                     -- Effective opacity/color: mirrors GetAbsorbOpacity in EllesmereUIUnitFrames.lua
@@ -2590,25 +2663,54 @@ initFrame:SetScript("OnEvent", function(self)
                     absorbBar:SetStatusBarTexture(_paTex[absS] or _paTex.striped)
                     local _paFill = absorbBar:GetStatusBarTexture()
                     if _paFill then
-                        local _paTiled = (absS == "stripedReversed")
+                        _paFill:SetDrawLayer("ARTWORK", 1)
+                        local _paTiled = (absS == "stripedReversed" or absS == "largeStripes" or absS == "largeStripesR" or absS == "largeOutlinedStripes" or absS == "largeOutlinedStripesR")
                         _paFill:SetHorizTile(_paTiled); _paFill:SetVertTile(_paTiled)
                     end
                     absorbBar:SetStatusBarColor(_paC.r, _paC.g, _paC.b, _paA)
-                    absorbBar:ClearAllPoints()
-                    if s.healthReverseFill then
-                        absorbBar:SetReverseFill(false)
-                        absorbBar:SetPoint("TOPLEFT", healthFill, "TOPLEFT", 0, 0)
-                        absorbBar:SetPoint("BOTTOMLEFT", healthFill, "BOTTOMLEFT", 0, 0)
-                    else
-                        absorbBar:SetReverseFill(true)
-                        absorbBar:SetPoint("TOPRIGHT", healthFill, "TOPRIGHT", 0, 0)
-                        absorbBar:SetPoint("BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
-                    end
+                    PositionPreviewAbsorb(absorbBar, s.absorbEdgeMode or "overlay", s.healthReverseFill)
                     absorbBar:SetWidth(fw)
                     absorbBar:SetHeight(hh)
                     absorbBar:Show()
                 else
                     absorbBar:Hide()
+                end
+            end
+            if healAbsorbBar then
+                local haS = s.healAbsorbStyle or "clean"
+                if _healPrev and haS ~= "none" then
+                    local _haTex = {
+                        striped         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped3.tga",
+                        stripedReversed = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-5-reversed.png",
+                        clean           = "Interface\\Buttons\\WHITE8X8",
+                        blizzard        = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\blizzard.tga",
+                        largeOutlinedStripes  = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-left.png",
+                        largeOutlinedStripesR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-right.png",
+                        largeStripes          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-left.png",
+                        largeStripesR         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-right.png",
+                    }
+                    local _haA = ((s.healAbsorbOpacity) or 65) / 100
+                    local _haC = s.healAbsorbColor or { r = 0.8, g = 0.15, b = 0.15 }
+                    if haS == "largeOutlinedStripes" or haS == "largeOutlinedStripesR" then _haC = { r = 1, g = 1, b = 1 } end
+                    healAbsorbBar:SetStatusBarTexture(_haTex[haS] or "Interface\\Buttons\\WHITE8X8")
+                    local _haFill = healAbsorbBar:GetStatusBarTexture()
+                    if _haFill then
+                        _haFill:SetDrawLayer("ARTWORK", 2)
+                        local _haTiled = (haS == "stripedReversed" or haS == "largeStripes" or haS == "largeStripesR" or haS == "largeOutlinedStripes" or haS == "largeOutlinedStripesR")
+                        _haFill:SetHorizTile(_haTiled); _haFill:SetVertTile(_haTiled)
+                    end
+                    healAbsorbBar:SetStatusBarColor(_haC.r, _haC.g, _haC.b, _haA)
+                    PositionPreviewAbsorb(healAbsorbBar, s.healAbsorbEdgeMode or "overlay", s.healthReverseFill)
+                    healAbsorbBar:SetWidth(fw)
+                    healAbsorbBar:SetHeight(hh)
+                    healAbsorbBar:Show()
+                    if healAbsorbBar._bg then
+                        healAbsorbBar._bg:SetColorTexture(0, 0, 0, ((s.healAbsorbBgOpacity) or 15) / 100)
+                        healAbsorbBar._bg:SetAllPoints(healAbsorbBar:GetStatusBarTexture())
+                        healAbsorbBar._bg:Show()
+                    end
+                else
+                    healAbsorbBar:Hide()
                 end
             end
 
@@ -3253,6 +3355,7 @@ initFrame:SetScript("OnEvent", function(self)
         healAbsorbOpacity    = { player=true, target=true, focus=true },
         healAbsorbColor      = { player=true, target=true, focus=true },
         healAbsorbEdgeMode   = { player=true, target=true, focus=true },
+        healAbsorbBgOpacity  = { player=true, target=true, focus=true },
         showBuffs            = { player=true, target=true, focus=true },
         combatIndicatorStyle   = { player=true },
         combatIndicatorColor   = { player=true },
@@ -8423,8 +8526,14 @@ initFrame:SetScript("OnEvent", function(self)
             ["stripedReversed"] = "Striped Reversed",
             ["clean"]           = "Clean (Flat)",
             ["blizzard"]        = "Blizzard",
+            ["largeOutlinedStripes"]  = "Large Outlined Stripes",  -- heal-absorb only: large-habsorb-left.png
+            ["largeOutlinedStripesR"] = "Large Outlined Stripes R", -- heal-absorb only: large-habsorb-right.png
+            ["largeStripes"]          = "Large Stripes",            -- large-absorb-left.png
+            ["largeStripesR"]         = "Large Stripes R",          -- large-absorb-right.png
         }
-        local absorbStyleOrder = { "none", "striped", "stripedReversed", "clean", "blizzard" }
+        -- Shield (regular) absorb dropdown order. Heal absorb uses its own
+        -- inline order below (it adds the two "Outlined" variants on top).
+        local absorbStyleOrder = { "none", "striped", "stripedReversed", "clean", "blizzard", "largeStripes", "largeStripesR" }
 
         -- Effective absorb opacity: absorbOpacity once set, otherwise the
         -- pre-split behavior (clean -> absorbCleanAlpha, other styles 80).
@@ -8530,7 +8639,8 @@ initFrame:SetScript("OnEvent", function(self)
         -- Row 2: Heal Absorb Style (+ color swatch + placement cog) | Heal Absorb Opacity
         local healAbsorbRow
         healAbsorbRow, h = W:DualRow(parent, y,
-            { type="dropdown", text="Heal Absorb Style", values=absorbStyleValues, order=absorbStyleOrder,
+            { type="dropdown", text="Heal Absorb Style", values=absorbStyleValues,
+              order={ "none", "striped", "stripedReversed", "clean", "blizzard", "largeOutlinedStripes", "largeOutlinedStripesR", "largeStripes", "largeStripesR" },
               getValue=function() return SValSupported("healAbsorbStyle", "clean") end,
               setValue=function(v)
                   if v == "clean" then
@@ -8548,6 +8658,39 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v) SSetSupported("healAbsorbOpacity", v) end });  y = y - h
         SApplySupport(healAbsorbRow._leftRegion, "healAbsorbStyle")
         SApplySupport(healAbsorbRow._rightRegion, "healAbsorbOpacity")
+        -- Inline eyeball: preview the heal absorb on the live preview frame.
+        -- While on, the shield (regular) absorb is hidden on the preview so the
+        -- heal absorb is shown in isolation. State is a session-only runtime flag.
+        do
+            local rgn = healAbsorbRow._leftRegion
+            local EYE_VISIBLE   = "Interface\\AddOns\\EllesmereUI\\media\\icons\\eui-visible.png"
+            local EYE_INVISIBLE = "Interface\\AddOns\\EllesmereUI\\media\\icons\\eui-invisible.png"
+            local eyeBtn = CreateFrame("Button", nil, rgn)
+            eyeBtn:SetSize(26, 26)
+            eyeBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+            eyeBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            eyeBtn:SetAlpha(0.4)
+            rgn._lastInline = eyeBtn
+            local eyeTex = eyeBtn:CreateTexture(nil, "OVERLAY")
+            eyeTex:SetAllPoints()
+            local function RefreshHealEye()
+                eyeTex:SetTexture(showHealAbsorbPreview and EYE_INVISIBLE or EYE_VISIBLE)
+            end
+            RefreshHealEye()
+            eyeBtn:SetScript("OnClick", function()
+                showHealAbsorbPreview = not showHealAbsorbPreview
+                RefreshHealEye()
+                UpdatePreview()
+            end)
+            eyeBtn:SetScript("OnEnter", function(self)
+                self:SetAlpha(0.7)
+                EllesmereUI.ShowWidgetTooltip(self, showHealAbsorbPreview and "Hide heal absorb preview" or "Show heal absorb preview")
+            end)
+            eyeBtn:SetScript("OnLeave", function(self)
+                self:SetAlpha(0.4)
+                EllesmereUI.HideWidgetTooltip()
+            end)
+        end
         -- Inline color swatch for heal absorb color
         do
             local rgn = healAbsorbRow._leftRegion
@@ -8564,8 +8707,18 @@ initFrame:SetScript("OnEvent", function(self)
                 end, false, 20)
             swatch:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
             rgn._lastInline = swatch
+            -- Blocking overlay: disabled for "none" and the pre-colored
+            -- "Large Outlined Stripes" heal styles (their texture is not tinted).
+            local swatchBlock = CreateFrame("Frame", nil, swatch)
+            swatchBlock:SetAllPoints()
+            swatchBlock:SetFrameLevel(swatch:GetFrameLevel() + 10)
+            swatchBlock:EnableMouse(true)
+            swatchBlock:Hide()
             local function UpdateHealAbsorbSwatchVis()
-                swatch:SetAlpha(SValSupported("healAbsorbStyle", "clean") == "none" and 0.3 or 1)
+                local st = SValSupported("healAbsorbStyle", "clean")
+                local off = (st == "none" or st == "largeOutlinedStripes" or st == "largeOutlinedStripesR")
+                swatch:SetAlpha(off and 0.3 or 1)
+                if off then swatchBlock:Show() else swatchBlock:Hide() end
             end
             RegisterWidgetRefresh(UpdateHealAbsorbSwatchVis)
             UpdateHealAbsorbSwatchVis()
@@ -8581,6 +8734,9 @@ initFrame:SetScript("OnEvent", function(self)
                       order = { "overlay", "right", "left" },
                       get=function() return SValSupported("healAbsorbEdgeMode", "overlay") end,
                       set=function(v) SSetSupported("healAbsorbEdgeMode", v) end },
+                    { type="slider", label="Backing Opacity", min=0, max=100, step=1,
+                      get=function() return SValSupported("healAbsorbBgOpacity", 15) end,
+                      set=function(v) SSetSupported("healAbsorbBgOpacity", v) end },
                 },
             })
             MakeCogBtn(rgn, cogShow)
@@ -8971,6 +9127,7 @@ initFrame:SetScript("OnEvent", function(self)
         parent._sharedClickTargets = {
             healthBar    = { section = sharedBarsHeader,     target = sharedSizeRow },
             absorbs      = { section = sharedAbsorbsHeader,  target = absorbRow, slotSide = "left" },
+            healAbsorb   = { section = sharedAbsorbsHeader,  target = healAbsorbRow, slotSide = "left" },
             powerBar     = { section = sharedPowerHeader,    target = sharedPowerRow1, slotSide = "left" },
             powerBarText = { section = sharedPowerHeader,    target = sharedPowerRow2, slotSide = "left" },
             portrait     = { section = sharedPortraitHeader, target = sharedPortraitModeRow, slotSide = "left" },
@@ -9245,12 +9402,20 @@ initFrame:SetScript("OnEvent", function(self)
             local baseLevel = (pv._health and pv._health:GetFrameLevel() or 20) + 15
             local textLevel = baseLevel + 10
             if pv._health then CreateHitOverlay(pv._health, "healthBar", false, baseLevel) end
-            -- Absorb segment: hit area follows the absorb bar's FILL texture
+            -- Absorb segments: hit area follows each absorb bar's FILL texture
             -- (the bar frame spans the whole health width), sitting above the
-            -- health overlay so the shield strip routes to the Absorbs section.
-            if pv._absorbBar and pv._absorbBar:IsShown() then
+            -- health overlay so the strip routes to the Absorbs section. No
+            -- :IsShown() guard -- the overlay is a child of the bar and
+            -- SetAllPoints its fill, so it auto-hides/shows WITH the bar when
+            -- the heal-absorb eyeball flips which bar is visible. Both bars get
+            -- an overlay so whichever is shown is click-navigable.
+            if pv._absorbBar then
                 local absFill = pv._absorbBar:GetStatusBarTexture()
                 if absFill then CreateHitOverlay(absFill, "absorbs", false, baseLevel + 5) end
+            end
+            if pv._healAbsorbBar then
+                local haFill = pv._healAbsorbBar:GetStatusBarTexture()
+                if haFill then CreateHitOverlay(haFill, "healAbsorb", false, baseLevel + 5) end
             end
             if pv._power then CreateHitOverlay(pv._power, "powerBar", false, baseLevel) end
             if pv._portraitFrame and pv._portraitFrame:IsShown() then CreateHitOverlay(pv._portraitFrame, "portrait", false, baseLevel) end
