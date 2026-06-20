@@ -11,6 +11,7 @@
 
 # Main Luas
 EllesmereUIBlizzardSkin.lua
+EllesmereUIBlizzardSkin_DiminishingReturns.lua
 EllesmereUIBlizzardSkin_CharacterSheet.lua
 EllesmereUIBlizzardSkin_InspectSheet.lua
 EllesmereUIBlizzardSkin_DragonRiding.lua

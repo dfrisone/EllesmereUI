@@ -230,6 +230,7 @@ do
             showStatCategory_Tertiary    = true,
             showStatCategory_Crests      = true,
             showStatCategory_PvP         = true,
+            showAdjustedStats            = false,
         }
         for k, v in pairs(defaults) do
             if EllesmereUIDB[k] == nil then
@@ -2226,6 +2227,33 @@ local function SkinCharacterSheet()
                             description = string.format("Increases movement speed by %.2f%%.", percentValue)
                         end
                         GameTooltip:AddLine(description, 1, 1, 1, true)
+
+                        -- Diminishing returns breakdown (opt-in via Stat Display)
+                        if EllesmereUIDB and EllesmereUIDB.showAdjustedStats
+                           and not issecretvalue(rawValue) and EllesmereUI.GetStatDR then
+                            local adjusted, wasted, penalty, nextPenalty, nextThreshold =
+                                EllesmereUI.GetStatDR(stat.name, rawValue)
+                            if adjusted then
+                                GameTooltip:AddLine(" ")
+                                GameTooltip:AddLine(string.format("Adjusted Rating: %s",
+                                    BreakUpLargeNumbers(math.floor(adjusted + 0.5))),
+                                    section.color.r, section.color.g, section.color.b, 1)
+                                GameTooltip:AddLine(string.format("Wasted Rating: %s",
+                                    BreakUpLargeNumbers(math.floor(wasted + 0.5))),
+                                    section.color.r, section.color.g, section.color.b, 1)
+                                GameTooltip:AddLine(string.format("Penalty Percentage: %d%%", penalty),
+                                    section.color.r, section.color.g, section.color.b, 1)
+                                if nextThreshold then
+                                    local nextRating = math.floor(nextThreshold + 0.5)
+                                    local needed = nextRating - math.floor(rawValue + 0.5)
+                                    if needed < 0 then needed = 0 end
+                                    GameTooltip:AddLine(string.format("Next %d%% Penalty At: %s (+%s)",
+                                        nextPenalty, BreakUpLargeNumbers(nextRating),
+                                        BreakUpLargeNumbers(needed)),
+                                        section.color.r, section.color.g, section.color.b, 1)
+                                end
+                            end
+                        end
                     -- Attributes
                     elseif stat.statIndex then
                         local base, _, posBuff, negBuff = UnitStat("player", stat.statIndex)
