@@ -2152,7 +2152,7 @@ end
 --  one of our unit buttons and then dragged past a small threshold,
 --  it starts mouselook (camera turn). It never touches the secure
 --  buttons so it can't taint or interfere with click-casting.
---  A right-click TAP is left alone, so the secure menu still fires out of combat.
+--  A right-click tap is left alone, so the menu still opens.
 -------------------------------------------------------------------------------
 do
     local MOVE_THRESHOLD = 4
