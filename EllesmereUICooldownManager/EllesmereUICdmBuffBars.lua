@@ -149,6 +149,46 @@ function ns.HookPandemicState(frame)
     end
 end
 
+local PANDEMIC_THRESHOLD = 0.3
+local LIFEBLOOM_SPELL_ID = 33763
+local _scanLast, _scanResult = 0, false
+local function LifebloomPandemic(blzChild)
+    local result = false
+	local sid = ns.GetCanonicalSpellIDForFrame and ns.GetCanonicalSpellIDForFrame(blzChild)
+	local lbName = C_Spell.GetSpellName(LIFEBLOOM_SPELL_ID)
+	local sName = sid and C_Spell.GetSpellName(sid)
+	if not (lbName and sName and lbName == sName) then return result end
+
+	-- throttle to scan 10 times/sec
+	-- return cached result if throttled
+	local now = GetTime()
+	if (now - _scanLast) < 0.1 then return _scanResult end
+
+    local function check(unit)
+        if not UnitExists(unit) then return end
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, lbName, "HELPFUL|PLAYER")
+        if not ok or not aura then return end
+        local dur, exp = aura.duration, aura.expirationTime
+        if not dur or not exp then return end
+		local isSec = issecretvalue
+		if isSec and (isSec(dur) or isSec(exp)) then return end -- shouldn't be secret, for safety
+        if dur <= 0 then return end
+        if (exp - now) <= dur * PANDEMIC_THRESHOLD then
+            result = true
+        end
+    end
+
+	-- first check player, then look at group
+    check("player")
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do check("raid" .. i) end
+    elseif IsInGroup() then
+        for i = 1, GetNumGroupMembers() do check("party" .. i) end
+    end
+	_scanLast, _scanResult = now, result
+    return result
+end
+
 -------------------------------------------------------------------------------
 --  Popular Buffs (derived from BUFF_BAR_PRESETS, with compat alias)
 -------------------------------------------------------------------------------
@@ -1562,6 +1602,11 @@ function ns.UpdateTrackedBuffBarTimers()
                     -- pandemic alerts in Blizzard CDM settings.
                     if _anyPandemic and cfg.pandemicGlow then
                         local inPandemic = blzChild and _pandemicState[blzChild]
+                        -- Fallback for auras Blizzard never pandemic-flags
+                        -- Currently only enabled for Lifebloom
+                        if not inPandemic and blzChild then
+							inPandemic = LifebloomPandemic(blzChild)
+                        end
                         -- TBBs always show our glow (including Blizzard Default)
                         -- because Blizzard's native PandemicIcon is on the
                         -- hidden blzChild frame, not our visible TBB bar.
