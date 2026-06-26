@@ -416,6 +416,88 @@ function ns.TBBGroupedCount()
     return n
 end
 
+
+-- Runtime reflow for grouped Tracking Bars.
+-- BuildTrackedBuffBars creates the static group chain, but the tick decides
+-- which bars are currently visible. Reflow only the visible grouped members so
+-- inactive hidden buffs do not leave holes in the chain:
+--   configured order: Buff 1, Buff 2, Buff 3
+--   active:           Buff 2, Buff 3        -> Buff 2 sits at group anchor
+--   active:           Buff 1, Buff 2, Buff 3 -> Buff 1 sits at group anchor,
+--                                              Buff 2/3 move after it
+local _tbbReflow = { visible = {}, lastKeys = nil }
+local function ReflowVisibleGroupedTBBars(tbb, bars, positions)
+    if not (tbb and bars and tbbFrames) then return end
+    local growDir = ((tbb.groupGrowDirection or "DOWN"):upper())
+    local spacing = tbb.groupSpacing or 2
+
+    -- Collect only enabled + checked + currently visible bars in saved hierarchy
+    -- order. A bar with hideWhenInactive=false is visible and therefore keeps its
+    -- slot, which matches the user's choice to show inactive bars.
+    local visible = _tbbReflow.visible
+    for i = #visible, 1, -1 do visible[i] = nil end
+    local anchorIdx = ns.TBBGroupAnchorIndex and ns.TBBGroupAnchorIndex()
+    if not anchorIdx then return end
+
+    for i, cfg in ipairs(bars) do
+        local f = tbbFrames[i]
+        if cfg and cfg.enabled ~= false and ns.TBBBarGrouped(cfg)
+           and f and f._tbbReady and f:IsShown() then
+            visible[#visible + 1] = { idx = i, frame = f }
+        end
+    end
+
+    if #visible == 0 then
+        _tbbReflow.lastKeys = nil
+        return
+    end
+
+    -- Avoid redundant ClearAllPoints/SetPoint every 16ms. Re-anchor only when
+    -- the visible member sequence or the grow/spacing tuple changes.
+    local key = growDir .. ":" .. tostring(spacing)
+    for n = 1, #visible do key = key .. ":" .. visible[n].idx end
+    if _tbbReflow.lastKeys == key then return end
+    _tbbReflow.lastKeys = key
+
+    local first = visible[1].frame
+    local anchorFrame = tbbFrames[anchorIdx]
+    first:ClearAllPoints()
+
+    if anchorFrame and anchorFrame ~= first then
+        -- Reuse the group anchor frame as a hidden/visible position proxy. This
+        -- preserves unlock-mode anchors and external size/position matching even
+        -- when the configured anchor buff is currently inactive and hidden.
+        first:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
+    else
+        local posKey = tostring(anchorIdx)
+        local pos = positions and positions[posKey]
+        if pos and pos.point then
+            if pos.scale then pcall(function() first:SetScale(pos.scale) end) end
+            first:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+        else
+            first:SetPoint("CENTER", UIParent, "CENTER", 0, 200 - (anchorIdx - 1) * ((bars[anchorIdx] and bars[anchorIdx].height or 24) + 4))
+        end
+    end
+
+    local prev = first
+    for n = 2, #visible do
+        local f = visible[n].frame
+        f:ClearAllPoints()
+        if growDir == "DOWN" then
+            f:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
+        elseif growDir == "UP" then
+            f:SetPoint("BOTTOM", prev, "TOP", 0, spacing)
+        elseif growDir == "RIGHT" then
+            f:SetPoint("LEFT", prev, "RIGHT", spacing, 0)
+        elseif growDir == "LEFT" then
+            f:SetPoint("RIGHT", prev, "LEFT", -spacing, 0)
+        else
+            f:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
+        end
+        prev = f
+    end
+end
+
 -- Fan a width/height change from a grouped bar out to every other grouped bar:
 -- write each sibling's LOGICAL cfg.width/cfg.height (NOT the icon-inclusive total)
 -- and resize its frame using that sibling's OWN icon math. Used by the options
@@ -1665,6 +1747,10 @@ function ns.UpdateTrackedBuffBarTimers()
         end
     end
 
+    -- Re-pack visible grouped Tracking Bars after the active/inactive pass so
+    -- hidden buffs do not reserve a slot in the group.
+    ReflowVisibleGroupedTBBars(tbb, bars, ns.GetTBBPositions and ns.GetTBBPositions())
+
     -- Deferred name fill: if BuildTrackedBuffBars couldn't resolve the spell
     -- name (data not loaded yet), retry here each tick until it succeeds.
     for i, cfg in ipairs(bars) do
@@ -1748,6 +1834,7 @@ function ns.BuildTrackedBuffBars()
     local tbb = ns.GetTrackedBuffBars()
     local bars = tbb.bars
     local _tbbPos = ns.GetTBBPositions()
+    if _tbbReflow then _tbbReflow.lastKeys = nil end
 
     -- Hide bars beyond current count
     for i = #bars + 1, #tbbFrames do
