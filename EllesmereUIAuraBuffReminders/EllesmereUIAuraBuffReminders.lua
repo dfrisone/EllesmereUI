@@ -1081,7 +1081,7 @@ local RUNE_BUFF_IDS = {1264426, 453250, 1234969, 1242347, 393438, 347901}
 
 -- Inky Black Potion
 local INKY_BLACK_ITEM = 124640
-local INKY_BLACK_BUFF = 242783  -- buff applied by Inky Black Potion
+local INKY_BLACK_BUFF = 185394  -- "Inky Blackness" buff (icon 136122); detected by aura scan, see PlayerHasInkyBlackness
 
 -------------------------------------------------------------------------------
 --  Helpers: Well Fed / Flask buff detection (by name, not spell ID secret)
@@ -1137,6 +1137,27 @@ local function PlayerHasFlaskBuff()
         _AC.ensureNames()
         for aName in pairs(_AC.byName) do
             if FLASK_NAME_SET[aName] then return true end
+        end
+    end
+    return false
+end
+
+local function PlayerHasInkyBlackness()
+    -- Aura API is restricted in PvP and M+ keystones; suppress since the buff
+    -- can't be read there and the player can't act on it mid-key (mirrors flask/food).
+    if InPvPInstance() then return true end
+    if InMythicPlusKey() then return true end
+    for i = 1, AURA_SCAN_LIMIT do
+        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+        if not aura then break end
+        local sid = aura.spellId
+        local ic = aura.icon
+        if (sid and not isSecret(sid) and sid == INKY_BLACK_BUFF)
+        or (ic and not isSecret(ic) and ic == 136122) then
+            if IsUnderDuration(aura.duration, aura.expirationTime) then
+                return false
+            end
+            return true
         end
     end
     return false
@@ -1270,7 +1291,7 @@ end
 --  Resolve bag/equip-derived consumable display items. This is the costly part
 --  of the consumable check (Find*Item data-table walks + GetWeaponCategory) and
 --  depends ONLY on bags, equipped weapon type, and the preferred-item settings
---  (+ db.char.lastUsed*), none of which change between refreshes. Rebuilt lazily
+--  (+ db.profile.lastUsed*), none of which change between refreshes. Rebuilt lazily
 --  when one of those changes; CollectConsumables reads the resolved records each
 --  refresh and derives the icon at emit. Preserves every branch's exact item
 --  selection, fallback ordering, and hasBags/desaturated behavior.
@@ -1296,9 +1317,9 @@ function EABR.ResolveConsumables()
     R.dirty = false
     sig.pf, sig.pfd, sig.pwe = pf, pfd, pwe
 
-    local luf  = db.char and db.char.lastUsedFlask or nil
-    local lufd = db.char and db.char.lastUsedFood or nil
-    local luwe = db.char and db.char.lastUsedWeaponEnchant or nil
+    local luf  = db.profile and db.profile.lastUsedFlask or nil
+    local lufd = db.profile and db.profile.lastUsedFood or nil
+    local luwe = db.profile and db.profile.lastUsedWeaponEnchant or nil
 
     -- Augment Rune: void preferred over ethereal; nil if neither in bags.
     local runeItem = nil
@@ -1492,11 +1513,6 @@ local defaults = {
         unlockPos = nil,
         talentReminders = {},  -- array of {zoneIDs={}, zoneNames={}, spellID=number, spellName=string, showNotNeeded=bool}
         talentReminderYOffset = -50,
-    },
-    char = {
-        lastUsedFlask = nil,
-        lastUsedFood = nil,
-        lastUsedWeaponEnchant = nil,
     },
 }
 
@@ -2362,8 +2378,9 @@ local specialsActive = inInstance or co.showSpecialsNonInstanced
                 local currentZone = tostring(C_Map.GetBestMapForUnit("player") or 0)
                 if co._inkyZoneSet[currentZone] then
                     local hasPotion = EABR._resolved.inky.hasPotion
-                    local hasBuff = PlayerHasAuraByID({INKY_BLACK_BUFF})
-                    if not hasBuff and hasPotion then
+                    -- Detect the "Inky Blackness" buff by scanning auras (see PlayerHasInkyBlackness),
+                    -- mirroring flask/food. Suppressed in M+/PvP there since the aura is unreadable.
+                    if not PlayerHasInkyBlackness() and hasPotion then
                         local e = AcquireEntry()
                         e.mode = "item"; e.itemID = INKY_BLACK_ITEM
                         e.texture = GetItemIcon(INKY_BLACK_ITEM)
@@ -2957,10 +2974,11 @@ do
     for _, f in ipairs(FOOD_ITEMS) do foodSet[f.itemID] = true end
     for _, we in ipairs(WEAPON_ENCHANT_ITEMS) do weSet[we.itemID] = true end
     TrackItemUse = function(itemID)
-        if not db or not db.char then return end
-        if flaskSet[itemID] then db.char.lastUsedFlask = itemID
-        elseif foodSet[itemID] then db.char.lastUsedFood = itemID
-        elseif weSet[itemID] then db.char.lastUsedWeaponEnchant = itemID end
+        if not db or not db.profile then return end
+        -- All persistent use-tracking lives in db.profile (this DB layer has no `char` namespace).
+        if flaskSet[itemID] then db.profile.lastUsedFlask = itemID
+        elseif foodSet[itemID] then db.profile.lastUsedFood = itemID
+        elseif weSet[itemID] then db.profile.lastUsedWeaponEnchant = itemID end
     end
 end
 
@@ -3611,6 +3629,13 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2, arg3)
         return
     end
 
+    if e == "PLAYER_DEAD" then
+        -- Inky Blackness (and other buffs) drop on death; refresh so the aura-based
+        -- reminders re-evaluate and reappear once the buff is lost.
+        RequestRefresh()
+        return
+    end
+
     if e == "PLAYER_ENTERING_WORLD" then
         wipe(_dismissedUntilLoad)
         RequestRefresh()
@@ -3712,7 +3737,7 @@ end)
 local _prevBagCounts = {}
 
 local function DetectUsedItem()
-    if not db or not db.char then return end
+    if not db then return end
     RebuildBagCounts()
     for itemID, oldCount in pairs(_prevBagCounts) do
         if (_bagCounts[itemID] or 0) < oldCount then
