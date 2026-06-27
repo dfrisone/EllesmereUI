@@ -120,12 +120,45 @@ ns.FD = FD
 --  Declared early in the file (before FD/ResolveSpellSettings usage further
 --  down) since Lua locals are only visible after their textual declaration --
 --  defining it later but using it earlier produced a nil-call error.
+--
+--  OPTIMIERUNG: GetSpellPowerCost() allokiert bei jedem Aufruf eine neue
+--  Lua-Table und ist ein C-API-Call. Die Power-Cost eines Spells aendert
+--  sich nur bei Talent-/Spec-Wechsel, nicht im laufenden Kampf. Das Ergebnis
+--  wird daher gecacht und bei PLAYER_SPECIALIZATION_CHANGED sowie
+--  PLAYER_ENTERING_WORLD invalidiert. Im heissen Pfad (jedes UNIT_POWER_UPDATE)
+--  wird nur noch ein Table-Lookup ausgefuehrt.
 -------------------------------------------------------------------------------
+local _spellPowerCostCache = {}
+
+local function InvalidateSpellPowerCostCache()
+    wipe(_spellPowerCostCache)
+end
+ns.InvalidateSpellPowerCostCache = InvalidateSpellPowerCostCache
+
+do
+    local _pccInvalidateFrame = CreateFrame("Frame")
+    _pccInvalidateFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    _pccInvalidateFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    _pccInvalidateFrame:SetScript("OnEvent", InvalidateSpellPowerCostCache)
+end
+
 local function HasEnoughResources(spellID)
     if not (C_Spell and C_Spell.GetSpellPowerCost) then return true end
-    local costs = C_Spell.GetSpellPowerCost(spellID)
-    if not costs or #costs == 0 then return true end
-    for _, c in ipairs(costs) do
+    -- Cache-Lookup: Sentinel nil = noch nicht geprueft, false = keine Kosten
+    -- (=> immer genug), Table = gecachte Kostenliste.
+    local cached = _spellPowerCostCache[spellID]
+    if cached == nil then
+        local costs = C_Spell.GetSpellPowerCost(spellID)
+        if not costs or #costs == 0 then
+            _spellPowerCostCache[spellID] = false  -- kein Ressourcen-Gate
+            return true
+        end
+        _spellPowerCostCache[spellID] = costs
+        cached = costs
+    elseif cached == false then
+        return true  -- kein Ressourcen-Gate, gecacht
+    end
+    for _, c in ipairs(cached) do
         local powerType = c.type
         if powerType then
             local cost = c.cost or 0
@@ -142,7 +175,7 @@ local function HasEnoughResources(spellID)
 end
 ns.HasEnoughResources = HasEnoughResources
 
--- True once we've received at least one genuine UNIT_POWER_UPDATE for the
+-- True once we've received at least one genuine UNIT_POWER_FREQUENT for the
 -- player since the last PLAYER_ENTERING_WORLD. Both C_Spell.IsSpellUsable()
 -- and C_Spell.GetSpellPowerCost() can briefly return stale/empty data right
 -- at login/reload (observed: GetSpellPowerCost reporting 0 cost for a 100-Fury
@@ -150,7 +183,7 @@ ns.HasEnoughResources = HasEnoughResources
 -- Rather than guess a delay, we simply don't trust resource-gated glow
 -- decisions until the client has actually pushed us a real power value.
 -- This is event-driven, not polled: setting it costs one boolean write, and
--- it naturally self-corrects via the already-registered UNIT_POWER_UPDATE
+-- it naturally self-corrects via the already-registered UNIT_POWER_FREQUENT
 -- listener below, which re-triggers QueueCDGlowUpdate on every change.
 ns._cdGlowPowerConfirmed = true
 
@@ -1724,7 +1757,7 @@ local function DecorateFrame(frame, barData)
                         -- Note: isUsable == nil means the API has no data yet (e.g. on
                         -- login before spell data is initialised). Treat nil as not-usable
                         -- rather than usable to avoid starting the glow prematurely.
-                        -- The UNIT_POWER_UPDATE / SPELL_UPDATE_COOLDOWN listeners below
+                        -- The UNIT_POWER_FREQUENT / SPELL_UPDATE_COOLDOWN listeners below
                         -- will re-evaluate and start the glow once data has settled.
                         -- Additionally cross-check live resource values: IsSpellUsable can
                         -- briefly report a resource-gated spell as usable right after
@@ -2011,9 +2044,35 @@ end)
 --  handler itself. A hidden frame processes the flag on the next OnUpdate,
 --  then immediately hides itself again. This means the evaluation runs at
 --  most once per frame when something changed, and costs nothing otherwise.
+--
+--  OPTIMIERUNG 1 (UNIT_POWER_FREQUENT statt UNIT_POWER_UPDATE):
+--  UNIT_POWER_FREQUENT feuert weniger haeufig als UNIT_POWER_UPDATE und ist
+--  semantisch korrekt fuer "hat sich genuegend Ressource geaendert, um den
+--  Glow neu zu bewerten". Der Dirty-Flag-Mechanismus begrenzt die eigentliche
+--  Arbeit ohnehin auf einmal pro Frame, aber die Anzahl der Event-Handler-
+--  Aufrufe und damit der Dirty-Flag-Sets wird reduziert.
+--
+--  OPTIMIERUNG 2 (lokaler powerConfirmed-Upvalue):
+--  ns._cdGlowPowerConfirmed bleibt als ns-Feld fuer den deferred
+--  _cdStateGlowPending-Handler erhalten (der ausserhalb des do-Blocks lebt).
+--  Im heissen OnUpdate-Pfad dieses do-Blocks wird eine lokale Variable
+--  _powerConfirmed synchron gehalten, die einen ns-Tabellenfeld-Lookup
+--  pro Frame-Iteration einspart.
+--
+--  OPTIMIERUNG 3 (per-Flush sid-Dedup):
+--  HasEnoughResources wird pro spellID maximal einmal pro OnUpdate-Durchlauf
+--  aufgerufen. Das verhindert redundante Aufrufe, wenn dieselbe spellID
+--  (theoretisch) auf mehreren aktiven Frames liegt.
 -------------------------------------------------------------------------------
 do
     local _cdGlowDirty = false
+    local _powerConfirmed = true  -- lokaler Upvalue, synchron mit ns._cdGlowPowerConfirmed
+
+    -- Leichtgewichtiger per-Flush-Dedup: innerhalb eines einzigen OnUpdate-
+    -- Durchlaufs wird HasEnoughResources pro spellID nur einmal aufgerufen.
+    -- Wird am Ende jedes Durchlaufs nicht extra geleert -- wipe() kostet mehr
+    -- als ein erneutes Beschreiben, daher einfach ueberschreiben.
+    local _perFlushResourceCache = {}
 
     local _cdGlowUpdateFrame = CreateFrame("Frame")
     _cdGlowUpdateFrame:Hide()
@@ -2024,6 +2083,9 @@ do
         local efc = ns._ecmeFC
         local RSP = ns.ResolveSpellSettings
         if not hfd or not efc or not RSP then return end
+        -- Per-Flush-Cache zuruecksetzen (einmal pro OnUpdate-Durchlauf)
+        wipe(_perFlushResourceCache)
+        local confirmed = _powerConfirmed
         for vi = 1, 4 do
             local vf = GetViewerFrame(vi)
             if vf and vf.itemFramePool and vf.itemFramePool.EnumerateActive then
@@ -2073,8 +2135,17 @@ do
                                     -- (observed with Void Ray on Devourer Demon Hunter). Treat
                                     -- nil the same as "not yet known" -> not usable, consistent
                                     -- with the deferred check above.
-                                    if isUsable == true and (not ns._cdGlowPowerConfirmed or not HasEnoughResources(liveSid)) then
+                                    -- Per-Flush-Dedup: HasEnoughResources pro liveSid nur einmal
+                                    -- pro OnUpdate-Durchlauf aufrufen.
+                                    if isUsable == true and not confirmed then
                                         isUsable = false
+                                    elseif isUsable == true then
+                                        local resOk = _perFlushResourceCache[liveSid]
+                                        if resOk == nil then
+                                            resOk = HasEnoughResources(liveSid)
+                                            _perFlushResourceCache[liveSid] = resOk
+                                        end
+                                        if not resOk then isUsable = false end
                                     end
                                     if isUsable ~= true and fd._cdStateGlowOn then
                                         ns.StopNativeGlow(fd.glowOverlay)
@@ -2108,20 +2179,24 @@ do
     -- SPELL_UPDATE_COOLDOWN: fires on every cast and CD state change.
     -- Catches the "update trigger" case where a cast changes usability.
     _cdGlowEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-    -- UNIT_POWER_UPDATE: fires when player resources change (Fury, Mana etc).
-    -- More reliable than SPELL_UPDATE_USABLE for resource-gated proc spells.
-    -- It also doubles as our "data is now trustworthy" signal -- see
-    -- ns._cdGlowPowerConfirmed above.
-    _cdGlowEventFrame:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
+    -- UNIT_POWER_FREQUENT: fires when player resources change (Fury, Mana etc).
+    -- Weniger frequent als UNIT_POWER_UPDATE, semantisch aber korrekt fuer
+    -- die Frage "hat sich genug Ressource geaendert, um den Glow neu zu
+    -- bewerten". Auch zuverlaessiger als SPELL_UPDATE_USABLE fuer resource-
+    -- gated proc spells. Doubles as our "data is now trustworthy" signal --
+    -- see ns._cdGlowPowerConfirmed above.
+    _cdGlowEventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
     -- PLAYER_ENTERING_WORLD: marks resource data as unconfirmed again (fresh
-    -- login/reload/zone-in). The very next UNIT_POWER_UPDATE flips it back to
+    -- login/reload/zone-in). The very next UNIT_POWER_FREQUENT flips it back to
     -- confirmed. If Fury genuinely never leaves 0, the glow correctly never
     -- starts -- which is exactly the right outcome for a 100-Fury spell.
     _cdGlowEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     _cdGlowEventFrame:SetScript("OnEvent", function(self, event)
         if event == "PLAYER_ENTERING_WORLD" then
+            _powerConfirmed = false
             ns._cdGlowPowerConfirmed = false
-        elseif event == "UNIT_POWER_UPDATE" then
+        elseif event == "UNIT_POWER_FREQUENT" then
+            _powerConfirmed = true
             ns._cdGlowPowerConfirmed = true
         end
         QueueCDGlowUpdate()
