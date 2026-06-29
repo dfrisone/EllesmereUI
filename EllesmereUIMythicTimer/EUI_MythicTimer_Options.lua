@@ -45,6 +45,31 @@ initFrame:SetScript("OnEvent", function(self)
         if EllesmereUI.RefreshPage then EllesmereUI:RefreshPage(true) end
     end
 
+    local function BuildBarTexDropdown()
+        if ns.AppendSharedMediaBarTextures then
+            ns.AppendSharedMediaBarTextures()
+        end
+
+        local values, order = {}, {}
+        local names = ns.barTextureNames or {}
+        local textureOrder = ns.barTextureOrder or {}
+        for _, key in ipairs(textureOrder) do
+            if key ~= "---" then
+                values[key] = names[key] or key
+                order[#order + 1] = key
+            end
+        end
+
+        local textureLookup = ns.barTextures or {}
+        values._menuOpts = {
+            itemHeight = 28,
+            background = function(key)
+                return textureLookup[key]
+            end,
+        }
+        return values, order
+    end
+
     -- Build Page
     -- Toggle preview + sync the Quest Tracker suppression so it doesn't sit
     -- on top of the M+ Timer preview frame.
@@ -85,6 +110,13 @@ initFrame:SetScript("OnEvent", function(self)
 
         local alignValues = { LEFT = "Left", CENTER = "Center", RIGHT = "Right" }
         local alignOrder  = { "LEFT", "CENTER", "RIGHT" }
+        local titleAffixPositionValues = {
+            ABOVE_TIMER = "Above Timer",
+            BELOW_TIMER = "Below Timer",
+        }
+        local titleAffixPositionOrder = { "ABOVE_TIMER", "BELOW_TIMER" }
+        local objectiveTimePositionValues = { RIGHT = "Right", LEFT = "Left" }
+        local objectiveTimePositionOrder = { "RIGHT", "LEFT" }
         local compareModeValues = {
           NONE = "None",
           DUNGEON = "Per Dungeon",
@@ -216,6 +248,402 @@ initFrame:SetScript("OnEvent", function(self)
             }
         end
 
+        local function _MakeColorSwatch(colorKey, defR, defG, defB, afterSet)
+            return {
+                { tooltip = "Color",
+                  hasAlpha = false,
+                  getValue = function()
+                      local c = Cfg(colorKey)
+                      if c then return c.r or defR, c.g or defG, c.b or defB end
+                      return defR, defG, defB
+                  end,
+                  setValue = function(r, g, b)
+                      Set(colorKey, { r = r, g = g, b = b })
+                      if afterSet then afterSet(r, g, b) end
+                      Refresh()
+                  end },
+            }
+        end
+
+        local function _AttachPopupButton(rgn, icon, popupTitle, rows, isDisabled)
+            local PP = EllesmereUI.PP
+            local _, popupShow = EllesmereUI.BuildCogPopup({ title = popupTitle, rows = rows })
+            local btn = CreateFrame("Button", nil, rgn)
+            btn:SetSize(26, 26)
+            PP.Point(btn, "RIGHT", rgn._control or rgn, "LEFT", -6, 0)
+            btn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            local tex = btn:CreateTexture(nil, "OVERLAY")
+            tex:SetAllPoints()
+            tex:SetTexture(icon)
+            local function UpdateAlpha()
+                btn:SetAlpha(isDisabled() and 0.15 or 0.4)
+            end
+            EllesmereUI.RegisterWidgetRefresh(UpdateAlpha)
+            UpdateAlpha()
+            btn:SetScript("OnClick", function(self)
+                if not isDisabled() then popupShow(self) end
+            end)
+            btn:SetScript("OnEnter", function(self)
+                if not isDisabled() then self:SetAlpha(0.75) end
+            end)
+            btn:SetScript("OnLeave", function() UpdateAlpha() end)
+        end
+
+        local timerDisplayValues = {
+            REMAINING       = "11:37",
+            REMAINING_TOTAL = "11:37 / 33:00",
+            ELAPSED         = "21:23",
+            ELAPSED_DETAIL  = "21:23 (11:37 / 33:00)",
+        }
+        local timerDisplayOrder = { "REMAINING", "REMAINING_TOTAL", "ELAPSED", "ELAPSED_DETAIL" }
+        local timerBarStyleValues = { TICKS = "Ticks", SEGMENTS = "Gaps" }
+        local timerBarStyleOrder = { "TICKS", "SEGMENTS" }
+        local texValues, texOrder = BuildBarTexDropdown()
+
+        _, h = W:SectionHeader(parent, "TITLE", y); y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Title",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              getValue=function() return Cfg("showTitle") ~= false end,
+              setValue=function(v) Set("showTitle", v); Refresh() end },
+            { type="multiSwatch", text="Title Color",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTitle") == false end,
+              disabledTooltip="Show Title",
+              swatches = _MakeAccentSwatches("titleUseAccent", "titleColor", 1, 1, 1) })
+        _AttachPopupButton(row._leftRegion, EllesmereUI.RESIZE_ICON, "Title Size", {
+            { type="slider", label="Size", min=8, max=24, step=1,
+              get=function() return Cfg("titleSize") or 16 end,
+              set=function(v) Set("titleSize", v); Refresh() end },
+        }, function() return Cfg("enabled") == false or Cfg("showTitle") == false end)
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Affix",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              getValue=function() return Cfg("showAffixes") ~= false end,
+              setValue=function(v) Set("showAffixes", v); Refresh() end },
+            { type="multiSwatch", text="Affix Color",
+              disabled=function() return Cfg("enabled") == false or Cfg("showAffixes") == false end,
+              disabledTooltip="Show Affix",
+              swatches = _MakeColorSwatch("affixTextColor", 1, 1, 1) })
+        _AttachPopupButton(row._leftRegion, EllesmereUI.RESIZE_ICON, "Affix Size", {
+            { type="slider", label="Size", min=6, max=20, step=1,
+              get=function() return Cfg("affixSize") or 12 end,
+              set=function(v) Set("affixSize", v); Refresh() end },
+        }, function() return Cfg("enabled") == false or Cfg("showAffixes") == false end)
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="dropdown", text="Position",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              values=titleAffixPositionValues,
+              order=titleAffixPositionOrder,
+              getValue=function() return Cfg("titleAffixPosition") or "ABOVE_TIMER" end,
+              setValue=function(v) Set("titleAffixPosition", v); Refresh(); EllesmereUI:RefreshPage() end })
+        _AttachPopupButton(row._leftRegion, EllesmereUI.RESIZE_ICON, "Title/Affix Spacing", {
+            { type="slider", label="Death Gap", min=-10, max=30, step=1,
+              disabled=function() return (Cfg("titleAffixPosition") or "ABOVE_TIMER") == "BELOW_TIMER" end,
+              disabledTooltip="Above Timer",
+              get=function() return Cfg("titleAffixDeathGap") or 11 end,
+              set=function(v) Set("titleAffixDeathGap", v); Refresh() end },
+            { type="slider", label="Timer Gap", min=-10, max=30, step=1,
+              disabled=function() return (Cfg("titleAffixPosition") or "ABOVE_TIMER") ~= "BELOW_TIMER" end,
+              disabledTooltip="Below Timer",
+              get=function() return Cfg("titleAffixTimerGap") or Cfg("titleAffixSandwichGap") or 6 end,
+              set=function(v) Set("titleAffixTimerGap", v); Refresh() end },
+            { type="slider", label="Bar Gap", min=-10, max=30, step=1,
+              disabled=function() return (Cfg("titleAffixPosition") or "ABOVE_TIMER") ~= "BELOW_TIMER" end,
+              disabledTooltip="Below Timer",
+              get=function() return Cfg("titleAffixBarGap") or Cfg("titleAffixSandwichGap") or 6 end,
+              set=function(v) Set("titleAffixBarGap", v); Refresh() end },
+        }, function() return Cfg("enabled") == false end)
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "TIMER", y); y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="slider", text="Timer Size",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              min=10, max=32, step=1, isPercent=false,
+              getValue=function() return Cfg("timerTextSize") or 20 end,
+              setValue=function(v) Set("timerTextSize", v); Refresh() end },
+            { type="dropdown", text="Timer Format",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              values=timerDisplayValues,
+              order=timerDisplayOrder,
+              getValue=function() return Cfg("timerDisplayMode") or "REMAINING_TOTAL" end,
+              setValue=function(v) Set("timerDisplayMode", v); Refresh() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Timer Bar",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              getValue=function() return Cfg("showTimerBar") ~= false end,
+              setValue=function(v)
+                  Set("showTimerBar", v)
+                  if not v and Cfg("timerInBar") then Set("timerInBar", false) end
+                  Refresh(); EllesmereUI:RefreshPage()
+              end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Timer Inside Bar",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end,
+              disabledTooltip=function() if Cfg("showTimerBar") == false then return "Show Timer Bar" end return "the module" end,
+              getValue=function() return Cfg("timerInBar") == true end,
+              setValue=function(v) Set("timerInBar", v); Refresh(); EllesmereUI:RefreshPage() end },
+            { type="dropdown", text="Ticks / Gaps",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end,
+              disabledTooltip="Show Timer Bar",
+              values=timerBarStyleValues,
+              order=timerBarStyleOrder,
+              getValue=function() return Cfg("timerBarStyle") or "TICKS" end,
+              setValue=function(v) Set("timerBarStyle", v); Refresh(); EllesmereUI:RefreshPage() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="dropdown", text="Bar Texture",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end,
+              disabledTooltip="Show Timer Bar",
+              values=texValues,
+              order=texOrder,
+              getValue=function() return Cfg("barTexture") or "none" end,
+              setValue=function(v) Set("barTexture", v); Refresh() end },
+            { type="dropdown", text="Bar Background Texture",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end,
+              disabledTooltip="Show Timer Bar",
+              values=texValues,
+              order=texOrder,
+              getValue=function() return Cfg("barBgTexture") or "none" end,
+              setValue=function(v) Set("barBgTexture", v); Refresh() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="multiSwatch", text="Tick Color",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false or (Cfg("timerBarStyle") or "TICKS") ~= "TICKS" end,
+              disabledTooltip="Ticks",
+              swatches = _MakeColorSwatch("timerTickColor", 1, 1, 1) },
+            { type="slider", text="Tick Opacity",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false or (Cfg("timerBarStyle") or "TICKS") ~= "TICKS" end,
+              disabledTooltip="Ticks",
+              min=0, max=1, step=0.05, isPercent=false,
+              getValue=function() return Cfg("tickAlpha") or 1 end,
+              setValue=function(v) Set("tickAlpha", v); Refresh() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="slider", text="Gap Size",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false or (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+              disabledTooltip="Gaps",
+              min=0, max=12, step=1, isPercent=false,
+              getValue=function() return Cfg("timerBarSegmentGap") or 2 end,
+              setValue=function(v) Set("timerBarSegmentGap", v); Refresh() end },
+            { type="slider", text="Bar Width",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end,
+              disabledTooltip="Show Timer Bar",
+              min=120, max=420, step=1, isPercent=false,
+              getValue=function() return Cfg("barWidth") or 210 end,
+              setValue=function(v) Set("barWidth", v); Refresh() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="slider", text="Bar Height",
+              disabled=function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end,
+              disabledTooltip="Show Timer Bar",
+              min=4, max=30, step=1, isPercent=false,
+              getValue=function() return Cfg("barHeight") or 8 end,
+              setValue=function(v) Set("barHeight", v); Refresh() end })
+        _AttachPopupButton(row._leftRegion, EllesmereUI.RESIZE_ICON, "Bar Height Options", {
+            { type="slider", label="Expanded Height", min=8, max=40, step=1,
+              get=function() return Cfg("barHeightExpanded") or 22 end,
+              set=function(v) Set("barHeightExpanded", v); Refresh() end },
+            { type="slider", label="Expanded Fill", min=0, max=1, step=0.05,
+              get=function() return Cfg("barFillAlphaExpanded") or 0.85 end,
+              set=function(v) Set("barFillAlphaExpanded", v); Refresh() end },
+            { type="toggle", label="Left Text",
+              get=function() return Cfg("timerInBarLeftText") == true end,
+              set=function(v) Set("timerInBarLeftText", v); Refresh() end },
+        }, function() return Cfg("enabled") == false or Cfg("showTimerBar") == false end)
+        y = y - h
+
+        local function _ThresholdRow(label, barColorKey, showKey, sizeKey, offsetXKey, offsetYKey, whiteKey, defR, defG, defB, afterBarSet)
+            local function IsTimerTextShown()
+                if showKey == "showThreshRemaining" then
+                    return Cfg(showKey) == true
+                end
+                return Cfg(showKey) ~= false
+            end
+
+            row, h = W:DualRow(parent, y,
+                { type="multiSwatch", text=label .. " Color",
+                  disabled=function() return Cfg("enabled") == false end,
+                  disabledTooltip="the module",
+                  swatches = _MakeColorSwatch(barColorKey, defR, defG, defB, afterBarSet) },
+                { type="toggle", text="Show " .. label .. " Timer Text",
+                  disabled=function() return Cfg("enabled") == false end,
+                  disabledTooltip="the module",
+                  getValue=IsTimerTextShown,
+                  setValue=function(v) Set(showKey, v); Refresh() end })
+            _AttachPopupButton(row._rightRegion, EllesmereUI.RESIZE_ICON, label .. " Timer Text", {
+                { type="toggle", label="White Text",
+                  get=function() return Cfg(whiteKey) == true end,
+                  set=function(v) Set(whiteKey, v); Refresh() end },
+                { type="slider", label="Text Size", min=6, max=20, step=1,
+                  get=function() return Cfg(sizeKey) or Cfg("thresholdSize") or 12 end,
+                  set=function(v) Set(sizeKey, v); Refresh() end },
+                { type="slider", label="Text X", min=-80, max=80, step=1,
+                  get=function() return Cfg(offsetXKey) or Cfg("thresholdTextOffsetX") or 0 end,
+                  set=function(v) Set(offsetXKey, v); Refresh() end },
+                { type="slider", label="Text Y", min=-40, max=40, step=1,
+                  get=function() return Cfg(offsetYKey) or Cfg("thresholdTextOffsetY") or 0 end,
+                  set=function(v) Set(offsetYKey, v); Refresh() end },
+            }, function() return Cfg("enabled") == false or not IsTimerTextShown() end)
+            y = y - h
+        end
+
+        _, h = W:SectionHeader(parent, "THRESHOLDS", y); y = y - h
+        _ThresholdRow("+3 Threshold", "timerSegment1Color", "showPlusThreeTimer", "thresholdPlusThreeSize", "thresholdPlusThreeTextOffsetX", "thresholdPlusThreeTextOffsetY", "thresholdPlusThreeTextWhite", 0.4, 1, 0.4,
+            function(r, g, b) Set("timerPlusThreeColor", { r = r, g = g, b = b }) end)
+        _ThresholdRow("+2 Threshold", "timerSegment2Color", "showPlusTwoTimer", "thresholdPlusTwoSize", "thresholdPlusTwoTextOffsetX", "thresholdPlusTwoTextOffsetY", "thresholdPlusTwoTextWhite", 0.3, 0.8, 1,
+            function(r, g, b) Set("timerPlusTwoColor", { r = r, g = g, b = b }) end)
+        _ThresholdRow("+1 Threshold", "timerSegment3Color", "showThreshRemaining", "thresholdPlusOneSize", "thresholdPlusOneTextOffsetX", "thresholdPlusOneTextOffsetY", "thresholdPlusOneTextWhite", 0.69, 0.35, 0.8)
+
+        _, h = W:SectionHeader(parent, "FORCES", y); y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Enemy Forces",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              getValue=function() return Cfg("showEnemyBar") ~= false end,
+              setValue=function(v) Set("showEnemyBar", v); Refresh(); EllesmereUI:RefreshPage() end },
+            { type="dropdown", text="Enemy Text Format",
+              disabled=function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end,
+              disabledTooltip="Show Enemy Forces",
+              values=forcesTextValues,
+              order=forcesTextOrder,
+              getValue=function() return Cfg("enemyForcesTextFormat") or "PERCENT" end,
+              setValue=function(v) Set("enemyForcesTextFormat", v); Refresh() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="dropdown", text="Enemy Forces %",
+              disabled=function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end,
+              disabledTooltip="Show Enemy Forces",
+              values={ LABEL = "In Label Text", BAR = "In Bar", BESIDE = "Beside Bar" },
+              order={ "LABEL", "BAR", "BESIDE" },
+              getValue=function() return Cfg("enemyForcesPctPos") or "LABEL" end,
+              setValue=function(v) Set("enemyForcesPctPos", v); Refresh() end },
+            { type="dropdown", text="Enemy Forces Position",
+              disabled=function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end,
+              disabledTooltip="Show Enemy Forces",
+              values={ BOTTOM = "Bottom", UNDER_BAR = "Under Timer Bar" },
+              order={ "BOTTOM", "UNDER_BAR" },
+              getValue=function() return Cfg("enemyForcesPos") or "BOTTOM" end,
+              setValue=function(v) Set("enemyForcesPos", v); Refresh() end })
+        _AttachPopupButton(row._leftRegion, EllesmereUI.RESIZE_ICON, "Enemy Forces Text", {
+            { type="toggle", label="Hide Label",
+              get=function() return Cfg("hideEnemyForcesLabel") == true end,
+              set=function(v) Set("hideEnemyForcesLabel", v); Refresh() end },
+            { type="slider", label="Text Size", min=8, max=24, step=1,
+              get=function() return Cfg("enemyForcesTextSize") or 12 end,
+              set=function(v) Set("enemyForcesTextSize", v); Refresh() end },
+            { type="slider", label="Text X", min=-80, max=80, step=1,
+              get=function() return Cfg("enemyForcesTextOffsetX") or 0 end,
+              set=function(v) Set("enemyForcesTextOffsetX", v); Refresh() end },
+            { type="slider", label="Text Y", min=-40, max=40, step=1,
+              get=function() return Cfg("enemyForcesTextOffsetY") or 0 end,
+              set=function(v) Set("enemyForcesTextOffsetY", v); Refresh() end },
+        }, function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end)
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="multiSwatch", text="Enemy Bar Color",
+              disabled=function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end,
+              disabledTooltip="Show Enemy Forces",
+              swatches = _MakeAccentSwatches("enemyBarUseAccent", "enemyBarColor", 0.35, 0.55, 0.8) })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="dropdown", text="Bar Texture",
+              disabled=function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end,
+              disabledTooltip="Show Enemy Forces",
+              values=texValues,
+              order=texOrder,
+              getValue=function() return Cfg("barTexture") or "none" end,
+              setValue=function(v) Set("barTexture", v); Refresh() end },
+            { type="dropdown", text="Bar Background Texture",
+              disabled=function() return Cfg("enabled") == false or Cfg("showEnemyBar") == false end,
+              disabledTooltip="Show Enemy Forces",
+              values=texValues,
+              order=texOrder,
+              getValue=function() return Cfg("barBgTexture") or "none" end,
+              setValue=function(v) Set("barBgTexture", v); Refresh() end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "BOSS OBJECTIVES", y); y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="dropdown", text="Split Times",
+              disabled=function() return Cfg("enabled") == false or Cfg("showObjectives") == false end,
+              disabledTooltip="Show Boss Objectives",
+              values=objectiveTimePositionValues,
+              order=objectiveTimePositionOrder,
+              getValue=function() return Cfg("objectiveTimePosition") or "RIGHT" end,
+              setValue=function(v) Set("objectiveTimePosition", v); Refresh() end },
+            { type="toggle", text="Show Objective Times",
+              disabled=function() return Cfg("enabled") == false or Cfg("showObjectives") == false end,
+              disabledTooltip="Show Boss Objectives",
+              getValue=function() return Cfg("showObjectiveTimes") ~= false end,
+              setValue=function(v) Set("showObjectiveTimes", v); Refresh() end })
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Boss Objectives",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              getValue=function() return Cfg("showObjectives") ~= false end,
+              setValue=function(v) Set("showObjectives", v); Refresh(); EllesmereUI:RefreshPage() end },
+            { type="slider", text="Objectives Size",
+              disabled=function() return Cfg("enabled") == false or Cfg("showObjectives") == false end,
+              disabledTooltip="Show Boss Objectives",
+              min=8, max=20, step=1, isPercent=false,
+              getValue=function() return Cfg("objectivesSize") or 12 end,
+              setValue=function(v) Set("objectivesSize", v); Refresh() end })
+        _AttachPopupButton(row._leftRegion, EllesmereUI.RESIZE_ICON, "Boss Position", {
+            { type="slider", label="Boss X", min=-80, max=80, step=1,
+              get=function() return Cfg("objectiveTextOffsetX") or 0 end,
+              set=function(v) Set("objectiveTextOffsetX", v); Refresh() end },
+            { type="slider", label="Boss Y", min=-40, max=40, step=1,
+              get=function() return Cfg("objectiveTextOffsetY") or 0 end,
+              set=function(v) Set("objectiveTextOffsetY", v); Refresh() end },
+        }, function() return Cfg("enabled") == false or Cfg("showObjectives") == false end)
+        y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="slider", text="Objective Spacing",
+              disabled=function() return Cfg("enabled") == false or Cfg("showObjectives") == false end,
+              disabledTooltip="Show Boss Objectives",
+              min=0, max=12, step=1, isPercent=false,
+              getValue=function() return Cfg("objectiveGap") or 4 end,
+              setValue=function(v) Set("objectiveGap", v); Refresh() end },
+            { type="dropdown", text="Split Compare",
+              disabled=function() return Cfg("enabled") == false or Cfg("showObjectives") == false end,
+              disabledTooltip="Show Boss Objectives",
+              values=compareModeValues,
+              order=compareModeOrder,
+              getValue=function() return Cfg("objectiveCompareMode") or "NONE" end,
+              setValue=function(v) Set("objectiveCompareMode", v); Refresh() end })
+        y = y - h
+
+        if false then
+
         row, h = W:DualRow(parent, y,
             { type="multiSwatch", text="Title Color",
               disabled=function() return Cfg("enabled") == false end,
@@ -265,6 +693,60 @@ initFrame:SetScript("OnEvent", function(self)
             _attachCog(row._rightRegion, "Affix Size", "Size", 6, 20, "affixSize", 12,
                 function() return Cfg("enabled") == false or Cfg("showAffixes") == false end)
         end
+
+        row, h = W:DualRow(parent, y,
+            { type="dropdown", text="Title/Affix Position",
+              disabled=function() return Cfg("enabled") == false end,
+              disabledTooltip="the module",
+              values=titleAffixPositionValues,
+              order=titleAffixPositionOrder,
+              getValue=function() return Cfg("titleAffixPosition") or "ABOVE_TIMER" end,
+              setValue=function(v) Set("titleAffixPosition", v); Refresh(); EllesmereUI:RefreshPage() end })
+
+        do
+            local PP = EllesmereUI.PP
+            local rgn = row._leftRegion
+            local _, spacingShow = EllesmereUI.BuildCogPopup({
+                title = "Title/Affix Spacing",
+                rows = {
+                    { type="slider", label="Death Gap", min=-10, max=30, step=1,
+                      disabled=function() return (Cfg("titleAffixPosition") or "ABOVE_TIMER") == "BELOW_TIMER" end,
+                      disabledTooltip="Above Timer",
+                      get=function() return Cfg("titleAffixDeathGap") or 11 end,
+                      set=function(v) Set("titleAffixDeathGap", v); Refresh() end },
+                    { type="slider", label="Timer Gap", min=-10, max=30, step=1,
+                      disabled=function() return (Cfg("titleAffixPosition") or "ABOVE_TIMER") ~= "BELOW_TIMER" end,
+                      disabledTooltip="Below Timer",
+                      get=function() return Cfg("titleAffixTimerGap") or Cfg("titleAffixSandwichGap") or 6 end,
+                      set=function(v) Set("titleAffixTimerGap", v); Refresh() end },
+                    { type="slider", label="Bar Gap", min=-10, max=30, step=1,
+                      disabled=function() return (Cfg("titleAffixPosition") or "ABOVE_TIMER") ~= "BELOW_TIMER" end,
+                      disabledTooltip="Below Timer",
+                      get=function() return Cfg("titleAffixBarGap") or Cfg("titleAffixSandwichGap") or 6 end,
+                      set=function(v) Set("titleAffixBarGap", v); Refresh() end },
+                },
+            })
+            local spacingBtn = CreateFrame("Button", nil, rgn)
+            spacingBtn:SetSize(26, 26)
+            PP.Point(spacingBtn, "RIGHT", rgn._control or rgn, "LEFT", -6, 0)
+            spacingBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            local spacingTex = spacingBtn:CreateTexture(nil, "OVERLAY")
+            spacingTex:SetAllPoints()
+            spacingTex:SetTexture(EllesmereUI.RESIZE_ICON)
+            local function UpdateSpacingAlpha()
+                spacingBtn:SetAlpha(Cfg("enabled") == false and 0.15 or 0.4)
+            end
+            EllesmereUI.RegisterWidgetRefresh(UpdateSpacingAlpha)
+            UpdateSpacingAlpha()
+            spacingBtn:SetScript("OnClick", function(self)
+                if Cfg("enabled") ~= false then spacingShow(self) end
+            end)
+            spacingBtn:SetScript("OnEnter", function(self)
+                if Cfg("enabled") ~= false then self:SetAlpha(0.75) end
+            end)
+            spacingBtn:SetScript("OnLeave", function() UpdateSpacingAlpha() end)
+        end
+        y = y - h
 
         row, h = W:DualRow(parent, y,
             { type="slider", text="Bar Width",
@@ -320,7 +802,27 @@ initFrame:SetScript("OnEvent", function(self)
         end
         y = y - h
 
-        -- ── TIMER ────────────────────────────────────────────────────────
+        -- Bar textures
+        do
+            local texValues, texOrder = BuildBarTexDropdown()
+            row, h = W:DualRow(parent, y,
+                { type="dropdown", text="Bar Texture",
+                  disabled=function() return Cfg("enabled") == false end,
+                  disabledTooltip="the module",
+                  values=texValues,
+                  order=texOrder,
+                  getValue=function() return Cfg("barTexture") or "none" end,
+                  setValue=function(v) Set("barTexture", v); Refresh() end },
+                { type="dropdown", text="Bar Background Texture",
+                  disabled=function() return Cfg("enabled") == false end,
+                  disabledTooltip="the module",
+                  values=texValues,
+                  order=texOrder,
+                  getValue=function() return Cfg("barBgTexture") or "none" end,
+                  setValue=function(v) Set("barBgTexture", v); Refresh() end })
+            y = y - h
+        end
+
         _, h = W:SectionHeader(parent, "TIMER", y); y = y - h
 
         local timerDisplayValues = {
@@ -330,6 +832,8 @@ initFrame:SetScript("OnEvent", function(self)
             ELAPSED_DETAIL  = "21:23 (11:37 / 33:00)",
         }
         local timerDisplayOrder = { "REMAINING", "REMAINING_TOTAL", "ELAPSED", "ELAPSED_DETAIL" }
+        local timerBarStyleValues = { TICKS = "Ticks", SEGMENTS = "3 Bars" }
+        local timerBarStyleOrder = { "TICKS", "SEGMENTS" }
 
         row, h = W:DualRow(parent, y,
             { type="toggle", text="Show Timer Bar",
@@ -478,14 +982,97 @@ initFrame:SetScript("OnEvent", function(self)
             do
                 local rightRgn = row._rightRegion
                 local _, cogShow = EllesmereUI.BuildCogPopup({
-                    title = "+2 / +3 Threshold Size",
+                    title = "Timer Bar Thresholds",
                     rows = {
                         { type="toggle", label="Show Time Remaining",
                           get=function() return Cfg("showThreshRemaining") == true end,
                           set=function(v) Set("showThreshRemaining", v); Refresh() end },
+                        { type="dropdown", label="Bar Style",
+                          values=timerBarStyleValues,
+                          order=timerBarStyleOrder,
+                          get=function() return Cfg("timerBarStyle") or "TICKS" end,
+                          set=function(v) Set("timerBarStyle", v); Refresh() end },
+                        { type="toggle", label="Custom Bar Color",
+                          get=function() return Cfg("timerBarUseCustomColor") == true end,
+                          set=function(v) Set("timerBarUseCustomColor", v); Refresh() end },
+                        { type="colorpicker", label="Bar Color", hasAlpha=false,
+                          disabled=function() return Cfg("timerBarUseCustomColor") ~= true end,
+                          disabledTooltip="Custom Bar Color",
+                          get=function()
+                              local c = Cfg("timerBarColor")
+                              if c then return c.r or 0.4, c.g or 1, c.b or 0.4, 1 end
+                              return 0.4, 1, 0.4, 1
+                          end,
+                          set=function(r, g, b)
+                              Set("timerBarColor", { r = r, g = g, b = b })
+                              Refresh()
+                          end },
+                        { type="colorpicker", label="+3 Segment Bar", hasAlpha=false,
+                          disabled=function() return (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+                          disabledTooltip="Bar Style: 3 Bars",
+                          get=function()
+                              local c = Cfg("timerSegment1Color")
+                              if c then return c.r or 0.4, c.g or 1, c.b or 0.4, 1 end
+                              return 0.4, 1, 0.4, 1
+                          end,
+                          set=function(r, g, b) Set("timerSegment1Color", { r = r, g = g, b = b }); Refresh() end },
+                        { type="colorpicker", label="+2 Segment Bar", hasAlpha=false,
+                          disabled=function() return (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+                          disabledTooltip="Bar Style: 3 Bars",
+                          get=function()
+                              local c = Cfg("timerSegment2Color")
+                              if c then return c.r or 0.3, c.g or 0.8, c.b or 1, 1 end
+                              return 0.3, 0.8, 1, 1
+                          end,
+                          set=function(r, g, b) Set("timerSegment2Color", { r = r, g = g, b = b }); Refresh() end },
+                        { type="colorpicker", label="+1 Segment Bar", hasAlpha=false,
+                          disabled=function() return (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+                          disabledTooltip="Bar Style: 3 Bars",
+                          get=function()
+                              local c = Cfg("timerSegment3Color")
+                              if c then return c.r or 0.69, c.g or 0.35, c.b or 0.8, 1 end
+                              return 0.69, 0.35, 0.8, 1
+                          end,
+                          set=function(r, g, b) Set("timerSegment3Color", { r = r, g = g, b = b }); Refresh() end },
+                        { type="colorpicker", label="+3 Segment Time", hasAlpha=false,
+                          disabled=function() return (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+                          disabledTooltip="Bar Style: 3 Bars",
+                          get=function()
+                              local c = Cfg("timerSegment1TextColor")
+                              if c then return c.r or 0.4, c.g or 1, c.b or 0.4, 1 end
+                              return 0.4, 1, 0.4, 1
+                          end,
+                          set=function(r, g, b) Set("timerSegment1TextColor", { r = r, g = g, b = b }); Refresh() end },
+                        { type="colorpicker", label="+2 Segment Time", hasAlpha=false,
+                          disabled=function() return (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+                          disabledTooltip="Bar Style: 3 Bars",
+                          get=function()
+                              local c = Cfg("timerSegment2TextColor")
+                              if c then return c.r or 0.3, c.g or 0.8, c.b or 1, 1 end
+                              return 0.3, 0.8, 1, 1
+                          end,
+                          set=function(r, g, b) Set("timerSegment2TextColor", { r = r, g = g, b = b }); Refresh() end },
+                        { type="colorpicker", label="+1 Segment Time", hasAlpha=false,
+                          disabled=function() return (Cfg("timerBarStyle") or "TICKS") ~= "SEGMENTS" end,
+                          disabledTooltip="Bar Style: 3 Bars",
+                          get=function()
+                              local c = Cfg("timerSegment3TextColor")
+                              if c then return c.r or 1, c.g or 1, c.b or 1, 1 end
+                              return 1, 1, 1, 1
+                          end,
+                          set=function(r, g, b) Set("timerSegment3TextColor", { r = r, g = g, b = b }); Refresh() end },
                         { type="slider", label="Size", min=6, max=20, step=1,
                           get=function() return Cfg("thresholdSize") or 12 end,
                           set=function(v) Set("thresholdSize", v); Refresh() end },
+                        { type="slider", label="Text X", min=-80, max=80, step=1,
+                          get=function() return Cfg("thresholdTextOffsetX") or 0 end,
+                          set=function(v) Set("thresholdTextOffsetX", v); Refresh() end },
+                        { type="slider", label="Text Y", min=-40, max=40, step=1,
+                          get=function() return Cfg("thresholdTextOffsetY") or 0 end,
+                          set=function(v) Set("thresholdTextOffsetY", v); Refresh() end },
+                        { type="slider", label="Segment Gap", min=0, max=12, step=1,
+                          get=function() return Cfg("timerBarSegmentGap") or 2 end,
+                          set=function(v) Set("timerBarSegmentGap", v); Refresh() end },
                         { type="slider", label="Tick Opacity",
                           min=0, max=1, step=0.05,
                           get=function() return Cfg("tickAlpha") or 1 end,
@@ -547,6 +1134,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="toggle", label="Show Objective Times",
                       get=function() return Cfg("showObjectiveTimes") ~= false end,
                       set=function(v) Set("showObjectiveTimes", v); Refresh() end },
+                    { type="dropdown", label="Split Times",
+                      values=objectiveTimePositionValues,
+                      order=objectiveTimePositionOrder,
+                      get=function() return Cfg("objectiveTimePosition") or "RIGHT" end,
+                      set=function(v) Set("objectiveTimePosition", v); Refresh() end },
+                    { type="slider", label="Boss X", min=-80, max=80, step=1,
+                      get=function() return Cfg("objectiveTextOffsetX") or 0 end,
+                      set=function(v) Set("objectiveTextOffsetX", v); Refresh() end },
+                    { type="slider", label="Boss Y", min=-40, max=40, step=1,
+                      get=function() return Cfg("objectiveTextOffsetY") or 0 end,
+                      set=function(v) Set("objectiveTextOffsetY", v); Refresh() end },
                 },
             })
             local cogBtn = CreateFrame("Button", nil, rightRgn)
@@ -643,8 +1241,7 @@ initFrame:SetScript("OnEvent", function(self)
                   getValue=function() return Cfg("enemyForcesPos") or "BOTTOM" end,
                   setValue=function(v) Set("enemyForcesPos", v); Refresh() end })
 
-            -- Inline cog on the Enemy Forces % dropdown: extra options
-            -- (currently just Hide Label).
+            -- Inline cog on the Enemy Forces % dropdown: label options.
             do
                 local PP = EllesmereUI.PP
                 local leftRgn = row._leftRegion
@@ -654,6 +1251,15 @@ initFrame:SetScript("OnEvent", function(self)
                         { type="toggle", label="Hide Label",
                           get=function() return Cfg("hideEnemyForcesLabel") == true end,
                           set=function(v) Set("hideEnemyForcesLabel", v); Refresh() end },
+                        { type="slider", label="Text Size", min=8, max=24, step=1,
+                          get=function() return Cfg("enemyForcesTextSize") or 12 end,
+                          set=function(v) Set("enemyForcesTextSize", v); Refresh() end },
+                        { type="slider", label="Text X", min=-80, max=80, step=1,
+                          get=function() return Cfg("enemyForcesTextOffsetX") or 0 end,
+                          set=function(v) Set("enemyForcesTextOffsetX", v); Refresh() end },
+                        { type="slider", label="Text Y", min=-40, max=40, step=1,
+                          get=function() return Cfg("enemyForcesTextOffsetY") or 0 end,
+                          set=function(v) Set("enemyForcesTextOffsetY", v); Refresh() end },
                     },
                 })
                 local cogBtn = CreateFrame("Button", nil, leftRgn)
@@ -698,6 +1304,8 @@ initFrame:SetScript("OnEvent", function(self)
                   getValue=function() return Cfg("objectiveCompareMode") or "NONE" end,
                   setValue=function(v) Set("objectiveCompareMode", v); Refresh() end })
             y = y - h
+
+        end
 
         end
 
