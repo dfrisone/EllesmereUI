@@ -541,6 +541,18 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
         end
 
+        -- Friends Online: per-section row cap (0 = no cap)
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Friends List Cap", min=0, max=50, step=1,
+              tooltip="Max rows shown per section in the Friends Online tooltip. 0 = no cap.",
+              getValue=function() local m = MinimapDB(); return m and m.friendsMaxRows or 0 end,
+              setValue=function(v)
+                local m = MinimapDB(); if not m then return end
+                m.friendsMaxRows = v
+              end },
+            { type="label", text="" }
+        );  y = y - h
+
         -- Show Omnium Folio (expansion landing page button) | inline X/Y cog
         local omniumRow
         omniumRow, h = W:DualRow(parent, y,
@@ -593,7 +605,6 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
             cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
         end
-
         y = y - 10
 
         -- EXTRAS section header
