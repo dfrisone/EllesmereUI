@@ -158,7 +158,7 @@ function CategoryManager:InitCategories()
             local state = userState[def.name]
             cats[#cats + 1] = {
                 _defaultName      = def.name,
-                name              = (state and state.rename) or def.name,
+                name              = (state and state.rename) or EllesmereUI.L(def.name),
                 types             = def.types,
                 icon              = def.icon,
                 isAtlas           = def.isAtlas,

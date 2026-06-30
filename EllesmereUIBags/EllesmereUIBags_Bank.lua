@@ -226,7 +226,7 @@ local title = header:CreateFontString(nil, "OVERLAY")
 SetBankFont(title, 13)
 title:SetPoint("LEFT", header, "LEFT", 8, 0)
 title:SetTextColor(1, 1, 1)
-title:SetText("Bank")
+title:SetText(EllesmereUI.L("Bank"))
 
 local itemCount = header:CreateFontString(nil, "OVERLAY")
 SetBankFont(itemCount, 11)
@@ -249,7 +249,7 @@ if EUI and EUI.PanelPP then EUI.PanelPP.CreateBorder(bankSearch, 0.25, 0.25, 0.2
 local searchPlaceholder = bankSearch:CreateFontString(nil, "OVERLAY")
 SetBankFont(searchPlaceholder, 11)
 searchPlaceholder:SetPoint("LEFT", bankSearch, "LEFT", 5, 0)
-searchPlaceholder:SetText("Search...")
+searchPlaceholder:SetText(EllesmereUI.L("Search..."))
 searchPlaceholder:SetTextColor(0.4, 0.4, 0.4)
 EUI_Bank._searchBox = bankSearch
 
@@ -438,14 +438,14 @@ do
         local lbl = btn:CreateFontString(nil, "OVERLAY")
         SetBankFont(lbl, 9)
         lbl:SetPoint("CENTER", btn, "CENTER", 0, 0)
-        lbl:SetText(label)
+        lbl:SetText(EllesmereUI.L(label))
         lbl:SetTextColor(GOLD_R, GOLD_G, GOLD_B, 0.8)
         btn._label = lbl
 
         btn:SetScript("OnEnter", function(self)
             self._label:SetTextColor(GOLD_R, GOLD_G, GOLD_B, 1)
             if PP and PP.SetBorderColor then PP.SetBorderColor(self, GOLD_R, GOLD_G, GOLD_B, 1) end
-            if EUI.ShowWidgetTooltip then EUI.ShowWidgetTooltip(self, tooltipText) end
+            if EUI.ShowWidgetTooltip then EUI.ShowWidgetTooltip(self, EllesmereUI.L(tooltipText)) end
         end)
         btn:SetScript("OnLeave", function(self)
             self._label:SetTextColor(GOLD_R, GOLD_G, GOLD_B, 0.8)
@@ -463,8 +463,8 @@ do
     local function ShowMoneyPopup(title, onAccept)
         if not EUI.ShowInputPopup then return end
         EUI:ShowInputPopup({
-            title = title,
-            message = "Enter amount in gold:",
+            title = EllesmereUI.L(title),
+            message = EllesmereUI.L("Enter amount in gold:"),
             placeholder = "1137",
             confirmText = ACCEPT,
             cancelText = CANCEL,
@@ -531,10 +531,10 @@ do
 
     function EUI_Bank:UpdateDepositButton(isWarband)
         if isWarband then
-            depositItemsLabel:SetText("Deposit Warbound Items")
+            depositItemsLabel:SetText(EllesmereUI.L("Deposit Warbound Items"))
             depositItemsBtn._bankType = Enum.BankType.Account
         else
-            depositItemsLabel:SetText("Deposit Reagents")
+            depositItemsLabel:SetText(EllesmereUI.L("Deposit Reagents"))
             depositItemsBtn._bankType = Enum.BankType.Character
         end
         local r, g, b = GetAccentRGB()
@@ -623,7 +623,7 @@ sidebarHdr:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
 sidebarHdr._label = sidebarHdr:CreateFontString(nil, "OVERLAY")
 SetBankFont(sidebarHdr._label, 10)
 sidebarHdr._label:SetPoint("LEFT", sidebarHdr, "LEFT", 8, 0)
-sidebarHdr._label:SetText("Tabs")
+sidebarHdr._label:SetText(EllesmereUI.L("Tabs"))
 sidebarHdr._label:SetTextColor(0.5, 0.5, 0.5)
 
 local ARROW_ICON = "Interface\\AddOns\\EllesmereUI\\media\\icons\\eui-arrow-left.png"
@@ -1715,7 +1715,7 @@ function BuildBankSidebar()
             btn._count:Hide()
         else
             btn._label:Show()
-            btn._label:SetText(label)
+            btn._label:SetText(EllesmereUI.L(label))
             btn._label:SetTextColor(1, 1, 1, 0.6)
             btn._count:Hide()
         end
@@ -1798,9 +1798,9 @@ function BuildBankSidebar()
     -- Update header item count
     if EUI_Bank._headerItemCount then
         if _warbandOnly then
-            EUI_Bank._headerItemCount:SetText(warbUsed .. " / " .. warbTotal .. " Items")
+            EUI_Bank._headerItemCount:SetText(EllesmereUI.Lf("%d / %d Items", warbUsed, warbTotal))
         else
-            EUI_Bank._headerItemCount:SetText((charUsed + warbUsed) .. " / " .. (charTotal + warbTotal) .. " Items")
+            EUI_Bank._headerItemCount:SetText(EllesmereUI.Lf("%d / %d Items", charUsed + warbUsed, charTotal + warbTotal))
         end
     end
 
@@ -1810,11 +1810,11 @@ function BuildBankSidebar()
     local defaultOneBag = BankDefaultsToOne()
     if not _warbandOnly then
         if defaultOneBag then
-            RenderSidebarEntry(-1, "OneBank", 1542860, charUsed, _selectedView == -1)
-            RenderSidebarEntry(0, "All Bank Tabs", 413587, charUsed, _selectedView == 0)
+            RenderSidebarEntry(-1, EllesmereUI.L("OneBank"), 1542860, charUsed, _selectedView == -1)
+            RenderSidebarEntry(0, EllesmereUI.L("All Bank Tabs"), 413587, charUsed, _selectedView == 0)
         else
-            RenderSidebarEntry(0, "All Bank Tabs", 413587, charUsed, _selectedView == 0)
-            RenderSidebarEntry(-1, "OneBank", 1542860, charUsed, _selectedView == -1)
+            RenderSidebarEntry(0, EllesmereUI.L("All Bank Tabs"), 413587, charUsed, _selectedView == 0)
+            RenderSidebarEntry(-1, EllesmereUI.L("OneBank"), 1542860, charUsed, _selectedView == -1)
         end
     end
 
@@ -1825,11 +1825,11 @@ function BuildBankSidebar()
     end
     if hasWarband then
         if defaultOneBag then
-            RenderSidebarEntry(-3, "OneWarbank", 1542854, warbUsed, _selectedView == -3)
-            RenderSidebarEntry(-2, "All Warbank Tabs", 1542854, warbUsed, _selectedView == -2)
+            RenderSidebarEntry(-3, EllesmereUI.L("OneWarbank"), 1542854, warbUsed, _selectedView == -3)
+            RenderSidebarEntry(-2, EllesmereUI.L("All Warbank Tabs"), 1542854, warbUsed, _selectedView == -2)
         else
-            RenderSidebarEntry(-2, "All Warbank Tabs", 1542854, warbUsed, _selectedView == -2)
-            RenderSidebarEntry(-3, "OneWarbank", 1542854, warbUsed, _selectedView == -3)
+            RenderSidebarEntry(-2, EllesmereUI.L("All Warbank Tabs"), 1542854, warbUsed, _selectedView == -2)
+            RenderSidebarEntry(-3, EllesmereUI.L("OneWarbank"), 1542854, warbUsed, _selectedView == -3)
         end
     end
 
