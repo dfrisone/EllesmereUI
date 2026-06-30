@@ -56,14 +56,28 @@ end
             GetFFD(tt).bg = tt:CreateTexture(nil, "BACKGROUND", nil, -8)
             GetFFD(tt).bg:SetAllPoints()
             if _PP and _PP.CreateBorder then
-                _PP.CreateBorder(tt, 1, 1, 1, EllesmereUI.RESKIN.BRD_ALPHA, 1, "OVERLAY", 7)
+                local bR, bG, bB, bA, bSize = EllesmereUI.GetTooltipBorder()
+                _PP.CreateBorder(tt, bR, bG, bB, bA, bSize, "OVERLAY", 7)
             end
         end
         -- Unified, user-customizable background (shared with the EUI custom
         -- tooltips via EllesmereUI.GetTooltipBg). Re-applied each skin call so a
-        -- settings change shows on the next tooltip. Border alpha stays fixed.
+        -- settings change shows on the next tooltip.
         GetFFD(tt).bg:SetColorTexture(EllesmereUI.GetTooltipBg())
         GetFFD(tt).bg:Show()
+        -- Border size + colour are user-customizable (Blizz UI Enhanced >
+        -- Blizzard Tooltip > Border). Re-applied each call like the bg so a
+        -- change shows on the next tooltip; size 0 hides the border.
+        if _PP and _PP.GetBorders and _PP.GetBorders(tt) then
+            local bR, bG, bB, bA, bSize = EllesmereUI.GetTooltipBorder()
+            if bSize and bSize > 0 then
+                _PP.SetBorderSize(tt, bSize)
+                _PP.SetBorderColor(tt, bR, bG, bB, bA)
+                _PP.ShowBorder(tt)
+            else
+                _PP.HideBorder(tt)
+            end
+        end
     end
 
     local function _ttFonts(tt, startFrom)

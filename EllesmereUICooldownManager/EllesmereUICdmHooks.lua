@@ -1354,6 +1354,7 @@ local function DecorateFrame(frame, barData)
                 if ss2 and (ss2.chargeHideSwipe or ss2.hideRechargeEdge) then ns._cdmAnyChargeStyle = true end
                 if ss2 and ss2.maxStacksGlow and ss2.maxStacksGlow > 0 then ns._cdmAnyMaxStacksGlow = true end
                 if ss2 and ss2.chargeHideCdText then ns._cdmAnyChargeHideCdText = true end
+                if ss2 and ss2.reverseSwipe then ns._cdmAnyReverseSwipe = true end
 
                 if ss2 and ss2.activeSwipeMode == "none" then
                     -- Hide Active State: force black swipe, track active flag.
@@ -4322,68 +4323,29 @@ end
 -------------------------------------------------------------------------------
 --  Sync extra buff bars with Blizzard CDM viewer
 --
---  When the user removes a buff from Blizzard CDM settings, the viewer stops
---  creating frames for it. The default buff bar self-heals (reads from live
---  cdmBarIcons), but extra buff bars store their own assignedSpells which
---  become orphans -- visible in the preview but never active in-game.
---  This function enumerates the buff viewer's pool to build a set of all
---  spell IDs Blizzard currently tracks, then removes any positive (Blizzard-
---  sourced) assignedSpells entries from extra buff bars that aren't in it.
+--  Reanchor extra buff bars shortly after the Blizzard CDM settings panel
+--  closes, once Blizzard has finished rebuilding its viewer pools.
+--
+--  HISTORY -- do NOT reintroduce frame-pool-based orphan pruning here.
+--  This used to ALSO strip "orphan" spells from each extra buff bar: any
+--  positive assignedSpells entry whose spellID wasn't found in the BuffIcon
+--  pool (or, later, the CDM category set) was deleted. That caused data loss
+--  on DUAL-TRACKED spells that carry more than one variant spell ID:
+--    * Vengeance DH stores Metamorphosis on a custom buff bar as 191427, but
+--      every live Vengeance frame reports 187827. 191427 is surfaced ONLY by
+--      the buff frame's linkedSpellIDs, and ONLY while the buff is active.
+--    * This sync runs ~0.3s after the panel closes, when Meta is down -- so
+--      191427 matched neither the (empty) buff pool nor the category set, and
+--      got deleted. Worse, deleting it destroyed the route-map diversion, so
+--      re-tracking Meta spilled it onto the DEFAULT buffs bar.
+--  No state-independent check (pool / category / IsPlayerSpell / variant
+--  family) can recognize 191427 while Meta is inactive, so the prune is
+--  unfixable for this class of spell. An untracked buff now simply lingers as
+--  a harmless non-rendering preview entry (removable by hand) -- consistent
+--  with how the CD/utility side already behaves.
 -------------------------------------------------------------------------------
 function ns.SyncExtraBuffBarsWithViewer()
-    local p = ECME.db and ECME.db.profile
-    if not p or not p.cdmBars then return end
-
-    -- Build set of spell IDs Blizzard's buff viewer currently has frames for.
-    -- EnumerateActive includes tracked-but-inactive buffs (they have cooldownInfo
-    -- even when hidden), but excludes spells the user removed from CDM settings
-    -- (those frames are released from the pool).
-    local trackedSet = {}
-    local buffViewer = _G["BuffIconCooldownViewer"]
-    if buffViewer and buffViewer.itemFramePool and buffViewer.itemFramePool.EnumerateActive then
-        for frame in buffViewer.itemFramePool:EnumerateActive() do
-            local displaySID, baseSID = ResolveFrameSpellID(frame)
-            if displaySID and displaySID > 0 then trackedSet[displaySID] = true end
-            if baseSID and baseSID > 0 then trackedSet[baseSID] = true end
-            -- Also grab linked spell IDs so override variants match
-            local fc = _ecmeFC[frame]
-            if fc and fc.linkedSpellIDs then
-                for _, lid in ipairs(fc.linkedSpellIDs) do
-                    if lid and lid > 0 then trackedSet[lid] = true end
-                end
-            end
-        end
-    end
-
-    -- Filter orphaned entries from each extra buff bar
-    local changed = false
-    for _, bd in ipairs(p.cdmBars.bars) do
-        if bd.enabled and bd.barType == "buffs" and bd.key ~= "buffs"
-           and not bd.isGhostBar then
-            local sd = ns.GetBarSpellData(bd.key)
-            if sd and sd.assignedSpells then
-                local writeIdx = 1
-                for readIdx = 1, #sd.assignedSpells do
-                    local id = sd.assignedSpells[readIdx]
-                    -- Keep: negative IDs (presets), custom spells, and tracked spells
-                    if type(id) ~= "number" or id <= 0
-                       or (sd.customSpellIDs and sd.customSpellIDs[id])
-                       or trackedSet[id] then
-                        sd.assignedSpells[writeIdx] = id
-                        writeIdx = writeIdx + 1
-                    else
-                        changed = true
-                    end
-                end
-                for i = writeIdx, #sd.assignedSpells do sd.assignedSpells[i] = nil end
-            end
-        end
-    end
-
-    if changed then
-        if ns.RebuildSpellRouteMap then ns.RebuildSpellRouteMap() end
-        QueueReanchor()
-    end
+    QueueReanchor()
 end
 
 -------------------------------------------------------------------------------

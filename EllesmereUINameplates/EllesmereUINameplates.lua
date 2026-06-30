@@ -298,6 +298,7 @@ local defaults = {
     classificationSlot = "topleft",
     rareEliteIconSize = 20,
     castBarHeight = 17,
+    castBarOffsetY = 0,
     castOverlayEnabled = false,
     hideEnemyNameWhileCasting = false,
     castNameSize = 10,
@@ -328,6 +329,11 @@ local defaults = {
     showBorder = true,
     borderSize = 1,
     borderColor = { r = 0.067, g = 0.067, b = 0.067 },
+    -- "Wrap Border Around Castbar": when on, the main health border extends down
+    -- to enclose the cast bar while the enemy is casting, forming one unified
+    -- border around the health + cast stack. OFF by default and fully additive --
+    -- nothing in the wrap machinery runs unless this is enabled.
+    wrapBorderCastbar = false,
     -- Custom border (opt-in) -- reuses the shared EllesmereUI border engine
     -- (same system as Unit Frames, full SharedMedia support). When
     -- customBorderEnabled is false (the default) NONE of these keys are read
@@ -519,7 +525,7 @@ do
         ["gradient-tb"]   = TB .. "gradient-tb.tga",
         ["matte"]         = TB .. "matte.tga",
         ["sheer"]         = TB .. "sheer.tga",
-        ["kringel-diamonds"] = TB .. "kringel-diamonds.tga",
+        ["blinkii-diamonds"] = TB .. "blinkii-diamonds.tga",
         ["kringel-window"]   = TB .. "kringel-window.tga",
     }
     ns.healthBarTextureOrder = {
@@ -530,7 +536,7 @@ do
         "divide", "glass",
         "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
         "matte", "sheer",
-        "kringel-diamonds", "kringel-window",
+        "blinkii-diamonds", "kringel-window",
     }
     ns.healthBarTextureNames = {
         ["none"]        = "None",
@@ -550,7 +556,7 @@ do
         ["gradient-tb"] = "Gradient Down",
         ["matte"]       = "Matte",
         ["sheer"]       = "Sheer",
-        ["kringel-diamonds"] = "Kringel Diamonds",
+        ["blinkii-diamonds"] = "Blinkii Diamonds",
         ["kringel-window"]   = "Kringel Window",
     }
 end
@@ -891,7 +897,10 @@ function ns.LayoutCastBar(plate, footprintW, castH)
     end
     plate.cast:ClearAllPoints()
     plate.cast:SetSize(math.max(1, footprintW - iconW), castH)
-    plate.cast:SetPoint("TOPLEFT", plate.health, "BOTTOMLEFT", shiftX, 0)
+    -- Cast Bar Y Offset: positive = up, negative = down (default 0 = unchanged).
+    -- 0 is truthy in Lua, so the `or` fallback only fires when the key is nil.
+    local offsetY = (p and p.castBarOffsetY) or defaults.castBarOffsetY
+    plate.cast:SetPoint("TOPLEFT", plate.health, "BOTTOMLEFT", shiftX, offsetY)
 end
 
 -- Size + anchor the cast spell icon for the current side / full-size settings.
@@ -1279,6 +1288,13 @@ local function GetBorderColor()
     return c.r, c.g, c.b
 end
 ns.GetBorderColor = GetBorderColor
+-- "Wrap Border Around Castbar" toggle. Defaults to false; the cast-visibility
+-- hook reads this on each cast show/hide, so it stays a trivial table lookup.
+function ns.GetWrapBorderCastbar()
+    local v = p and p.wrapBorderCastbar
+    if v == nil then return defaults.wrapBorderCastbar end
+    return v
+end
 local function GetAuraSlots()
     local ds = (p and p.debuffSlot) or defaults.debuffSlot
     local bs = (p and p.buffSlot)   or defaults.buffSlot
@@ -2447,6 +2463,111 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
         local cc = (p and p.castBorderColor) or defaults.castBorderColor
         PP.SetBorderColor(plate.cast, cc.r, cc.g, cc.b, 1)
     end
+    -- "Wrap Border Around Castbar" (opt-in, off by default). While the cast bar
+    -- is shown and the feature is enabled, the main health border is replaced by
+    -- one unified border drawn on a dedicated host frame spanning health top ->
+    -- cast bottom, so the two bars look like a single bordered unit. Everything
+    -- here is fully additive: the host frame is created lazily on first use, and
+    -- this method early-outs in O(1) whenever the feature is off and the plate
+    -- is not currently wrapped (the steady state for anyone who never enables
+    -- it). The normal borders are only ever touched after a real activation.
+    function plate:UpdateBorderWrap()
+        if not PP then return end
+        local shouldWrap = ns.GetWrapBorderCastbar()
+            and plate.cast and plate.cast:IsShown()
+            and (ns.IsCustomBorderEnabled() or IsBorderEnabled())
+        if shouldWrap then
+            -- Suppress the normal borders so they do not double up with the
+            -- unified one (this is the only point at which they are altered).
+            PP.HideBorder(plate.health)
+            ns.HideCustomBorder(plate)
+            if PP.GetBorders(plate.cast) then PP.HideBorder(plate.cast) end
+            -- Build / reposition the host that spans the combined footprint.
+            -- Width follows the health bar (always >= the cast bar), bottom
+            -- follows the live cast bar so it tracks height / offset changes.
+            local host = plate.wrapBorderHost
+            if not host then
+                -- Parent the host to the cast bar so it rides the "Casts In Front
+                -- of Nameplates" lift automatically: when that feature reparents
+                -- plate.cast into its HIGH-strata UIParent container, the host (a
+                -- child of plate.cast) goes with it, so the unified border stays
+                -- in front of the cast bar instead of being occluded by it. The
+                -- cast bar carries no scale of its own (cast / target scale is
+                -- applied to the whole plate, and the lift container is pinned to
+                -- the plate's effective scale), so the host renders at the plate's
+                -- scale in BOTH states and its cross-parent anchor to plate.health
+                -- lines up either way -- the same trick the cast bar itself uses.
+                host = CreateFrame("Frame", nil, plate.cast)
+                plate.wrapBorderHost = host
+            end
+            -- Mirror the cast bar's render group. Lifted -> match its strata so
+            -- the border floats in front with it. Not lifted -> MEDIUM escapes
+            -- the plate's flattened render layer so the border still draws above
+            -- the bar fills (the same escape the custom border + aura/text tiers
+            -- use); a low level keeps it below the aura (800) / text (900) tiers.
+            if plate.cast:GetParent() ~= plate then
+                host:SetFrameStrata(plate.cast:GetFrameStrata())
+            else
+                host:SetFrameStrata("MEDIUM")
+            end
+            host:ClearAllPoints()
+            host:SetPoint("TOPLEFT", plate.health, "TOPLEFT", 0, 0)
+            host:SetPoint("TOPRIGHT", plate.health, "TOPRIGHT", 0, 0)
+            host:SetPoint("BOTTOM", plate.cast, "BOTTOM", 0, 0)
+            host:SetFrameLevel(plate.cast:GetFrameLevel() + 2)
+            host:Show()
+            -- Render the unified border in whichever style is active, with the
+            -- target-color override applied so a targeted plate's wrap matches.
+            if ns.IsCustomBorderEnabled() then
+                local tex = (p and p.customBorderTexture) or defaults.customBorderTexture
+                local sz  = (p and p.customBorderSize) or defaults.customBorderSize
+                local col = (p and p.customBorderColor) or defaults.customBorderColor
+                local a   = (p and p.customBorderAlpha) or defaults.customBorderAlpha or 1
+                local r, g, b = col.r, col.g, col.b
+                if plate._isTarget and ns.GetTargetGlowBorderColor() then
+                    local bc = ns.GetTargetBorderColor(); r, g, b = bc.r, bc.g, bc.b
+                end
+                if EllesmereUI.ApplyBorderStyle then
+                    EllesmereUI.ApplyBorderStyle(host, sz, r, g, b, a, tex,
+                        p and p.customBorderOffset, p and p.customBorderOffsetY,
+                        p and p.customBorderShiftX, p and p.customBorderShiftY,
+                        "nameplates", sz)
+                end
+            else
+                local sz = (p and p.borderSize) or defaults.borderSize
+                local r, g, b = GetBorderColor()
+                if plate._isTarget and ns.GetTargetGlowBorderColor() then
+                    local bc = ns.GetTargetBorderColor(); r, g, b = bc.r, bc.g, bc.b
+                end
+                if EllesmereUI.ApplyBorderStyle then
+                    EllesmereUI.ApplyBorderStyle(host, sz, r, g, b, 1, "solid")
+                end
+            end
+            plate._wrapActive = true
+        elseif plate._wrapActive then
+            -- Tear down: hide the host border and restore the normal borders +
+            -- their target-aware colour (mirrors ApplyTarget's colour logic).
+            plate._wrapActive = false
+            if plate.wrapBorderHost then
+                if EllesmereUI.ApplyBorderStyle then EllesmereUI.ApplyBorderStyle(plate.wrapBorderHost, 0) end
+                plate.wrapBorderHost:Hide()
+            end
+            plate:ApplyBorder()
+            plate:ApplyCastBorder()
+            if plate._isTarget and ns.GetTargetGlowBorderColor() then
+                local bc = ns.GetTargetBorderColor()
+                if ns.IsCustomBorderEnabled() then
+                    if plate._customBorder and EllesmereUI.SetBorderStyleColor then
+                        EllesmereUI.SetBorderStyleColor(plate._customBorder, bc.r, bc.g, bc.b, 1)
+                    end
+                else
+                    PP.SetBorderColor(plate.health, bc.r, bc.g, bc.b, 1)
+                end
+            else
+                plate:ApplyBorderColor()
+            end
+        end
+    end
     plate:ApplyCastBorder()
     plate.castLeftBorder = plate.cast:CreateTexture(nil, "OVERLAY", nil, 7)
     plate.castLeftBorder:SetColorTexture(0, 0, 0, 1)
@@ -2622,6 +2743,12 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
         local owner = self._timerPlate
         if owner and owner.RefreshCastIconSideReserve then
             owner:RefreshCastIconSideReserve()
+        end
+        -- Wrap-border driver. Gated so that when the feature is off (and the
+        -- plate is not currently wrapped) nothing beyond this cheap check runs:
+        -- a field read, then -- only if needed -- a trivial setting lookup.
+        if owner and owner.UpdateBorderWrap and (owner._wrapActive or ns.GetWrapBorderCastbar()) then
+            owner:UpdateBorderWrap()
         end
     end
     plate.cast:HookScript("OnShow", OnCastVisibilityChanged)
@@ -2814,6 +2941,16 @@ local function GetActiveKickSpell()
     return ns.GetActiveKickSpell()
 end
 local ComputeCastBarTint = ns.ComputeCastBarTint
+-- Re-evaluate the cast-bar wrap on every enemy plate. Each plate self-decides
+-- whether to wrap or unwrap, so this both applies and tears down. Called from
+-- the option toggle (unconditionally, to catch toggle-off) and -- gated behind
+-- the setting -- from the border refreshers, so border size/colour edits made
+-- while a wrapped plate is mid-cast keep the unified border in sync.
+function ns.ApplyBorderWrapToAll()
+    for _, plate in pairs(ns.plates) do
+        if plate.UpdateBorderWrap then plate:UpdateBorderWrap() end
+    end
+end
 function ns.RefreshBorder()
     -- Bump appearance gen so pooled/off-screen plates pick up the
     -- change on their next SetUnit (cache-hit re-spawns check this).
@@ -2827,6 +2964,8 @@ function ns.RefreshBorder()
             if plate.ApplyBorder then plate:ApplyBorder() end
         end
     end
+    -- Additive: no-op unless the wrap feature is enabled.
+    if ns.GetWrapBorderCastbar() then ns.ApplyBorderWrapToAll() end
 end
 ns.RefreshBorderStyle = ns.RefreshBorder
 ns.RefreshSimpleBorderSize = ns.RefreshBorder
@@ -2841,6 +2980,8 @@ function ns.RefreshBorderColor()
             if plate.ApplyBorderColor then plate:ApplyBorderColor() end
         end
     end
+    -- Additive: no-op unless the wrap feature is enabled.
+    if ns.GetWrapBorderCastbar() then ns.ApplyBorderWrapToAll() end
 end
 function ns.RefreshCastBorder()
     ns._npAppearanceGen = (ns._npAppearanceGen or 0) + 1
@@ -4839,6 +4980,14 @@ function NameplateFrame:ApplyAppearance()
     if self.ApplyCastBorderColor then self:ApplyCastBorderColor() end
     self:ApplyHealthTextAppearance()
     if ns.RefreshCastOverlay then ns.RefreshCastOverlay(self) end
+    -- Re-sync the cast-bar wrap LAST -- after the normal borders and the
+    -- cast-overlay lift have been re-applied this pass. For a wrapped plate this
+    -- re-hides the borders ApplyBorder/ApplyCastBorder just re-showed (no double
+    -- border) and matches the host to the current lift state. Gated so it is a
+    -- pure no-op unless the feature is enabled or this plate is already wrapped.
+    if self.UpdateBorderWrap and (self._wrapActive or ns.GetWrapBorderCastbar()) then
+        self:UpdateBorderWrap()
+    end
 end
 
 -- PERF: Set up health text font, position, color, and cache slot assignments.
@@ -5771,6 +5920,11 @@ function NameplateFrame:ApplyTarget()
     else
         self:ApplyBorderColor()
     end
+    -- If this plate is currently wrapping its border around the cast bar, the
+    -- colour we just set landed on the (hidden) health border -- re-sync the
+    -- visible unified border to the new target state. Guarded so it is a pure
+    -- no-op (one field read) unless a wrap is actually live.
+    if self._wrapActive then self:UpdateBorderWrap() end
     -- Highlight: translucent wash across the health bar (color + opacity are
     -- configurable; re-applied on show so live edits and pooled textures update)
     if isTarget and ns.GetTargetGlowHighlight() then
@@ -8061,6 +8215,7 @@ do
     ns._displayPresetKeys[#ns._displayPresetKeys + 1] = "castNameSide"
     ns._displayPresetKeys[#ns._displayPresetKeys + 1] = "castTargetSide"
     ns._displayPresetKeys[#ns._displayPresetKeys + 1] = "castTimerSide"
+    ns._displayPresetKeys[#ns._displayPresetKeys + 1] = "wrapBorderCastbar"
     ns._appendDisplayPresetKeys(ns._displayPresetKeys)
 
     -- Also handle spec changes that happen before the UI is ever opened

@@ -329,6 +329,60 @@ end
 -------------------------------------------------------------------------------
 EllesmereUI._WHATSNEW_PATCHES = {
     {
+        version = "8.3.5",
+        heroes = {
+            {
+                module = "CDM",
+                title  = "Reverse Swipe per Icon",
+                desc   = "Right-click any tracked icon to flip its cooldown swipe direction. Cooldown icons can wind up instead of down and buff icons can drain the other way, set per spell and independently on every bar.",
+                nav    = { module = "EllesmereUICooldownManager", page = "CDM Bars" },
+            },
+            {
+                module = "Chat",
+                title  = "Extend Background Behind Tabs",
+                desc   = "Extend the chat background up behind the tab strip, and the sidebar to match, so your tabs sit on one continuous seamless panel instead of floating above empty space.",
+                nav    = { module = "EllesmereUIChat", page = "Chat", section = "DISPLAY", highlight = "Extend Background Behind Tabs" },
+            },
+        },
+        features = {
+            {
+                module = "Blizzard Skin",
+                title  = "Customizable Tooltip Border",
+                desc   = "Set the game tooltip border's color, opacity, and thickness, with changes showing on the very next tooltip.",
+                nav    = { module = "EllesmereUIBlizzardSkin", page = "Tooltips, Menus & Popups", section = "BLIZZARD TOOLTIP", highlight = "Border" },
+            },
+            {
+                module = "Buff Reminders",
+                title  = "Passive Pet Reminder",
+                desc   = "Get reminded when your pet is left on Passive stance (Hunter, Warlock, Death Knight, Mage).",
+                nav    = { module = "EllesmereUIAuraBuffReminders", page = "Auras, Buffs & Consumables", section = "PETS", highlight = "Passive Pet Reminder" },
+            },
+            {
+                module = "Nameplates",
+                title  = "Wrap Border Around Castbar",
+                desc   = "While an enemy casts, the nameplate border extends to enclose the cast bar in one seamless border.",
+                nav    = { module = "EllesmereUINameplates", page = "Display", section = "STYLE", highlight = "Border" },
+            },
+            {
+                module = "Nameplates",
+                title  = "Cast Bar Y Offset",
+                desc   = "Nudge the enemy cast bar up or down from its default position with a new slider.",
+                nav    = { module = "EllesmereUINameplates", page = "Display", section = "BARS", highlight = "Cast Bar Y Offset" },
+            },
+        },
+        fixes = {
+            { module = "CDM", text = "A new Custom Bottom Row Count option pins the bottom row's icon count on two-row bars, the inverse of Custom Top Row Count." },
+            { module = "CDM", text = "Pixel Glow Thickness is now a dedicated slider on buff bars instead of hidden in a cog that only appeared when Pixel Glow was active." },
+            { module = "CDM", text = "Dual-tracked buff spells (such as Vengeance Demon Hunter's Metamorphosis) are no longer removed from extra buff bars when you close the settings window." },
+            { module = "CDM", text = "Fixed a 1-pixel seam between the icon edge and the cooldown swipe on the Cropped icon shape at some screen scales." },
+            { module = "Chat", text = "The input box and channel header labels now use your chosen font outline mode instead of always showing a drop shadow." },
+            { module = "General", text = "Your chosen font now reaches Chat menus, Quest Tracker header text, and Blizzard tooltip lines that per-frame styling previously missed." },
+            { module = "General", text = "Dying in a Mythic+ or raid no longer locks Out of Combat frame visibility rules to hidden until reload." },
+            { module = "Nameplates", text = "Cast bar spell name, target, and timer text no longer hide behind the border when Casts In Front of Nameplates is on." },
+            { module = "Quality of Life", text = "Third-party LibSharedMedia sound packs now appear in the Group Death Alert sound picker." },
+        },
+    },
+    {
         version = "8.3.4",
         heroes = {
             {
@@ -1123,57 +1177,6 @@ EllesmereUI._WHATSNEW_PATCHES = {
             { module = "CDM", text = "Tracking bar fills now animate smoothly instead of jumping between values." },
             { module = "Resource Bars", text = "Vengeance Demon Hunter Soul Fragment pips show the threshold color again once the configured fragment count is reached." },
             { module = "Unit Frames", text = "Health bar backgrounds no longer turn transparent when Reverse Fill is enabled and the unit takes damage." },
-        },
-    },
-    {
-        version = "8.2.4",
-        heroes = {
-            {
-                module = "Nameplates",
-                title = "Nameplate Hover Textures",
-                desc  = "Mousing over a nameplate can now show a striped or textured highlight overlay instead of a flat color, with several stripe styles to choose from.",
-                nav   = { module = "EllesmereUINameplates", page = "Display", section = "STYLE", highlight = "Hover Texture" },
-            },
-            {
-                module = "Raid Frames",
-                title = "Customizable Reduced Max Health",
-                desc  = "The reduced max-health overlay on raid frames was a single fixed texture with no options; it now has full style, color, and opacity controls.",
-                nav   = { module = "EllesmereUIRaidFrames", page = "Frames", section = "ABSORBS", highlight = "Max Health Style" },
-            },
-        },
-        features = {
-            {
-                module = "Damage Meters",
-                title = "Class-Colored Bar Backgrounds",
-                desc  = "A new class-color swatch tints each meter bar's background track with that player's class color, alongside the existing custom color.",
-                nav   = { module = "EllesmereUIDamageMeters", page = "Damage Meters", section = "BARS", highlight = "Background" },
-            },
-            {
-                module = "Nameplates",
-                title = "Line of Sight Opacity",
-                desc  = "A new slider controls how faded a nameplate becomes when its unit is out of your line of sight.",
-                nav   = { module = "EllesmereUINameplates", page = "General", section = "EXTRAS", highlight = "Line of Sight Opacity" },
-            },
-            {
-                module = "General",
-                title = "Profiles and Patch Notes Pages",
-                desc  = "Profiles & Presets and Patch Notes are now their own entries in the options sidebar instead of tabs inside Global Settings.",
-                -- No nav: these are top-level sidebar pages, not a single setting.
-            },
-            {
-                module = "Raid Frames",
-                title = "Dispel Overlay Preview",
-                desc  = "Preview the raid-frame dispel overlay styling right in the options with a new eye button.",
-                nav   = { module = "EllesmereUIRaidFrames", page = "Frames", section = "DISPELS", highlight = "Dispel Overlay" },
-            },
-        },
-        fixes = {
-            { module = "CDM", text = "Tracking bars for hero-talent override spells now keep showing after the talent is removed, such as a Death Charge bar that keeps tracking once you untalent and cast Death's Advance." },
-            { module = "Nameplates", text = "Fixed a Lua error that could occur when mousing over friendly NPC nameplates that have titles such as innkeepers or flight masters." },
-            { module = "Raid Frames", text = "Health bar backgrounds set to class color no longer revert to the custom color as a unit's health changes." },
-            { module = "Unit Frames", text = "Health bar backgrounds no longer show through the filled portion when you lower the fill opacity, matching how raid frames already behaved." },
-            { module = "CDM", text = "Bars anchored to another cooldown bar now stay flush against it when you switch to a character or profile whose bar is a different width." },
-            { module = "General", text = "The options sidebar addon list now shows a scroll-to-bottom arrow so it is clear the list can scroll." },
         },
     },
 }

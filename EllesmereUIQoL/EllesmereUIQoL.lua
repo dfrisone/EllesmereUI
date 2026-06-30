@@ -2421,10 +2421,12 @@ do
     local GROUP_DEATH_SOUND_ORDER = {
         "none", "airhorn", "banana", "bikehorn", "boxing", "water",
     }
-    if EllesmereUI.AppendSharedMediaSounds then
-        EllesmereUI.AppendSharedMediaSounds(
-            GROUP_DEATH_SOUND_PATHS, GROUP_DEATH_SOUND_NAMES, GROUP_DEATH_SOUND_ORDER)
-    end
+    -- SharedMedia sounds are appended at PLAYER_LOGIN (see the boot frame at the
+    -- end of this block), NOT here: this do-block runs at addon load, before
+    -- other addons have registered their LibSharedMedia sounds, so an append now
+    -- would miss them. (Chat's whisper-sound append runs from its PLAYER_LOGIN
+    -- init for the same reason.) The tables are exposed now by reference, so the
+    -- login append fills the same tables the options dropdown reads.
     EllesmereUI._groupDeathSoundPaths = GROUP_DEATH_SOUND_PATHS
     EllesmereUI._groupDeathSoundNames = GROUP_DEATH_SOUND_NAMES
     EllesmereUI._groupDeathSoundOrder = GROUP_DEATH_SOUND_ORDER
@@ -2588,6 +2590,15 @@ do
     boot:RegisterEvent("PLAYER_LOGIN")
     boot:SetScript("OnEvent", function(self)
         self:UnregisterAllEvents()
+        -- Append SharedMedia sounds now, at login, once other addons have
+        -- registered theirs -- this is the same timing Chat's whisper-sound
+        -- dropdown uses. Idempotent: AppendSharedMediaSounds skips keys that
+        -- are already present, and the tables are the very ones the options
+        -- dropdown (and PlayDeathSound) read, so both pick up the SM sounds.
+        if EllesmereUI.AppendSharedMediaSounds then
+            EllesmereUI.AppendSharedMediaSounds(
+                GROUP_DEATH_SOUND_PATHS, GROUP_DEATH_SOUND_NAMES, GROUP_DEATH_SOUND_ORDER)
+        end
         if EllesmereUIDB and EllesmereUIDB.announceGroupDeaths then
             ApplyAnnounceGroupDeaths()
         end

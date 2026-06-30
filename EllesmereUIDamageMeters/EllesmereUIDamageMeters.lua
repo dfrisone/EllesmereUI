@@ -743,7 +743,7 @@ local DM_BAR_TEXTURES = {
     ["gradient-tb"]   = DM_TEX_BASE .. "gradient-tb.tga",
     ["matte"]         = DM_TEX_BASE .. "matte.tga",
     ["sheer"]         = DM_TEX_BASE .. "sheer.tga",
-    ["kringel-diamonds"] = DM_TEX_BASE .. "kringel-diamonds.tga",
+    ["blinkii-diamonds"] = DM_TEX_BASE .. "blinkii-diamonds.tga",
     ["kringel-window"]   = DM_TEX_BASE .. "kringel-window.tga",
 }
 local DM_BAR_TEXTURE_ORDER = {
@@ -753,7 +753,7 @@ local DM_BAR_TEXTURE_ORDER = {
     "divide", "glass",
     "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
     "matte", "sheer",
-    "kringel-diamonds", "kringel-window",
+    "blinkii-diamonds", "kringel-window",
 }
 local DM_BAR_TEXTURE_NAMES = {
     ["none"]        = "None",
@@ -773,7 +773,7 @@ local DM_BAR_TEXTURE_NAMES = {
     ["gradient-tb"] = "Gradient Down",
     ["matte"]       = "Matte",
     ["sheer"]       = "Sheer",
-    ["kringel-diamonds"] = "Kringel Diamonds",
+    ["blinkii-diamonds"] = "Blinkii Diamonds",
     ["kringel-window"]   = "Kringel Window",
 }
 _G._EDM_BarTextures     = DM_BAR_TEXTURES

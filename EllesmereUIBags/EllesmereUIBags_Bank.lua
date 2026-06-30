@@ -1688,11 +1688,14 @@ function BuildBankSidebar()
     local function RenderPurchaseEntry(bankType, label)
         btnIdx = btnIdx + 1
         local btn = MakeSidebarBtn(btnIdx)
+        local locLabel = EllesmereUI.L(label)
         btn._viewIdx = nil
         btn._isPurchaseTab = true
         btn._purchaseBankType = bankType
         btn._isSelected = false
-        btn._entryName = label
+        -- Store the localized label so the collapsed-sidebar hover tooltip (which
+        -- reads _entryName) matches the expanded label on non-English clients.
+        btn._entryName = locLabel
         btn._entryCount = 0
         btn._indicator:Hide()
         btn._bg:SetColorTexture(1, 1, 1, 0)
@@ -1715,7 +1718,7 @@ function BuildBankSidebar()
             btn._count:Hide()
         else
             btn._label:Show()
-            btn._label:SetText(EllesmereUI.L(label))
+            btn._label:SetText(locLabel)
             btn._label:SetTextColor(1, 1, 1, 0.6)
             btn._count:Hide()
         end

@@ -643,8 +643,16 @@ initFrame:SetScript("OnEvent", function(self)
         castParts.spark:SetPoint("CENTER", cast:GetStatusBarTexture(), "RIGHT", 0, 0)
         castParts.spark:SetBlendMode("ADD")
 
+        -- Cast text frame: a dedicated child ABOVE the cast border so the
+        -- name/target/timer render in front of it (mirrors the live nameplate's
+        -- castTextFrame). The PP border is a child of `cast` at cast+1, which
+        -- would otherwise draw over text placed on `cast`'s own OVERLAY layer.
+        castParts.textFrame = CreateFrame("Frame", nil, cast)
+        castParts.textFrame:SetAllPoints(cast)
+        castParts.textFrame:SetFrameLevel(cast:GetFrameLevel() + 5)
+
         -- Cast name (left, width 70)
-        castParts.nameFS = cast:CreateFontString(nil, "OVERLAY")
+        castParts.nameFS = castParts.textFrame:CreateFontString(nil, "OVERLAY")
         SetPVFont(castParts.nameFS, FONT_PATH, 10, GetNPOptOutline())
         castParts.nameFS:SetPoint("LEFT", cast, 5, 0)
         castParts.nameFS:SetJustifyH("LEFT")
@@ -653,7 +661,7 @@ initFrame:SetScript("OnEvent", function(self)
         castParts.nameFS:SetText(EllesmereUI.L("Spell Name"))
 
         -- Cast timer (far right)
-        castParts.timerFS = cast:CreateFontString(nil, "OVERLAY")
+        castParts.timerFS = castParts.textFrame:CreateFontString(nil, "OVERLAY")
         SetPVFont(castParts.timerFS, FONT_PATH, 10, GetNPOptOutline())
         castParts.timerFS:SetPoint("RIGHT", cast, -3, 0)
         castParts.timerFS:SetJustifyH("RIGHT")
@@ -663,7 +671,7 @@ initFrame:SetScript("OnEvent", function(self)
         castParts.timerFS:SetText("2.3")
 
         -- Cast target (right, anchored left of timer)
-        castParts.targetFS = cast:CreateFontString(nil, "OVERLAY")
+        castParts.targetFS = castParts.textFrame:CreateFontString(nil, "OVERLAY")
         SetPVFont(castParts.targetFS, FONT_PATH, 10, GetNPOptOutline())
         castParts.targetFS:SetPoint("RIGHT", castParts.timerFS, "LEFT", -4, 0)
         castParts.targetFS:SetJustifyH("RIGHT")
@@ -976,6 +984,52 @@ initFrame:SetScript("OnEvent", function(self)
             for _, tex in ipairs(simpleBorderFrame._texs) do tex:SetVertexColor(bc.r, bc.g, bc.b) end
             for _, e in ipairs(_solidEdges) do e:SetColorTexture(bc.r, bc.g, bc.b, 1); if e.SetSnapToPixelGrid then e:SetSnapToPixelGrid(false); e:SetTexelSnappingBias(0) end end
 
+            -- "Wrap Around Castbar" preview. Fully additive: this block is skipped
+            -- entirely while the feature has never been enabled (so the border
+            -- frames keep their original full-points anchoring and look exactly as
+            -- before). It only extends the border down to the preview cast bar
+            -- when the toggle is on, and restores the anchors once on toggle-off.
+            -- The preview border frames already sit above the cast bar in frame
+            -- level, so no re-leveling is needed.
+            local wrapOn = DBVal("wrapBorderCastbar")
+            if wrapOn == nil then wrapOn = defaults.wrapBorderCastbar end
+            local borderVisible
+            if customOn then
+                borderVisible = true
+            else
+                local b = DBVal("showBorder")
+                if b == nil then b = defaults.showBorder end
+                borderVisible = b
+            end
+            local wrapActive = wrapOn and borderVisible
+            if wrapActive or self._wrapPrev then
+                local bottomF = healthWrapper
+                if wrapActive then bottomF = cast end
+                simpleBorderFrame:ClearAllPoints()
+                simpleBorderFrame:SetPoint("TOPLEFT", healthWrapper, "TOPLEFT", 0, 0)
+                simpleBorderFrame:SetPoint("TOPRIGHT", healthWrapper, "TOPRIGHT", 0, 0)
+                simpleBorderFrame:SetPoint("BOTTOMLEFT", bottomF, "BOTTOMLEFT", 0, 0)
+                simpleBorderFrame:SetPoint("BOTTOMRIGHT", bottomF, "BOTTOMRIGHT", 0, 0)
+                pcb:ClearAllPoints()
+                pcb:SetPoint("TOPLEFT", healthWrapper, "TOPLEFT", 0, 0)
+                pcb:SetPoint("TOPRIGHT", healthWrapper, "TOPRIGHT", 0, 0)
+                pcb:SetPoint("BOTTOMLEFT", bottomF, "BOTTOMLEFT", 0, 0)
+                pcb:SetPoint("BOTTOMRIGHT", bottomF, "BOTTOMRIGHT", 0, 0)
+                -- Solid 1px fallback edges: extend the bottom + side bottoms too
+                -- (_solidEdges = { top, bottom, left, right }; top is untouched).
+                local sB, sL, sR = _solidEdges[2], _solidEdges[3], _solidEdges[4]
+                sB:ClearAllPoints()
+                sB:SetPoint("BOTTOMLEFT", bottomF, "BOTTOMLEFT", 0, 0)
+                sB:SetPoint("BOTTOMRIGHT", bottomF, "BOTTOMRIGHT", 0, 0)
+                sL:ClearAllPoints()
+                sL:SetPoint("TOPLEFT", healthWrapper, "TOPLEFT", 0, 0)
+                sL:SetPoint("BOTTOMLEFT", bottomF, "BOTTOMLEFT", 0, 0)
+                sR:ClearAllPoints()
+                sR:SetPoint("TOPRIGHT", healthWrapper, "TOPRIGHT", 0, 0)
+                sR:SetPoint("BOTTOMRIGHT", bottomF, "BOTTOMRIGHT", 0, 0)
+                self._wrapPrev = wrapActive
+            end
+
             -- Icon sizes from slot-based system
             local debuffSlotVal = DBVal("debuffSlot") or defaults.debuffSlot
             local buffSlotVal   = DBVal("buffSlot")   or defaults.buffSlot
@@ -1117,7 +1171,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
             cast:ClearAllPoints()
             cast:SetSize(math.max(1, barW - pIconW), castH)
-            cast:SetPoint("TOPLEFT", health, "BOTTOMLEFT", pShiftX, 0)
+            cast:SetPoint("TOPLEFT", health, "BOTTOMLEFT", pShiftX, (DBVal("castBarOffsetY") or defaults.castBarOffsetY))
             do
                 local cTexKey = DBVal("castBarTexture") or "none"
                 local cTexPath = EllesmereUI.ResolveTexturePath(ns.healthBarTextures, cTexKey, "Interface\\Buttons\\WHITE8x8")
@@ -3826,6 +3880,55 @@ initFrame:SetScript("OnEvent", function(self)
             swatch:EnableMouse(not off)
         end
 
+        -- Inline cog on the Border region: opt-in "Wrap Around Castbar". Placed
+        -- to the left of the colour swatch. Dimmed only for the "None" mode
+        -- (the wrap applies to both Basic and Custom borders).
+        do
+            local leftRgn = borderStyleRow._leftRegion
+            local _, wrapCogShow = EllesmereUI.BuildCogPopup({
+                title = "Castbar Border",
+                rows = {
+                    { type="toggle", label="Wrap Around Castbar",
+                      get=function()
+                        local v = DBVal("wrapBorderCastbar")
+                        if v == nil then return defaults.wrapBorderCastbar end
+                        return v
+                      end,
+                      set=function(v)
+                        DB().wrapBorderCastbar = v
+                        -- Unconditional re-apply so toggling OFF also unwraps any
+                        -- plate that is currently mid-cast and wrapped.
+                        if ns.ApplyBorderWrapToAll then ns.ApplyBorderWrapToAll() end
+                        UpdatePreview()
+                      end },
+                },
+            })
+            local wrapCogBtn = CreateFrame("Button", nil, leftRgn)
+            wrapCogBtn:SetSize(26, 26)
+            wrapCogBtn:SetPoint("RIGHT", leftRgn._lastInline or leftRgn._control, "LEFT", -8, 0)
+            leftRgn._lastInline = wrapCogBtn
+            wrapCogBtn:SetFrameLevel(leftRgn:GetFrameLevel() + 5)
+            local wrapCogTex = wrapCogBtn:CreateTexture(nil, "OVERLAY")
+            wrapCogTex:SetAllPoints(); wrapCogTex:SetTexture(EllesmereUI.COGS_ICON)
+            local function wrapCogOff()
+                -- Only "None" disables it; Basic and Custom both support the wrap.
+                if DBVal("customBorderEnabled") then return false end
+                local v = DBVal("showBorder")
+                if v == nil then v = defaults.showBorder end
+                return not v
+            end
+            wrapCogBtn:SetScript("OnEnter", function(s) if not wrapCogOff() then s:SetAlpha(0.7) end end)
+            wrapCogBtn:SetScript("OnLeave", function(s) if not wrapCogOff() then s:SetAlpha(0.4) end end)
+            wrapCogBtn:SetScript("OnClick", function(s) if not wrapCogOff() then wrapCogShow(s) end end)
+            local function wrapCogState()
+                local off = wrapCogOff()
+                wrapCogBtn:SetAlpha(off and 0.15 or 0.4)
+                wrapCogBtn:EnableMouse(not off)
+            end
+            EllesmereUI.RegisterWidgetRefresh(wrapCogState)
+            wrapCogState()
+        end
+
         -- Custom Border row -- only built when the Border dropdown above is set
         -- to "Custom". Selecting Custom triggers a page rebuild (in that
         -- dropdown's setValue), which reveals this row and reflows the rows
@@ -5395,7 +5498,18 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdatePreview()
                 EllesmereUI:RefreshPage()
               end },
-            { type="label", text="" });  y = y - h
+            { type="slider", text="Cast Bar Y Offset", min=-25, max=75, step=1,
+              tooltip="Nudge the cast bar up or down from its default spot under the health bar.",
+              getValue=function() return DBVal("castBarOffsetY") or defaults.castBarOffsetY end,
+              setValue=function(v)
+                DB().castBarOffsetY = v
+                local barW = ns.GetHealthBarWidth()
+                local castH = ns.GetCastBarHeight()
+                for _, plate in pairs(plates) do
+                    ns.LayoutCastBar(plate, barW, castH)
+                end
+                UpdatePreview()
+              end });  y = y - h
         do
             local leftRgn = castTimerRow._leftRegion
             local ctColorGet = function()

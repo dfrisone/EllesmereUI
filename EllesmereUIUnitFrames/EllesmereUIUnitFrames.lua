@@ -1045,7 +1045,7 @@ local healthBarTextures = {
     ["gradient-tb"]   = TEXTURE_BASE .. "gradient-tb.tga",
     ["matte"]         = TEXTURE_BASE .. "matte.tga",
     ["sheer"]         = TEXTURE_BASE .. "sheer.tga",
-    ["kringel-diamonds"] = TEXTURE_BASE .. "kringel-diamonds.tga",
+    ["blinkii-diamonds"] = TEXTURE_BASE .. "blinkii-diamonds.tga",
     ["kringel-window"]   = TEXTURE_BASE .. "kringel-window.tga",
 }
 local healthBarTextureOrder = {
@@ -1056,7 +1056,7 @@ local healthBarTextureOrder = {
     "divide", "glass",
     "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
     "matte", "sheer",
-    "kringel-diamonds", "kringel-window",
+    "blinkii-diamonds", "kringel-window",
 }
 local healthBarTextureNames = {
     ["none"]        = "None",
@@ -1076,7 +1076,7 @@ local healthBarTextureNames = {
     ["gradient-tb"] = "Gradient Down",
     ["matte"]       = "Matte",
     ["sheer"]       = "Sheer",
-    ["kringel-diamonds"] = "Kringel Diamonds",
+    ["blinkii-diamonds"] = "Blinkii Diamonds",
     ["kringel-window"]   = "Kringel Window",
 }
 ns.healthBarTextures = healthBarTextures

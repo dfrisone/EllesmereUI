@@ -5678,6 +5678,12 @@ initFrame:SetScript("OnEvent", function(self)
                         { val = "pixelGlowReady",  label = "Pixel Glow (CD Ready)" },
                         { val = "buttonGlowReady", label = "Button Glow (CD Ready)" },
                     }
+                    -- Reverse Swipe single-select (per-spell / per-preset). Shared by
+                    -- both the regular-spell (ss) and preset/custom (cas) menus below.
+                    local REVERSE_SWIPE_ITEMS = {
+                        { val = nil,  label = "Off" },
+                        { val = true, label = "Reverse Swipe" },
+                    }
 
                     -- Track open subnavs on the menu frame so OnUpdate can see them
 
@@ -5927,6 +5933,7 @@ initFrame:SetScript("OnEvent", function(self)
                                                 os.glowColorG = ss.glowColorG
                                                 os.glowColorB = ss.glowColorB
                                                 os.desatNotActive = ss.desatNotActive
+                                                os.reverseSwipe = ss.reverseSwipe
                                             end
                                         end
                                     end
@@ -6506,6 +6513,20 @@ initFrame:SetScript("OnEvent", function(self)
                             -- cast timer in UpdateCustomBuffBars (CdmHooks).
                             AddBuffGainRow()
                         end
+
+                        -- Reverse Swipe (buffs / custom buffs / buff presets):
+                        -- reverses the buff's fill direction. Default off. Same
+                        -- per-spell store (ss) + runtime apply + zero-cost gate as
+                        -- cd/utility spells; placed outside the injected split so it
+                        -- is offered for every buff type.
+                        MakeSubnavRow("Reverse Swipe", REVERSE_SWIPE_ITEMS,
+                            function() return ss.reverseSwipe and true or nil end,
+                            function(v)
+                                EnsureSS(); ss.reverseSwipe = v or nil
+                                if v then ns._cdmAnyReverseSwipe = true end
+                                if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                            end,
+                            function() return ss.reverseSwipe == nil end)
                     else
                     local isCustomInjected = spellID < 0
                         or (ns._myRacialsSet and ns._myRacialsSet[spellID])
@@ -6613,6 +6634,19 @@ initFrame:SetScript("OnEvent", function(self)
                                 if ns.FakeActive_Rearm then ns.FakeActive_Rearm() end
                             end,
                             function() return not (cas and cas.cdStateEffect) end)
+
+                        -- Reverse Swipe (preset / custom): reverses this icon's
+                        -- cooldown swipe direction. Default off. Stored in the
+                        -- profile customActiveStates so it travels with the spell.
+                        MakeSubnavRow("Reverse Swipe", REVERSE_SWIPE_ITEMS,
+                            function() return (cas and cas.reverseSwipe) and true or nil end,
+                            function(v)
+                                EnsureCAS().reverseSwipe = v or nil
+                                if v then ns._cdmAnyReverseSwipe = true end
+                                if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                                if ns.FakeActive_Rearm then ns.FakeActive_Rearm() end
+                            end,
+                            function() return not (cas and cas.reverseSwipe) end)
 
                         if not hasActive then
                             MakeActionRow("Add Active State", function()
@@ -7020,6 +7054,18 @@ initFrame:SetScript("OnEvent", function(self)
                         end)
                     end
 
+                    -- 4a. Reverse Swipe (per-spell): reverses the cooldown swipe
+                    -- direction. Default off; runtime apply + zero-cost gate live in
+                    -- RefreshCDMIconAppearance / RescanReverseSwipeFlag.
+                    MakeSubnavRow("Reverse Swipe", REVERSE_SWIPE_ITEMS,
+                        function() return ss.reverseSwipe and true or nil end,
+                        function(v)
+                            EnsureSS(); ss.reverseSwipe = v or nil
+                            if v then ns._cdmAnyReverseSwipe = true end
+                            if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                        end,
+                        function() return ss.reverseSwipe == nil end)
+
                     -- 4b. Audio Effect on CD Ready (cd/utility per-icon): play a sound
                     -- the moment the spell's real cooldown finishes. Same sound list +
                     -- speaker preview as the buff Audio rows / Focus Cast Sound (shared
@@ -7266,6 +7312,7 @@ initFrame:SetScript("OnEvent", function(self)
                                     os.glowColorR = ss.glowColorR
                                     os.glowColorG = ss.glowColorG
                                     os.glowColorB = ss.glowColorB
+                                    os.reverseSwipe = ss.reverseSwipe
                                 end
                             end
                             if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
@@ -9941,17 +9988,28 @@ initFrame:SetScript("OnEvent", function(self)
             end
             local count = #tracked
 
-            -- Use the same stride logic as the runtime (ComputeTopRowStride)
+            -- Use the same stride logic as the runtime (ComputeTopRowStride).
+            -- Top and Bottom custom-row overrides are mutually exclusive; the
+            -- Bottom override is the flip (pick the bottom count, top gets rest).
             local stride, topRowCount
-            if numRows == 2 and bd.customTopRowEnabled and bd.topRowCount and bd.topRowCount > 0 then
-                topRowCount = math.min(bd.topRowCount, count)
+            local customTop
+            if numRows == 2 then
+                if bd.customTopRowEnabled and bd.topRowCount and bd.topRowCount > 0 then
+                    customTop = math.min(bd.topRowCount, count)
+                elseif bd.customBottomRowEnabled and bd.bottomRowCount and bd.bottomRowCount > 0 then
+                    customTop = count - math.min(bd.bottomRowCount, count)
+                end
+            end
+            if customTop ~= nil then
+                if customTop < 0 then customTop = 0 end
+                topRowCount = customTop
                 local bottomCount = count - topRowCount
-                if bottomCount <= 0 then
-                    -- Match the runtime: collapse to one row until the icon count
-                    -- exceeds the top-row count and actually fills a second row.
-                    -- This also keeps the "+" button on the top row.
+                if bottomCount <= 0 or topRowCount <= 0 then
+                    -- Match the runtime: collapse to one row until BOTH rows hold
+                    -- an icon. This also keeps the "+" button on the single row.
                     numRows = 1
-                    stride = math.max(topRowCount, 1)
+                    topRowCount = count
+                    stride = math.max(count, 1)
                 else
                     stride = math.max(topRowCount, bottomCount)
                 end
@@ -11258,7 +11316,10 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local bd = BD()
                   bd.numRows = v
-                  if v ~= 2 then bd.topRowCount = nil; bd.customTopRowEnabled = nil end
+                  if v ~= 2 then
+                      bd.topRowCount = nil; bd.customTopRowEnabled = nil
+                      bd.bottomRowCount = nil; bd.customBottomRowEnabled = nil
+                  end
                   -- numRows change invalidates cached match dims (rows is one
                   -- of the inputs to the matched-axis dim calculation).
                   bd._matchIconPhys = nil
@@ -11279,13 +11340,24 @@ initFrame:SetScript("OnEvent", function(self)
                 local bd = BD()
                 return not bd or not bd.customTopRowEnabled
             end
+            local function customBottomOff()
+                local bd = BD()
+                return not bd or not bd.customBottomRowEnabled
+            end
             local _, topRowCogShow = EllesmereUI.BuildCogPopup({
-                title = "Top Row Icons",
+                title = "Row Icons",
                 rows = {
                     { type="toggle", label="Custom Top Row Count",
+                      -- Mutually exclusive with Custom Bottom Row Count: enabling one
+                      -- disables the other's toggle. Clearing the sibling on enable
+                      -- also prevents a both-on deadlock (both overlays showing).
+                      disabled=function() return BD().customBottomRowEnabled == true end,
+                      disabledTooltip="Disabled while Custom Bottom Row Count is enabled",
+                      rawTooltip=true,
                       get=function() return BD().customTopRowEnabled end,
                       set=function(v)
                           BD().customTopRowEnabled = v
+                          if v then BD().customBottomRowEnabled = nil end
                           ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
                       end },
                     { type="slider", label="Top Row Icons",
@@ -11307,6 +11379,38 @@ initFrame:SetScript("OnEvent", function(self)
                       set=function(v)
                           if v == 0 then v = nil end
                           BD().topRowCount = v
+                          ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                      end },
+                    { type="toggle", label="Custom Bottom Row Count",
+                      -- Flip of Custom Top Row Count; mutually exclusive with it.
+                      disabled=function() return BD().customTopRowEnabled == true end,
+                      disabledTooltip="Disabled while Custom Top Row Count is enabled",
+                      rawTooltip=true,
+                      get=function() return BD().customBottomRowEnabled end,
+                      set=function(v)
+                          BD().customBottomRowEnabled = v
+                          if v then BD().customTopRowEnabled = nil end
+                          ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                      end },
+                    { type="slider", label="Bottom Row Icons",
+                      min=1, max=50, step=1,
+                      tooltip="How many icons to show on the bottom row. The rest go on the top row.",
+                      disabled=customBottomOff,
+                      disabledTooltip="Custom Bottom Row Count",
+                      get=function()
+                          local bd = BD()
+                          if bd.bottomRowCount and bd.bottomRowCount > 0 then return bd.bottomRowCount end
+                          local count = 0
+                          local sdBR = ns.GetBarSpellData(bd.key)
+                          if sdBR and sdBR.assignedSpells then
+                              for _, sid in ipairs(sdBR.assignedSpells) do if sid and sid ~= 0 then count = count + 1 end end
+                          end
+                          if count == 0 then return 1 end
+                          return math.max(1, math.floor(count / 2))
+                      end,
+                      set=function(v)
+                          if v == 0 then v = nil end
+                          BD().bottomRowCount = v
                           ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
                       end },
                 },
@@ -11892,19 +11996,9 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdateBuffGlowState()
             end
 
-            -- Inline pixel-glow cog on Buff Glow: 1:1 replica of the Pandemic Glow
-            -- cog (Lines / Thickness / Speed), enabled only when Pixel Glow is chosen.
-            do
-                local function buffAntsOff()
-                    return (BD().buffGlowType or 0) ~= 1 or IsCustomShape()
-                end
-                BuildPandemicCogButton(buffGlowRow, buffAntsOff, BD, function()
-                    ns.BuildAllCDMBars()
-                    -- Re-apply to already-active glows so the permanent custom aura
-                    -- preview reflects the new Lines/Thickness/Speed immediately.
-                    if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
-                end, { lines = "buffGlowLines", thickness = "buffGlowThickness", speed = "buffGlowSpeed" })
-            end
+            -- (Pixel Glow Thickness / Lines / Speed moved to a dedicated row at the
+            -- bottom of this section -- see "Pixel Glow Thickness (buff bars)" below.
+            -- Same buffGlow* variables, so user settings are unchanged.)
 
             -- Row 3: Custom Icon Shape | Icon Zoom
             local buffShapeZoomRow
@@ -12864,6 +12958,44 @@ initFrame:SetScript("OnEvent", function(self)
                 MakeCogBtn(rightRgn, pgCogShow, nil, EllesmereUI.RESIZE_ICON)
             end
         end
+        end
+
+        -- Pixel Glow Thickness (buff bars) -- mirrors the CD/utility row above.
+        -- Reuses the same buffGlow* variables so user settings are unchanged.
+        -- Always enabled (no disabled state).
+        if isBuffGlowBar then
+            local pgRow
+            pgRow, h = W:DualRow(parent, y,
+                { type="slider", text="Pixel Glow Thickness", min=1, max=4, step=1, trackWidth=120,
+                  tooltip="Thickness of the Pixel Glow applied to this bar's buff icons.",
+                  getValue=function() return BD().buffGlowThickness or 2 end,
+                  setValue=function(v)
+                      BD().buffGlowThickness = v
+                      ns.BuildAllCDMBars(); if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end; Refresh()
+                  end },
+                { type="label", text="" });  y = y - h
+            -- Inline cog on Pixel Glow Thickness: Lines + Speed (buffGlow* vars)
+            do
+                local leftRgn = pgRow._leftRegion
+                local _, pgCogShow = EllesmereUI.BuildCogPopup({
+                    title = "Pixel Glow",
+                    rows = {
+                        { type="slider", label="Lines", min=2, max=16, step=1,
+                          get=function() return BD().buffGlowLines or 8 end,
+                          set=function(v)
+                              BD().buffGlowLines = v
+                              ns.BuildAllCDMBars(); if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
+                          end },
+                        { type="slider", label="Speed", min=1, max=8, step=1,
+                          get=function() return 9 - (BD().buffGlowSpeed or 4) end,
+                          set=function(v)
+                              BD().buffGlowSpeed = 9 - v
+                              ns.BuildAllCDMBars(); if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
+                          end },
+                    },
+                })
+                MakeCogBtn(leftRgn, pgCogShow, nil, EllesmereUI.RESIZE_ICON)
+            end
         end
 
         _, h = W:Spacer(parent, y, 8);  y = y - h

@@ -1045,7 +1045,7 @@ local function InitHealthBarTextures()
     healthBarTextures["gradient-tb"]      = TEX_BASE .. "gradient-tb.tga"
     healthBarTextures["matte"]            = TEX_BASE .. "matte.tga"
     healthBarTextures["sheer"]            = TEX_BASE .. "sheer.tga"
-    healthBarTextures["kringel-diamonds"] = TEX_BASE .. "kringel-diamonds.tga"
+    healthBarTextures["blinkii-diamonds"] = TEX_BASE .. "blinkii-diamonds.tga"
     healthBarTextures["kringel-window"]   = TEX_BASE .. "kringel-window.tga"
 
     healthBarTextureNames["none"]             = "None"
@@ -1065,7 +1065,7 @@ local function InitHealthBarTextures()
     healthBarTextureNames["gradient-tb"]      = "Gradient Down"
     healthBarTextureNames["matte"]            = "Matte"
     healthBarTextureNames["sheer"]            = "Sheer"
-    healthBarTextureNames["kringel-diamonds"] = "Kringel Diamonds"
+    healthBarTextureNames["blinkii-diamonds"] = "Blinkii Diamonds"
     healthBarTextureNames["kringel-window"]   = "Kringel Window"
 
     healthBarTextureOrder[1]  = "none"
@@ -1085,7 +1085,7 @@ local function InitHealthBarTextures()
     healthBarTextureOrder[15] = "gradient-tb"
     healthBarTextureOrder[16] = "matte"
     healthBarTextureOrder[17] = "sheer"
-    healthBarTextureOrder[18] = "kringel-diamonds"
+    healthBarTextureOrder[18] = "blinkii-diamonds"
     healthBarTextureOrder[19] = "kringel-window"
 
     -- Append SharedMedia textures after built-ins

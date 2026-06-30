@@ -3845,6 +3845,11 @@ mainFrame:RegisterEvent("PLAYER_ALIVE")
 mainFrame:RegisterEvent("PLAYER_UNGHOST")
 mainFrame:RegisterEvent("BAG_UPDATE")
 mainFrame:RegisterUnitEvent("UNIT_PET", "player")
+-- UNIT_PET fires on pet summon/dismiss, NOT on a stance change. The Passive Pet
+-- Reminder reacts to the pet's command state (Passive/Defensive/Assist), which
+-- changes the pet action bar -- PET_BAR_UPDATE is the event for that. Without it
+-- the reminder only re-evaluated on the next unrelated refresh (e.g. a reload).
+mainFrame:RegisterEvent("PET_BAR_UPDATE")
 
 -------------------------------------------------------------------------------
 --  Ready Check Mana Warning

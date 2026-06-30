@@ -5138,7 +5138,7 @@ function EUI_Bags:RefreshInventory()
             pinHdr:SetWidth(columns * (SLOT_SIZE + SPACING))
             local showTips = BP().bagShowPinRecentTips ~= false
             pinHdr._label:SetText(EllesmereUI.L("Pinned Items"))
-            pinHdr._hint:SetText(showTips and "(Middle Click to Add or Remove)" or "")
+            pinHdr._hint:SetText(showTips and EllesmereUI.L("(Middle Click to Add or Remove)") or "")
             if not pinHdr._hideBtn then
                 local hb = CreateFrame("Button", nil, pinHdr)
                 hb:SetSize(30, 16)
@@ -5228,7 +5228,7 @@ function EUI_Bags:RefreshInventory()
             recHdr:SetWidth(columns * (SLOT_SIZE + SPACING))
             local showTips = BP().bagShowPinRecentTips ~= false
             recHdr._label:SetText(EllesmereUI.L("Recent Items"))
-            recHdr._hint:SetText(showTips and "(Extra quickview display, your items are also in their category)" or "")
+            recHdr._hint:SetText(showTips and EllesmereUI.L("(Extra quickview display, your items are also in their category)") or "")
             if not recHdr._hideBtn then
                 local hb = CreateFrame("Button", nil, recHdr)
                 hb:SetSize(30, 16)

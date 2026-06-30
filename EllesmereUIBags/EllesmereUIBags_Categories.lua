@@ -225,7 +225,12 @@ function CategoryManager:SaveState()
         userOrder[#userOrder + 1] = cat._defaultName
         local hasState = false
         local entry = {}
-        if cat.name ~= cat._defaultName then
+        -- Compare against the LOCALIZED default name. cat.name is the localized
+        -- display string (state.rename or L(_defaultName)) while _defaultName is the
+        -- English identity key. On a non-English client a plain inequality would see
+        -- every untouched default category as "renamed" and freeze its localized name
+        -- into the DB, so only treat it as a rename when it differs from the locale default.
+        if cat.name ~= EllesmereUI.L(cat._defaultName) then
             entry.rename = cat.name
             hasState = true
         end

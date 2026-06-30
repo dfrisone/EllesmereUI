@@ -2822,6 +2822,42 @@ EllesmereUI.RegisterMigration({
     end,
 })
 
+EllesmereUI.RegisterMigration({
+    id          = "texture_kringel_diamonds_to_blinkii_v1",
+    scope       = "profile",
+    description = "Rename the saved 'kringel-diamonds' bar texture value to its replacement 'blinkii-diamonds' across Unit Frames, Raid Frames, Nameplates, Resource Bars, and Damage Meters.",
+    body = function(ctx)
+        -- The kringel-diamonds texture was replaced by blinkii-diamonds (same slot,
+        -- new art). The dropdown value is the texture KEY string, stored under
+        -- different fields per module (healthBarTexture, general.barTexture,
+        -- castBar.texture, per-unit overrides, dm.barTexture). "kringel-diamonds"
+        -- only ever appears as a texture-selection value, so a recursive value swap
+        -- over each module's saved data catches every storage location and is
+        -- idempotent (nothing left to match on a second pass).
+        local addons = ctx.profile.addons
+        if type(addons) ~= "table" then return end
+
+        local function swap(t, depth)
+            if type(t) ~= "table" or depth > 8 then return end
+            for k, v in pairs(t) do
+                if v == "kringel-diamonds" then
+                    t[k] = "blinkii-diamonds"
+                elseif type(v) == "table" then
+                    swap(v, depth + 1)
+                end
+            end
+        end
+
+        local MODULES = {
+            "EllesmereUIUnitFrames", "EllesmereUIRaidFrames", "EllesmereUINameplates",
+            "EllesmereUIResourceBars", "EllesmereUIDamageMeters",
+        }
+        for _, name in ipairs(MODULES) do
+            swap(addons[name], 1)
+        end
+    end,
+})
+
 local migrationFrame = CreateFrame("Frame")
 migrationFrame:RegisterEvent("ADDON_LOADED")
 migrationFrame:SetScript("OnEvent", function(self, event, addonName)
