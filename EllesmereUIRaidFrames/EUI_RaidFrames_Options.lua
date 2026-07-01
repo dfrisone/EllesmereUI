@@ -6152,7 +6152,7 @@ initFrame:SetScript("OnEvent", function(self)
             cy = cy - 10
             local lbl = MakeFont(panel, 11, 1, 1, 1, 0.75)
             lbl:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, cy)
-            lbl:SetText(text)
+            lbl:SetText(EllesmereUI.L(text))
             local line = panel:CreateTexture(nil, "ARTWORK")
             line:SetHeight(1)
             line:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
@@ -6208,7 +6208,7 @@ initFrame:SetScript("OnEvent", function(self)
             lblBtn:SetScript("OnClick", DoToggle)
             local lbl = MakeFont(lblBtn, 11, 1, 1, 1, 0.85)
             lbl:SetPoint("LEFT")
-            lbl:SetText(label)
+            lbl:SetText(EllesmereUI.L(label))
 
             -- Edit button
             if editTarget then
