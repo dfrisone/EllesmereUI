@@ -2475,14 +2475,14 @@ local function RenderButton(btn, data, _, col, row, startX, currentY, _, interac
         local _bpx = (EUI and EUI.PP and EUI.PP.mult) or 1
         if data._isQuest then
             SetInsetBorderThickness(btn, _bpx * 2)
-            SetInsetBorderColor(btn, QUEST_BORDER_COLOR.r, QUEST_BORDER_COLOR.g, QUEST_BORDER_COLOR.b, 1)
+            SetInsetBorderColor(btn, QUEST_BORDER_COLOR.r, QUEST_BORDER_COLOR.g, QUEST_BORDER_COLOR.b, filtered and 0.2 or 1)
         else
             SetInsetBorderThickness(btn, _bpx)
             local c = ITEM_QUALITY_COLORS[quality]
             if c then
-                SetInsetBorderColor(btn, c.r, c.g, c.b, 1)
+                SetInsetBorderColor(btn, c.r, c.g, c.b, filtered and 0.2 or 1)
             else
-                SetInsetBorderColor(btn, 0.25, 0.25, 0.25, 1)
+                SetInsetBorderColor(btn, 0.25, 0.25, 0.25, filtered and 0.2 or 1)
             end
         end
         -- Quest marker atlas (created lazily, reused). Only shown for items that
