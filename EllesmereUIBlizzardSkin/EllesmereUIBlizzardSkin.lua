@@ -138,6 +138,39 @@ end
         end
         return false
     end
+
+    local function _getMountedAuraName(unit)
+        if not unit or (_isSecret and _isSecret(unit)) then return nil end
+        if not UnitExists(unit) or not UnitIsPlayer(unit) then return nil end
+        if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then return nil end
+        if not (C_MountJournal and C_MountJournal.GetMountFromSpell) then return nil end
+
+        for i = 1, 255 do
+            local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, "HELPFUL")
+            if not aura then break end
+            local spellID = aura.spellId
+            if spellID and not (_isSecret and _isSecret(spellID)) then
+                local mountID = C_MountJournal.GetMountFromSpell(spellID)
+                if mountID and not (_isSecret and _isSecret(mountID)) and mountID > 0 then
+                    local name
+                    if C_MountJournal.GetMountInfoByID then
+                        local mountName = C_MountJournal.GetMountInfoByID(mountID)
+                        if mountName and not (_isSecret and _isSecret(mountName)) then
+                            name = mountName
+                        end
+                    end
+                    if not name then
+                        local auraName = aura.name
+                        if auraName and not (_isSecret and _isSecret(auraName)) then
+                            name = auraName
+                        end
+                    end
+                    if name and name ~= "" then return name end
+                end
+            end
+        end
+        return nil
+    end
     hooksecurefunc("InspectUnit", function()
         _userInspectUntil = GetTime() + 2
     end)
@@ -352,6 +385,13 @@ end
                 local r, g, b = 1, 1, 1
                 if sColor then r, g, b = sColor.r, sColor.g, sColor.b end
                 tt:AddDoubleLine("M+ Score:", score, 1, 1, 1, r, g, b)
+            end
+        end
+        -- Mount name from the live helpful aura that MountJournal recognizes.
+        if unit and not _tipHasLine(tt, "Mount:") then
+            local mountName = _getMountedAuraName(unit)
+            if mountName then
+                tt:AddDoubleLine("Mount:", mountName, 1, 1, 1, 1, 1, 1)
             end
         end
         -- Item Level. Cache is keyed strictly by the authoritative GUID so a
