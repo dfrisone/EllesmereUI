@@ -611,11 +611,7 @@ initFrame:SetScript("OnEvent", function(self)
               values = _G._EDM_IconStyleValues or {},
               order  = _G._EDM_IconStyleOrder or {},
               getValue = function() return Cfg("iconStyle") or "spec" end,
-              setValue = function(v) 
-                Set("iconStyle", v)
-                if ns.ApplyIconBorder then ns.ApplyIconBorder() end
-                Refresh()  
-              end })
+              setValue = function(v) Set("iconStyle", v); ApplyIconBrd(); Refresh() end })
         y = y - h
 
         -- Border Style (+ cog) | Border Size (+ inline swatch)
@@ -655,7 +651,7 @@ initFrame:SetScript("OnEvent", function(self)
         do
             local rgn = bsRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Border Offset",
+                title = "Border Options",
                 rows = {
                     { type = "slider", label = "Offset X", min = -10, max = 10, step = 1,
                       get = function()
@@ -697,6 +693,15 @@ initFrame:SetScript("OnEvent", function(self)
                           return dsy
                       end,
                       set = function(v) Set("borderTextureShiftY", v == 0 and nil or v); ApplyBrd() end },
+                    { type = "toggle", label = "Custom Icon Border",
+                      get = function() return Cfg("customIconBorder") or false end,
+                      set = function(v)
+                          Set("customIconBorder", v)
+                          ApplyIconBrd()
+                          -- force=true: the row is added/removed at build time,
+                          -- so the fast refresh path is not enough
+                          EllesmereUI:RefreshPage(true)
+                      end },
                 },
             })
             local cogBtn = CreateFrame("Button", nil, rgn)
@@ -714,12 +719,9 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
             cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
-            local function UpdateCogVis()
-                local tex = Cfg("borderTexture") or "solid"
-                if tex == "solid" then cogBtn:Hide() else cogBtn:Show() end
-            end
-            EllesmereUI.RegisterWidgetRefresh(UpdateCogVis)
-            UpdateCogVis()
+            -- Always visible: the popup hosts the Custom Icon Border toggle,
+            -- which must stay reachable for the solid style too (the offset
+            -- sliders are harmless no-ops for solid).
         end
         -- Inline color swatch on Border Size (right region)
         do
@@ -739,6 +741,10 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(function() updateSwatch() end)
         end
 
+        -- Icon Border row: shown only while "Custom Icon Border" is enabled
+        -- (the toggle lives in the Border Style inline cog above). The whole
+        -- block is skipped at build time; the toggle's set() rebuilds the page.
+        if Cfg("customIconBorder") then
         local ibsRow
         ibsRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Icon Border Style",
@@ -849,6 +855,7 @@ initFrame:SetScript("OnEvent", function(self)
             PP.Point(swatch, "RIGHT", ctrl, "LEFT", -8, 0)
             EllesmereUI.RegisterWidgetRefresh(function() updateSwatch() end)
         end
+        end -- if Cfg("customIconBorder")
 
         -- Show Breakdown on Hover (+ inline cog) | Background (opacity + swatch)
         local bdRow
@@ -1000,19 +1007,6 @@ initFrame:SetScript("OnEvent", function(self)
         end
         y = y - h
 
-        -- Force English Number Units (K/M/B) | (spacer)
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Force English Units (K/M/B)",
-              tooltip = "Always use K/M/B instead of localized units.",
-              getValue = function() return Cfg("forceEnglishUnits") or false end,
-              setValue = function(v)
-                  Set("forceEnglishUnits", v)
-                  if ns.RebuildNumberFormat then ns.RebuildNumberFormat() end
-                  Refresh()
-              end },
-            { type="spacer" })
-        y = y - h
-
         -- Left Text Size (+ inline custom/class swatches) | Right Text Size (+ inline custom/class swatches)
         local btRow
         btRow, h = W:DualRow(parent, y,
@@ -1151,6 +1145,25 @@ initFrame:SetScript("OnEvent", function(self)
             refreshRight()
         end
         y = y - h
+
+        -- Force English Number Units (K/M/B) | (spacer)
+        -- CJK clients only: zhCN/zhTW/koKR group numbers by wan/eok, so this
+        -- offers K/M/B instead. Every other locale already gets K/M/B and the
+        -- toggle would be a no-op, so the row is skipped for them.
+        local clientLocale = GetLocale()
+        if clientLocale == "zhCN" or clientLocale == "zhTW" or clientLocale == "koKR" then
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="Force English Units (K/M/B)",
+                  tooltip = "Always use K/M/B instead of localized units.",
+                  getValue = function() return Cfg("forceEnglishUnits") or false end,
+                  setValue = function(v)
+                      Set("forceEnglishUnits", v)
+                      if ns.RebuildNumberFormat then ns.RebuildNumberFormat() end
+                      Refresh()
+                  end },
+                { type="spacer" })
+            y = y - h
+        end
 
         -- ── STANDALONE COMBAT TIMER ──────────────────────────────────
         _, h = W:SectionHeader(parent, "STANDALONE COMBAT TIMER", y); y = y - h

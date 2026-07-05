@@ -946,7 +946,7 @@ local cachedFontPath = LOCALE_FONT_OVERRIDE or (EllesmereUI and EllesmereUI.GetF
     or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 local cachedFontPaths = {}  -- per-unit font cache
 local function ResolveFontPath(unitKey)
-    -- Locale override takes absolute priority ? no custom font can render CJK/Cyrillic
+    -- Locale override takes absolute priority -- no custom font can render CJK/Cyrillic
     if LOCALE_FONT_OVERRIDE then
         cachedFontPath = LOCALE_FONT_OVERRIDE
         for _, uKey in ipairs({"player", "target", "focus", "boss", "pet", "targettarget", "focustarget"}) do
@@ -1160,7 +1160,7 @@ ns.ApplyCastBarTexture = function(castbar, texKey)
 end
 
 -------------------------------------------------------------------------------
---  Health Bar Opacity ? controls the overall alpha of the health bar fill
+--  Health Bar Opacity -- controls the overall alpha of the health bar fill
 -------------------------------------------------------------------------------
 local function ApplyHealthBarAlpha(health, unitKey)
     if not health then return end
@@ -1177,7 +1177,7 @@ local function ApplyHealthBarAlpha(health, unitKey)
 end
 
 -------------------------------------------------------------------------------
---  Power Bar Opacity ? controls the overall alpha of the power bar
+--  Power Bar Opacity -- controls the overall alpha of the power bar
 -------------------------------------------------------------------------------
 local function ApplyPowerBarAlpha(power, unitKey)
     if not power then return end
@@ -1193,7 +1193,7 @@ local function ApplyPowerBarAlpha(power, unitKey)
 end
 
 -------------------------------------------------------------------------------
---  Dark Mode ? flat dark health bar with gray background
+--  Dark Mode -- flat dark health bar with gray background
 -------------------------------------------------------------------------------
 -- Non-dark fallback bg colour (#111) used when no class/custom colour source is
 -- available. The Dark Mode fill/background come from the global per-profile
@@ -1245,7 +1245,7 @@ local function ApplyDarkTheme(health)
         end
         -- PostUpdateColor: re-apply dark color after oUF tries to class-color,
         -- and re-anchor bg to track the fill edge.
-        -- Alpha is NOT re-applied here ? SetStatusBarColor(r,g,b) with 3 args
+        -- Alpha is NOT re-applied here -- SetStatusBarColor(r,g,b) with 3 args
         -- preserves existing texture alpha, so the alpha set by
         -- ApplyHealthBarAlpha persists through oUF recolors.
         health.PostUpdateColor = function(self)
@@ -1276,7 +1276,7 @@ local function ApplyDarkTheme(health)
             end
         end
         -- Tint bg to 20% of the class/reaction color, or use custom bg color.
-        -- Alpha is NOT re-applied ? SetStatusBarColor(r,g,b) preserves
+        -- Alpha is NOT re-applied -- SetStatusBarColor(r,g,b) preserves
         -- existing texture alpha through oUF recolors.
         health.PostUpdateColor = function(self, unit, color)
             local uKey = self._euiUnitKey
@@ -1892,7 +1892,7 @@ local function LayoutCastbarIcon(castbar, inWidth, iconH, onRight)
     end
 end
 
--- Returns the donor settings table for mini frames (focus ? target ? player)
+-- Returns the donor settings table for mini frames (focus > target > player)
 -- Used to inherit border, texture, and font settings
 local function GetMiniDonorSettings()
     local ef = db.profile.enabledFrames
@@ -2570,7 +2570,7 @@ local function CreateBottomTextBar(frame, unit, settings, anchorFrame, xOffset, 
     btb._applyBTBTextPositions = ApplyBTBTextPositions
     btb._applyBTBPowerColors = ApplyBTBPowerColors
 
-    -- Class icon overlay ? on a high-level frame so it renders above the border
+    -- Class icon overlay -- on a high-level frame so it renders above the border
     local classIconHolder = CreateFrame("Frame", nil, frame)
     classIconHolder:SetAllPoints(textOvr)
     classIconHolder:SetFrameLevel(frame:GetFrameLevel() + 12)
@@ -2607,7 +2607,7 @@ local function CreateBottomTextBar(frame, unit, settings, anchorFrame, xOffset, 
     return btb
 end
 
--- SetFrameMovable removed � positioning is now handled by Unlock Mode
+-- SetFrameMovable removed -- positioning is now handled by Unlock Mode
 
 local function ApplyFramePosition(frame, unit)
     if not frame or not db.profile.positions[unit] then return end
@@ -2700,7 +2700,7 @@ local function UpdateBordersForScale(frame, unit)
     local ppIsAtt = (ppPos == "below" or ppPos == "above")
     local ppIsDet = (ppPos == "detached_top" or ppPos == "detached_bottom")
     local ph = settings.powerHeight or 6
-    -- Simple frames (pet/tot/focustarget) have no power bar ? skip power height
+    -- Simple frames (pet/tot/focustarget) have no power bar -- skip power height
     local isMini = (unit == "pet" or unit == "targettarget" or unit == "focustarget")
     local powerH = (ppIsAtt and not isMini) and ph or 0
 
@@ -2879,7 +2879,7 @@ end
 
 -- Scale system removed -- all sizing is now width/height based.
 
--- ToggleLock removed � positioning is now handled by Unlock Mode
+-- ToggleLock removed -- positioning is now handled by Unlock Mode
 
 -- fakeFrames / CreateFakeFrame / ShowFakeFrames / HideFakeFrames removed
 -- Positioning is now handled exclusively by Unlock Mode
@@ -2931,7 +2931,7 @@ local function GetFrameDimensions(unit)
     return 150, 30
 end
 
--- ShowFakeFrames / HideFakeFrames removed � Unlock Mode handles all positioning
+-- ShowFakeFrames / HideFakeFrames removed -- Unlock Mode handles all positioning
 
 local function CreateHealthBar(frame, unit, height, xOffset, settings, rightInset)
     height = height or settings.healthHeight
@@ -3668,6 +3668,39 @@ local function CreateAbsorbBar(frame, unit, settings)
     return backfillBar
 end
 
+-- Detached power bar border: create lazily, then restyle/show/hide from the
+-- current settings. Lazy creation is what lets a bar switched to a detached
+-- position (or a Border Size raised from 0) gain its border live -- the old
+-- create-only-at-spawn path needed a /reload. Shown only while the position is
+-- detached AND Border Size > 0. Shared by the creation path and the player/
+-- target/focus refresh branches (the target branch previously tested a local
+-- that only existed in the player branch, so its border was force-hidden on
+-- every refresh; focus had no refresh at all). On ns (not a new file-scope
+-- local) to respect the Lua 5.1 200-local ceiling.
+function ns.UpdatePowerBorder(power, settings)
+    if not power or not settings then return end
+    local pos = settings.powerPosition or "below"
+    local isDet = (pos == "detached_top" or pos == "detached_bottom")
+    local size = settings.powerBorderSize or 0
+    local border = power._pbBorder
+    if not border then
+        -- Nothing to render and nothing to hide: stay lazy.
+        if not (isDet and size > 0) then return end
+        border = CreateFrame("Frame", nil, power)
+        PP.Point(border, "TOPLEFT", power, "TOPLEFT", 0, 0)
+        PP.Point(border, "BOTTOMRIGHT", power, "BOTTOMRIGHT", 0, 0)
+        power._pbBorder = border
+    end
+    local c = settings.powerBorderColor or { r = 0, g = 0, b = 0 }
+    EllesmereUI.ApplyBorderStyle(border, size, c.r, c.g, c.b,
+        settings.powerBorderAlpha or 1, settings.powerBorderStyle or "solid",
+        settings.powerBorderOffsetX, settings.powerBorderOffsetY,
+        settings.powerBorderShiftX, settings.powerBorderShiftY, "unitframes", size)
+    border:SetFrameLevel(settings.powerBorderBehind
+        and math.max(0, power:GetFrameLevel() - 1) or (power:GetFrameLevel() + 5))
+    if isDet and size > 0 then border:Show() else border:Hide() end
+end
+
 local function CreatePowerBar(frame, unit, settings)
     local powerPos = settings.powerPosition or "below"
 
@@ -4017,23 +4050,8 @@ local function CreatePowerBar(frame, unit, settings)
         end
     end
 
-    -- Power bar border (only when detached)
-    if isDetached then
-        local pbBorder = CreateFrame("Frame", nil, power)
-        PP.Point(pbBorder, "TOPLEFT", power, "TOPLEFT", 0, 0)
-        PP.Point(pbBorder, "BOTTOMRIGHT", power, "BOTTOMRIGHT", 0, 0)
-        local pbBehind = settings.powerBorderBehind
-        pbBorder:SetFrameLevel(pbBehind and math.max(0, power:GetFrameLevel() - 1) or (power:GetFrameLevel() + 5))
-        local pbTexKey = settings.powerBorderStyle or "solid"
-        local pbSize = settings.powerBorderSize or 0
-        local pbColor = settings.powerBorderColor or { r = 0, g = 0, b = 0 }
-        local pbAlpha = settings.powerBorderAlpha or 1
-        EllesmereUI.ApplyBorderStyle(pbBorder, pbSize, pbColor.r, pbColor.g, pbColor.b, pbAlpha,
-            pbTexKey, settings.powerBorderOffsetX, settings.powerBorderOffsetY,
-            settings.powerBorderShiftX, settings.powerBorderShiftY, "unitframes", pbSize)
-        if pbSize == 0 then pbBorder:Hide() end
-        power._pbBorder = pbBorder
-    end
+    -- Power bar border (detached positions only; lazily created in the helper)
+    ns.UpdatePowerBorder(power, settings)
 
     return power
 end
@@ -8322,24 +8340,8 @@ local function ReloadFrames()
                         end
                         if frame.Power._applyPowerPercentText then frame.Power._applyPowerPercentText(settings) end
 
-                        -- Update power bar border (detached only)
-                        if frame.Power._pbBorder then
-                            local pbTexKey = settings.powerBorderStyle or "solid"
-                            local pbSize = settings.powerBorderSize or 0
-                            local pbColor = settings.powerBorderColor or { r = 0, g = 0, b = 0 }
-                            local pbAlpha = settings.powerBorderAlpha or 1
-                            EllesmereUI.ApplyBorderStyle(frame.Power._pbBorder, pbSize,
-                                pbColor.r, pbColor.g, pbColor.b, pbAlpha,
-                                pbTexKey, settings.powerBorderOffsetX, settings.powerBorderOffsetY,
-                                settings.powerBorderShiftX, settings.powerBorderShiftY, "unitframes", pbSize)
-                            local pbBehind = settings.powerBorderBehind
-                            frame.Power._pbBorder:SetFrameLevel(pbBehind and math.max(0, frame.Power:GetFrameLevel() - 1) or (frame.Power:GetFrameLevel() + 5))
-                            if pbSize > 0 and ppIsDetached then
-                                frame.Power._pbBorder:Show()
-                            else
-                                frame.Power._pbBorder:Hide()
-                            end
-                        end
+                        -- Update power bar border (detached only; lazily created)
+                        ns.UpdatePowerBorder(frame.Power, settings)
 
                         -- Gray out power bar background for generic melee NPCs
                         if ppPos ~= "none" and (ppPos == "below" or ppPos == "above") then
@@ -8630,7 +8632,7 @@ local function ReloadFrames()
                             end
                             if btb._applyBTBTextPositions then
                                 btb._applyBTBTextPositions(settings)
-                if btb._applyBTBClassIcon then btb._applyBTBClassIcon(settings) end
+                                if btb._applyBTBClassIcon then btb._applyBTBClassIcon(settings) end
                             end
                             btb:Show()
                         end
@@ -8739,24 +8741,8 @@ local function ReloadFrames()
                         end
                         if frame.Power._applyPowerPercentText then frame.Power._applyPowerPercentText(settings) end
 
-                        -- Update power bar border (detached only)
-                        if frame.Power._pbBorder then
-                            local pbTexKey = settings.powerBorderStyle or "solid"
-                            local pbSize = settings.powerBorderSize or 0
-                            local pbColor = settings.powerBorderColor or { r = 0, g = 0, b = 0 }
-                            local pbAlpha = settings.powerBorderAlpha or 1
-                            EllesmereUI.ApplyBorderStyle(frame.Power._pbBorder, pbSize,
-                                pbColor.r, pbColor.g, pbColor.b, pbAlpha,
-                                pbTexKey, settings.powerBorderOffsetX, settings.powerBorderOffsetY,
-                                settings.powerBorderShiftX, settings.powerBorderShiftY, "unitframes", pbSize)
-                            local pbBehind = settings.powerBorderBehind
-                            frame.Power._pbBorder:SetFrameLevel(pbBehind and math.max(0, frame.Power:GetFrameLevel() - 1) or (frame.Power:GetFrameLevel() + 5))
-                            if pbSize > 0 and ppIsDetached then
-                                frame.Power._pbBorder:Show()
-                            else
-                                frame.Power._pbBorder:Hide()
-                            end
-                        end
+                        -- Update power bar border (detached only; lazily created)
+                        ns.UpdatePowerBorder(frame.Power, settings)
 
                         -- Gray out power bar background for generic melee NPCs
                         if ppPos ~= "none" and (ppPos == "below" or ppPos == "above") then
@@ -8793,7 +8779,7 @@ local function ReloadFrames()
                         frame._applyTextPositions(settings)
                     end
 
-                    -- Bottom Text Bar update (target) ? must come before castbar so castbar can anchor to it
+                    -- Bottom Text Bar update (target) -- must come before castbar so castbar can anchor to it
                     local tPpBtbAnchor = (ppIsAtt and (settings.powerHeight or 0) > 0 and frame.Power and frame.Power:IsShown()) and frame.Power or frame.Health
                     if settings.bottomTextBar then
                         local btbPos2 = settings.btbPosition or "bottom"
@@ -9146,6 +9132,8 @@ local function ReloadFrames()
                         frame.Power:Show()
                     end
                     if frame.Power._applyPowerPercentText then frame.Power._applyPowerPercentText(settings) end
+                    -- Update power bar border (detached only; lazily created)
+                    ns.UpdatePowerBorder(frame.Power, settings)
                 end
                 if frame._applyTextTags then
                     frame._applyTextTags(settings.leftTextContent or "name", settings.rightTextContent or "perhp", settings.centerTextContent or "none")
@@ -9154,7 +9142,7 @@ local function ReloadFrames()
                     frame._applyTextPositions(settings)
                 end
 
-                -- Bottom Text Bar update (focus) ? must come before castbar so castbar can anchor to it
+                -- Bottom Text Bar update (focus) -- must come before castbar so castbar can anchor to it
                 local fPpBtbAnchor = (fPpIsAtt and frame.Power) or frame.Health
                 if settings.bottomTextBar then
                     local btbPos2 = settings.btbPosition or "bottom"
@@ -10496,6 +10484,13 @@ function InitializeFrames()
         end
     end
 
+    -- The expected parent for the Blizzard class power bar after positioning.
+    -- Set by PositionClassPowerBar so the SetParent hook knows what's correct.
+    -- MUST be declared before PositionClassPowerBar: a later declaration made
+    -- the function assign a global while the hook read this always-nil local,
+    -- so the hook fell back to frames.player even for UIParent-parented bars.
+    local _cpExpectedParent = nil
+
     local function PositionClassPowerBar(bar)
         if not bar or not frames.player then return end
         bar:ClearAllPoints()
@@ -10511,7 +10506,7 @@ function InitializeFrames()
         end
 
         if style == "modern" and position == "above" then
-            -- Above health bar, inside the frame ? pips stretch to fill health bar width
+            -- Above health bar, inside the frame -- pips stretch to fill health bar width
             -- Bottom of pips flush with top of health bar, top of pips flush with top of border
             _cpExpectedParent = frames.player
             bar:SetParent(frames.player)
@@ -10541,7 +10536,7 @@ function InitializeFrames()
                 bar._bottomBdrFrame:Show()
             end
         elseif style == "modern" and position == "top" then
-            -- "top" floats above the frame (like "bottom" floats below) ? does NOT become part of the frame
+            -- "top" floats above the frame (like "bottom" floats below) -- does NOT become part of the frame
             _cpExpectedParent = frames.player
             bar:SetParent(frames.player)
             ResizeFrameForClassPower(0)
@@ -10643,10 +10638,6 @@ function InitializeFrames()
     -- to keep it visible. Only active while classPowerStyle == "blizzard".
     local _blizzCPHooked = false
     local _blizzCPActive = false  -- true while we own the bar
-
-    -- The expected parent for the Blizzard class power bar after positioning.
-    -- Set by PositionClassPowerBar so the SetParent hook knows what's correct.
-    local _cpExpectedParent = nil
 
     local function HookBlizzardClassPower(cpFrame)
         if _blizzCPHooked then return end
@@ -12011,10 +12002,19 @@ function SetupOptionsPanel()
     if ns._InitEUIModule then
         ns._InitEUIModule()
     end
+end
 
-    ---------------------------------------------------------------------------
-    --  Register unit frame elements with Unlock Mode
-    ---------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+--  Register unit frame elements with Unlock Mode
+--  Called synchronously from OnEnable (right after InitializeFrames) so the
+--  elements are registered inside the PLAYER_LOGIN pre-lockdown window on a
+--  combat reload. This block used to live at the end of SetupOptionsPanel,
+--  which OnEnable runs via C_Timer.After(0) -- and timers never fire during
+--  the loading screen, so registration always landed on the first post-load
+--  frame, after combat lockdown had re-engaged. Anchored unit frames then
+--  could not be positioned until combat dropped.
+-------------------------------------------------------------------------------
+local function RegisterUFUnlockElements()
     if EllesmereUI and EllesmereUI.RegisterUnlockElements then
         local MK = EllesmereUI.MakeUnlockElement
         local UNIT_LABELS = {
@@ -12151,6 +12151,13 @@ function SetupOptionsPanel()
                 applyPos = function(k)
                     local pos = db.profile.positions[k]
                     if not pos then return end
+                    -- Unlock-anchored elements: the anchor system is the
+                    -- position authority. Only bootstrap from the saved
+                    -- standalone position while the frame has no bounds yet
+                    -- (first placement); otherwise leave it alone so the
+                    -- anchor position is never clobbered.
+                    local anchored = EllesmereUI.IsUnlockAnchored
+                        and EllesmereUI.IsUnlockAnchored(k)
                     local pt = pos.point
                     local rpt = pos.relPoint or pt
                     local px, py = pos.x, pos.y
@@ -12175,7 +12182,7 @@ function SetupOptionsPanel()
                     if k == "boss" then
                         local spacing = db.profile.bossSpacing or 60
                         local bossStackDir = db.profile.boss and db.profile.boss.bossStackDirection or "down"
-                        if frames.boss1 then
+                        if frames.boss1 and not (anchored and frames.boss1:GetLeft()) then
                             local bx, by = SnapForFrame(frames.boss1, pos.x, pos.y)
                             frames.boss1:ClearAllPoints()
                             frames.boss1:SetPoint(pt, UIParent, rpt, bx, by)
@@ -12193,14 +12200,15 @@ function SetupOptionsPanel()
                             end
                         end
                     elseif k == "classPower" then
-                        if frames._classPowerBar then
-                            px, py = SnapForFrame(frames._classPowerBar, px, py)
-                            frames._classPowerBar:ClearAllPoints()
-                            frames._classPowerBar:SetPoint(pt, UIParent, rpt, px, py)
+                        local cpb = frames._classPowerBar
+                        if cpb and not (anchored and cpb:GetLeft()) then
+                            px, py = SnapForFrame(cpb, px, py)
+                            cpb:ClearAllPoints()
+                            cpb:SetPoint(pt, UIParent, rpt, px, py)
                         end
                     else
                         local fr = frames[k]
-                        if fr then
+                        if fr and not (anchored and fr:GetLeft()) then
                             px, py = SnapForFrame(fr, px, py)
                             fr:ClearAllPoints()
                             fr:SetPoint(pt, UIParent, rpt, px, py)
@@ -12318,6 +12326,13 @@ function SetupOptionsPanel()
                     if not pos then return end
                     local f = GetCBFrame()
                     if not f then return end
+                    -- Unlock-anchored castbars: the anchor system owns the
+                    -- position (castbars are anchored to their unit frame by
+                    -- default). Only bootstrap while the frame has no bounds.
+                    if EllesmereUI.IsUnlockAnchored and EllesmereUI.IsUnlockAnchored(cbKey)
+                       and f:GetLeft() then
+                        return
+                    end
                     local pt, rpt = pos.point, pos.relPoint or pos.point
                     local px, py = pos.x, pos.y
                     local PPa = EllesmereUI and EllesmereUI.PP
@@ -12438,6 +12453,10 @@ end
 
 function EllesmereUF:OnEnable()
     InitializeFrames()
+    -- Register with unlock mode synchronously: on a combat reload this runs
+    -- inside the pre-lockdown window, so the login position pass can resolve
+    -- and place anchored unit frames before SetPoint gets blocked.
+    RegisterUFUnlockElements()
     C_Timer.After(0, SetupOptionsPanel)
     C_Timer.After(0, function()
         if EllesmereUI and EllesmereUI.ApplyColorsToOUF then

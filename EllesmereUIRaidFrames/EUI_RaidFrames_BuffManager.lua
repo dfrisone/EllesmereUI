@@ -296,7 +296,7 @@ local function CurrentSpecKey()
 end
 ns.BM_CurrentSpecKey = CurrentSpecKey
 
--- Flat spell name lookup (fallback = hardcoded English names)
+-- Curated display names by spell ID (from the spec lists above)
 local STORED_NAME_BY_ID = {}
 for _, spec in ipairs(HEALER_SPECS) do
     for _, spell in ipairs(spec.spells) do
@@ -305,13 +305,16 @@ for _, spec in ipairs(HEALER_SPECS) do
         end
     end
 end
--- Resolve to the client-localized name by ID; fall back to stored English
--- until spell data is cached (retries on next access, caches once localized).
+-- Display-name lookup. Curated names win: they distinguish variants the
+-- client API cannot (e.g. "Echo Reversion" vs plain "Reversion") and
+-- localize through L(). The client-localized spell name is the fallback
+-- for IDs outside the curated lists. No caching: L() must stay live so a
+-- language switch is honoured.
 local SPELL_NAME_BY_ID = setmetatable({}, {
-    __index = function(t, id)
-        local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-        if nm then rawset(t, id, nm); return nm end
-        return STORED_NAME_BY_ID[id]
+    __index = function(_, id)
+        local nm = STORED_NAME_BY_ID[id]
+        if nm then return EllesmereUI.L(nm) end
+        return C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
     end,
 })
 

@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 --  Themed Character Sheet
 --------------------------------------------------------------------------------
-local ADDON_NAME = ...
+local ADDON_NAME, ns = ...
 local L = _G.EllesmereUI and _G.EllesmereUI.L or function(k) return k end
 local skinned = false
 local issecretvalue = issecretvalue or function() return false end
@@ -315,7 +315,7 @@ local function PreSkinCharacterSheet()
     GetFFD(frame).bg = bg
     bg:SetAlpha(1)
     GetFFD(frame).bgOverlay = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
-    GetFFD(frame).bgOverlay:SetColorTexture(0, 0, 0, 0.55)
+    GetFFD(frame).bgOverlay:SetColorTexture(0, 0, 0, 0.62)
     GetFFD(frame).bgOverlay:SetAllPoints(frame)
 
     -- Recompute tex coords on resize to maintain aspect ratio (cover mode)
@@ -344,6 +344,11 @@ local function PreSkinCharacterSheet()
     UpdateBgTexCoords()
     if EllesmereUI and EllesmereUI.PanelPP then
         EllesmereUI.PanelPP.CreateBorder(frame, 0.2, 0.2, 0.2, 1, 1, "OVERLAY", 7)
+    end
+    -- Window-style system: lets the Modern flat backdrop live-swap in for the
+    -- atlas when the user picks Modern for the Character Sheet window.
+    if ns.WSkin and ns.WSkin.AdoptShell then
+        ns.WSkin.AdoptShell("charsheet", frame, bg, GetFFD(frame).bgOverlay)
     end
 
     -- PlayerModel widget. SetUnit("player") natively follows shapeshift forms
@@ -720,33 +725,34 @@ local function SkinCharacterSheet()
 
         for i = 1, select("#", closeBtn:GetRegions()) do
             local region = select(i, closeBtn:GetRegions())
-            if region and region:IsObjectType("Texture") then
+            if region and region:IsObjectType("Texture") and region ~= GetFFD(closeBtn).x then
                 region:SetAlpha(0)
             end
         end
 
-        local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("blizzardSkin") or STANDARD_TEXT_FONT
-
-        GetFFD(closeBtn).x = closeBtn:CreateFontString(nil, "OVERLAY")
-        GetFFD(closeBtn).x:SetFont(fontPath, 16, "")
-        GetFFD(closeBtn).x:SetText("x")
-        GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.75)
-        GetFFD(closeBtn).x:SetPoint("CENTER", -2, -3)
+        local closeX = closeBtn:CreateTexture(nil, "OVERLAY")
+        closeX:SetAtlas("uitools-icon-close")
+        closeX:SetSize(14, 14)
+        closeX:SetPoint("CENTER", -2, 0)
+        closeX:SetVertexColor(1, 1, 1, 0.75)
+        GetFFD(closeBtn).x = closeX
 
         closeBtn:HookScript("OnEnter", function()
-            if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 1) end
+            if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetVertexColor(1, 1, 1, 1) end
         end)
         closeBtn:HookScript("OnLeave", function()
-            if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.75) end
+            if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetVertexColor(1, 1, 1, 0.75) end
         end)
     end
 
     local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("blizzardSkin") or STANDARD_TEXT_FONT
     local EG = EllesmereUI.ELLESMERE_GREEN or { r = 0.51, g = 0.784, b = 1 }
 
+    local charTabs = {}
     for i = 1, 3 do
         local tab = _G["CharacterFrameTab" .. i]
         if tab then
+            charTabs[#charTabs + 1] = tab
             for j = 1, select("#", tab:GetRegions()) do
                 local region = select(j, tab:GetRegions())
                 if region and region:IsObjectType("Texture") then
@@ -815,6 +821,9 @@ local function SkinCharacterSheet()
             end
         end
     end
+    -- Uniform one-physical-pixel seam between the bottom tabs, matching every
+    -- other themed window (the raw CharacterFrameTab frames sit further apart).
+    if ns.WSkin and ns.WSkin.NormalizeTabRow then ns.WSkin.NormalizeTabRow(charTabs) end
 
     local function UpdateTabVisuals()
         for i = 1, 3 do
@@ -2341,12 +2350,15 @@ local function SkinCharacterSheet()
                                 GameTooltip:AddLine(L("|cff888888(Against an evenly matched enemy)|r"), 1, 1, 1, true)
                             end
 
-                            -- Reduction against target
+                            -- Reduction against target. The return can be a
+                            -- SECRET number when the target's combat data is
+                            -- secret (12.0) -- comparing it would throw, so
+                            -- check issecretvalue before any compare.
                             if C_PaperDollInfo and C_PaperDollInfo.GetArmorEffectivenessAgainstTarget then
-                                armorReduction = (C_PaperDollInfo.GetArmorEffectivenessAgainstTarget(effectiveArmor) or 0) * 100
-                            end
-                            if armorReduction > 0 then
-                                GameTooltip:AddLine(string.format(L("(Against Current Target: %.2f%%)"), armorReduction), 1, 1, 1, true)
+                                local targetEff = C_PaperDollInfo.GetArmorEffectivenessAgainstTarget(effectiveArmor)
+                                if targetEff and not issecretvalue(targetEff) and targetEff > 0 then
+                                    GameTooltip:AddLine(string.format(L("(Against Current Target: %.2f%%)"), targetEff * 100), 1, 1, 1, true)
+                                end
                             end
                         elseif stat.name == "Block" then
                             local shieldBlockArmor = GetShieldBlock();
@@ -2362,12 +2374,13 @@ local function SkinCharacterSheet()
                                 GameTooltip:AddLine(L("|cff888888(Against an evenly matched enemy)|r"), 1, 1, 1, true)
                             end
 
-                            -- Reduction against target
+                            -- Reduction against target. Same SECRET-number
+                            -- guard as the Armor block above.
                             if C_PaperDollInfo and C_PaperDollInfo.GetArmorEffectivenessAgainstTarget then
-                                armorReduction = (C_PaperDollInfo.GetArmorEffectivenessAgainstTarget(shieldBlockArmor) or 0) * 100
-                            end
-                            if armorReduction > 0 then
-                                GameTooltip:AddLine(string.format(L("(Against Current Target: %.2f%%)"), armorReduction), 1, 1, 1, true)
+                                local targetEff = C_PaperDollInfo.GetArmorEffectivenessAgainstTarget(shieldBlockArmor)
+                                if targetEff and not issecretvalue(targetEff) and targetEff > 0 then
+                                    GameTooltip:AddLine(string.format(L("(Against Current Target: %.2f%%)"), targetEff * 100), 1, 1, 1, true)
+                                end
                             end
                         end
                     end

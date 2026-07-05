@@ -442,6 +442,18 @@ initFrame:SetScript("OnEvent", function(self)
             { type="toggle", label="Show Dungeon Name",
               get=function() return Cfg("showDungeonName") ~= false end,
               set=function(v) Set("showDungeonName", v); Refresh() end },
+            -- Moves the lone "+key" title down onto the timer line as "+21  |  timer".
+            -- Only meaningful when the dungeon name is hidden, so it is gated on that.
+            { type="toggle", label="Show Key Level on Timer",
+              disabled=function() return Cfg("showDungeonName") ~= false end,
+              disabledTooltip="Show Dungeon Name", requireState="disabled",
+              get=function() return Cfg("showKeyLevelOnTimer") == true end,
+              set=function(v) Set("showKeyLevelOnTimer", v); Refresh() end },
+            { type="slider", label="Spacing", min=0, max=40, step=1,
+              disabled=function() return Cfg("showKeyLevelOnTimer") ~= true end,
+              disabledTooltip="Show Key Level on Timer",
+              get=function() return Cfg("keyLevelTimerSpacing") or 8 end,
+              set=function(v) Set("keyLevelTimerSpacing", v); Refresh() end },
         }, function() return Cfg("enabled") == false or Cfg("showTitle") == false end)
         -- Inline accent + custom colour swatches on the Title Size slider.
         _AttachInlineAccentSwatches(row._rightRegion, "titleUseAccent", "titleColor", 1, 1, 1,

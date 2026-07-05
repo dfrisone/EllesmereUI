@@ -2,6 +2,7 @@
 --  EllesmereUIBlizzardSkin_GreatVault.lua
 --  Great Vault reskin.
 -------------------------------------------------------------------------------
+local ADDON_NAME, ns = ...
 local LOCK_TEXTURE = "Interface\\LFGFrame\\UI-LFG-ICON-LOCK"
 
 -- External weak-keyed lookup table for frame state (prevents tainting Blizzard frames)
@@ -971,17 +972,17 @@ RefreshGreatVaultFrame = function(frame)
             if closeBtn.HighlightTexture then closeBtn.HighlightTexture:SetAlpha(0) end
             if closeBtn.DisabledTexture then closeBtn.DisabledTexture:SetAlpha(0) end
 
-            cbd.x = closeBtn:CreateFontString(nil, "OVERLAY")
-            cbd.x:SetFont(theme.fontPath, 16, "")
-            cbd.x:SetText("x")
-            cbd.x:SetTextColor(1, 1, 1, 0.5)
-            cbd.x:SetPoint("CENTER", -2, -2)
+            cbd.x = closeBtn:CreateTexture(nil, "OVERLAY")
+            cbd.x:SetAtlas("uitools-icon-close")
+            cbd.x:SetSize(14, 14)
+            cbd.x:SetPoint("CENTER", -2, 0)
+            cbd.x:SetVertexColor(1, 1, 1, 0.75)
 
             closeBtn:HookScript("OnEnter", function()
-                GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.9)
+                GetFFD(closeBtn).x:SetVertexColor(1, 1, 1, 1)
             end)
             closeBtn:HookScript("OnLeave", function()
-                GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.5)
+                GetFFD(closeBtn).x:SetVertexColor(1, 1, 1, 0.75)
             end)
         end
     end
@@ -997,6 +998,14 @@ local function HookGreatVault()
     if d.hooked then return end
 
     d.hooked = true
+
+    -- Window-style system: treat Blizzard's vault scene as this window's EUI
+    -- backdrop, so picking Modern fades the scene and shows the flat user
+    -- color instead (nil-safe if the scene texture key is absent).
+    if ns.WSkin and ns.WSkin.AdoptShell then
+        local scene = frame.Background or frame.BackgroundTile
+        ns.WSkin.AdoptShell("greatvault", frame, scene)
+    end
 
     frame:HookScript("OnShow", function(self)
         ScheduleGreatVaultRefresh(self)

@@ -6291,29 +6291,42 @@ initFrame:SetScript("OnEvent", function(self)
             -- Spec/talent changes move which entry the resolver picks (the active
             -- glow) and change the available loadout talents -- refresh the open
             -- popup live. Keep the current selection (don't yank the user mid-edit).
-            local thrEvents = CreateFrame("Frame")
-            thrEvents:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-            thrEvents:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
-            thrEvents:RegisterEvent("TRAIT_CONFIG_UPDATED")
-            thrEvents:RegisterEvent("PLAYER_TALENT_UPDATE")
-            thrEvents:SetScript("OnEvent", function()
-                if thrPage and thrPage:IsShown() then
-                    RefreshSpecEntries()
-                    if RefreshDetail then RefreshDetail() end
-                end
-            end)
-
-            -- Theme/accent change: the selection highlight uses the live accent.
-            EllesmereUI.RegAccent({ type = "callback", fn = function(r, g, b)
-                if not (thrPage and thrPage:IsShown()) then return end
-                for i = 1, #_entryFrames do
-                    local f = _entryFrames[i]
-                    if f and f:IsShown() then
-                        f._accent:SetColorTexture(r, g, b, 1)
-                        if f._selected then f._bg:SetColorTexture(r, g, b, 0.10) end
+            -- The event frame + accent callback are module-level singletons: this
+            -- section builder re-runs on every options rebuild (Simple/Advanced,
+            -- sync toggles, spec add/remove), so creating them per build would leak
+            -- a permanently-registered frame and a permanent accent entry each
+            -- time. They read the current popup through ns._thrCtx, refreshed here
+            -- on every build.
+            ns._thrCtx = { page = thrPage, entryFrames = _entryFrames,
+                           refresh = RefreshSpecEntries, refreshDetail = RefreshDetail }
+            if not ns._thrEventsFrame then
+                local ev = CreateFrame("Frame")
+                ev:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+                ev:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+                ev:RegisterEvent("TRAIT_CONFIG_UPDATED")
+                ev:RegisterEvent("PLAYER_TALENT_UPDATE")
+                ev:SetScript("OnEvent", function()
+                    local c = ns._thrCtx
+                    if c and c.page and c.page:IsShown() then
+                        if c.refresh then c.refresh() end
+                        if c.refreshDetail then c.refreshDetail() end
                     end
-                end
-            end })
+                end)
+                ns._thrEventsFrame = ev
+                -- Theme/accent change: the selection highlight uses the live accent.
+                EllesmereUI.RegAccent({ type = "callback", fn = function(r, g, b)
+                    local c = ns._thrCtx
+                    if not (c and c.page and c.page:IsShown()) then return end
+                    local ef = c.entryFrames
+                    for i = 1, #ef do
+                        local f = ef[i]
+                        if f and f:IsShown() then
+                            f._accent:SetColorTexture(r, g, b, 1)
+                            if f._selected then f._bg:SetColorTexture(r, g, b, 0.10) end
+                        end
+                    end
+                end })
+            end
         end
 		-- class settings [end]
         -- Row: Custom Recharge Color | Simple Runes (DK), Shaman Enhance, Hunter Focus.

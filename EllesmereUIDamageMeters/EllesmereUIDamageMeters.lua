@@ -191,6 +191,7 @@ local DM_DEFAULTS = {
             iconStyle       = "spec",
             iconColorUseAccent = false,
             iconColor       = { r = 1, g = 1, b = 1 },
+            customIconBorder  = false,
             iconBorderTexture = "solid",
             iconBorderSize    = 0,
             iconBorderR = 0, iconBorderG = 0, iconBorderB = 0, iconBorderA = 1,
@@ -2007,16 +2008,19 @@ local function CreateDMWindow(winIdx)
             local c = DB()
             local sz = c.iconBorderSize or 0
             local showIcon = (c.iconStyle or "spec") ~= "none"
-            if sz <= 0 or not showIcon then
+            if not c.customIconBorder or sz <= 0 or not showIcon then
                 if bar._iconBorderFrame then bar._iconBorderFrame:Hide() end
                 return
             end
             if not bar._iconBorderFrame then
                 bar._iconBorderFrame = CreateFrame("Frame", nil, bar.row)
                 bar._iconBorderFrame:SetFrameLevel(bar.row:GetFrameLevel() + 6)
-                bar._iconBorderFrame:SetAllPoints(bar.classIcon) -- folgt Icon-Größe/Position automatisch
+                bar._iconBorderFrame:SetAllPoints(bar.classIcon) -- tracks icon size/position
             end
-            bar._iconBorderFrame:Show()
+            -- Follow the icon's actual shown state: ResolveIcon hides the icon
+            -- for sources without a usable class (secret/NPC rows), and a frame
+            -- anchored to a hidden texture would still render a floating border.
+            bar._iconBorderFrame:SetShown(bar.classIcon:IsShown())
             local tex = c.iconBorderTexture or "solid"
             EllesmereUI.ApplyBorderStyle(bar._iconBorderFrame, sz,
                 c.iconBorderR or 0, c.iconBorderG or 0, c.iconBorderB or 0, c.iconBorderA or 1,
@@ -3213,6 +3217,7 @@ local function CreateDMWindow(winIdx)
             W._stickyClassCache = classFile
             local iconOffset = showIcon and ResolveIcon(src, bar.classIcon, barH) or 0
             if not showIcon then bar.classIcon:Hide() end
+            if bar._iconBorderFrame then bar._iconBorderFrame:SetShown(bar.classIcon:IsShown()) end
             bar.fill:SetPoint("TOPLEFT", bar.row, "TOPLEFT", iconOffset, 0)
             bar.fill:SetPoint("TOPRIGHT", bar.row, "TOPRIGHT", 0, 0)
             if showClassColor then
@@ -3364,6 +3369,7 @@ local function CreateDMWindow(winIdx)
                             bar._cachedClass = classFile
                             local iconOffset = showIcon and ResolveIcon(src, bar.classIcon, barH) or 0
                             if not showIcon then bar.classIcon:Hide() end
+                            if bar._iconBorderFrame then bar._iconBorderFrame:SetShown(bar.classIcon:IsShown()) end
                             bar.fill:SetPoint("TOPLEFT", bar.row, "TOPLEFT", iconOffset, 0)
                             bar.fill:SetPoint("TOPRIGHT", bar.row, "TOPRIGHT", 0, 0)
                             bar._cachedColorClass = nil

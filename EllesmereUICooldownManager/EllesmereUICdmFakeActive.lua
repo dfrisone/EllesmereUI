@@ -225,7 +225,9 @@ ApplyToFrame = function(iconFrame, rule, win)
     local ss = rule.cas
     if not ss then
         local sd = barKey and ns.GetBarSpellData and ns.GetBarSpellData(barKey)
-        ss = sd and ns.ResolveSpellSettings and ns.ResolveSpellSettings(iconFrame, rule.spellID, sd)
+        if ns.ResolveSpellSettings then
+            ss = ns.ResolveSpellSettings(iconFrame, rule.spellID, sd, barKey)
+        end
     end
 
     -- "Hide Active State" dropdown -> never show the overlay.
@@ -248,6 +250,32 @@ ApplyToFrame = function(iconFrame, rule, win)
         if ns.StyleOverlayCooldownText then
             ns.StyleOverlayCooldownText(o.cd, bd, ss, iconFrame:GetScale())
         end
+        -- Custom Active State Decimals: when the bar opts in AND Duration Text is
+        -- shown, drive the overlay countdown from the shared decimal engine
+        -- (Blizzard's cooldown numbers can't show a 1-decimal countdown). The
+        -- fake-active window's duration is hardcoded, so the remaining time is
+        -- exact. OFF BY DEFAULT = zero cost: the gate is one field read, and the
+        -- else-branch Detach no-ops unless this overlay was previously attached.
+        -- StyleOverlayCooldownText (above) already set Blizzard's numbers per the
+        -- Duration Text state, so Detach here never needs to touch them.
+        if bd and bd.faDecimals and ns.DecimalCountdown then
+            local showCD = bd.showCooldownText
+            if ss and ss.showCooldownText ~= nil then showCD = ss.showCooldownText end
+            if showCD then
+                ns.DecimalCountdown.Attach(o.cd, win.start, win.dur, bd.faDecimalsThreshold or 5,
+                    function(fs)
+                        if ns.StyleOverlayDecimalText then
+                            ns.StyleOverlayDecimalText(fs, bd, ss, iconFrame:GetScale())
+                        end
+                    end,
+                    { on = bd.faDecimalsColorEnabled, r = bd.faDecimalsColorR,
+                      g = bd.faDecimalsColorG, b = bd.faDecimalsColorB })
+            else
+                ns.DecimalCountdown.Detach(o.cd)
+            end
+        elseif ns.DecimalCountdown then
+            ns.DecimalCountdown.Detach(o.cd)
+        end
         -- Feed the active glow + border the underlying icon's shape / border so
         -- Shape Glow masks to the shape (it reads the shape from its glow frame's
         -- parent FC) and Active Border can recolour the real (now-raised) border.
@@ -269,6 +297,7 @@ ApplyToFrame = function(iconFrame, rule, win)
         RestoreOverlayBorders(iconFrame, o)
         if ns.ApplyActiveOverlays then ns.ApplyActiveOverlays(o.frame, o, ss, false, bd) end
         o.cd:Clear()
+        if ns.DecimalCountdown then ns.DecimalCountdown.Detach(o.cd) end
         o.frame:SetAlpha(0)
     end
 end

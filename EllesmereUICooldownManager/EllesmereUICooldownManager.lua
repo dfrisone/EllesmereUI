@@ -681,6 +681,306 @@ function ns.GetBarSpellDataForSpec(barKey, specKey)
     return bs
 end
 
+-------------------------------------------------------------------------------
+--  Tiered per-spell settings stores
+--
+--  Per-spell icon settings live in FAMILY stores on the spec profile (siblings
+--  of barSpells), keyed by spellID -- NOT nested under a bar. Moving a spell to
+--  another bar in the same family keeps its settings automatically:
+--      specProf.spellSettingsCD[sid]   -- cooldown/utility family
+--      specProf.spellSettingsBuff[sid] -- buff family
+--
+--  Two bar-level tiers sit below the per-spell entries ("Apply to Bar"):
+--      barSpells[barKey].barSettings   -- this bar, this spec
+--      bd.barSpellSettings             -- this bar, EVERY spec (profile-level
+--                                         bar definition, so specs with no CDM
+--                                         data yet inherit it too)
+--
+--  Effective value per key: spell entry > barSettings > barSpellSettings >
+--  defaults. The renderer resolves the chain via metatable __index links that
+--  ResolveSpellSettings re-asserts lazily on every lookup (self-healing across
+--  moves / spec swaps / profile swaps; metatables are never serialized).
+-------------------------------------------------------------------------------
+
+-- Family store key for a bar ("spellSettingsBuff" for buff-family bars,
+-- "spellSettingsCD" for everything else, including the ghost CD bar).
+function ns.SettingsFamilyKey(barKeyOrBd)
+    if ns.IsBarBuffFamily and ns.IsBarBuffFamily(barKeyOrBd) then
+        return "spellSettingsBuff"
+    end
+    return "spellSettingsCD"
+end
+
+-- Family per-spell store for an explicit spec profile table.
+function ns.GetSpellSettingsStoreForProf(prof, famKey, create)
+    if not prof then return nil end
+    local st = prof[famKey]
+    if not st and create then st = {}; prof[famKey] = st end
+    return st
+end
+
+-- Family per-spell store for the ACTIVE spec, resolved from a bar.
+function ns.GetSpellSettingsStore(barKeyOrBd, create)
+    local specKey = ns.GetActiveSpecKey and ns.GetActiveSpecKey()
+    if not specKey or specKey == "0" then return nil end
+    local sp = SpellStore.GetSpecProfiles()
+    if not sp then return nil end
+    local prof = sp[specKey]
+    if not prof then
+        if not create then return nil end
+        prof = { barSpells = {} }
+        sp[specKey] = prof
+    end
+    return ns.GetSpellSettingsStoreForProf(prof, ns.SettingsFamilyKey(barKeyOrBd), create)
+end
+
+-- Chain child.__index -> parent (or clear the link when parent is nil).
+-- Reused by the renderer + options so every read of a per-spell table falls
+-- through to the bar tiers per KEY. Cheap: one getmetatable + compare.
+function ns.ChainSettings(child, parent)
+    if not child then return end
+    local mt = getmetatable(child)
+    if parent then
+        if not mt then
+            setmetatable(child, { __index = parent })
+        elseif mt.__index ~= parent then
+            mt.__index = parent
+        end
+    elseif mt and mt.__index ~= nil then
+        mt.__index = nil
+    end
+end
+
+-- Bar-tier chain head for a bar: barSettings (chained to the profile-level
+-- bd.barSpellSettings) when present, else bd.barSpellSettings, else nil.
+function ns.GetBarTierSettings(sd, barKey)
+    local bd = barKey and ns.barDataByKey and ns.barDataByKey[barKey]
+    local abs = bd and bd.barSpellSettings
+    local bs = sd and sd.barSettings
+    if bs then
+        ns.ChainSettings(bs, abs)
+        return bs
+    end
+    return abs
+end
+
+-- True when any per-icon settings could apply on this bar: the family store
+-- has ANY entry (over-approximate -- entries are keyed by spell, not bar) or
+-- either bar tier is non-empty. Used to gate "re-resolve appearance" passes.
+function ns.BarHasAnySpellSettings(barKey, sd)
+    local st = ns.GetSpellSettingsStore(barKey)
+    if st and next(st) ~= nil then return true end
+    sd = sd or ns.GetBarSpellData(barKey)
+    if sd then
+        if sd.barSettings and next(sd.barSettings) ~= nil then return true end
+        -- Legacy shape safety net (pre-migration data).
+        if sd.spellSettings and next(sd.spellSettings) ~= nil then return true end
+    end
+    local bd = ns.barDataByKey and ns.barDataByKey[barKey]
+    if bd and bd.barSpellSettings and next(bd.barSpellSettings) ~= nil then return true end
+    return false
+end
+
+-- Iterate every SAVED settings block that can hold per-spell setting keys:
+-- all specs' family-store entries + per-bar barSettings, plus the active
+-- profile's bar-level barSpellSettings. fn(ss) returning true stops the walk.
+-- Used by the login gate scans ("does anyone use feature X anywhere").
+function ns.ForEachSavedSettingsBlock(fn)
+    if not EllesmereUIDB then return false end
+    local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
+    if sp then
+        for _, prof in pairs(sp) do
+            if type(prof) == "table" then
+                local stCD = prof.spellSettingsCD
+                if type(stCD) == "table" then
+                    for _, ss in pairs(stCD) do
+                        if type(ss) == "table" and fn(ss) then return true end
+                    end
+                end
+                local stBuff = prof.spellSettingsBuff
+                if type(stBuff) == "table" then
+                    for _, ss in pairs(stBuff) do
+                        if type(ss) == "table" and fn(ss) then return true end
+                    end
+                end
+                local barSpells = prof.barSpells
+                if type(barSpells) == "table" then
+                    for _, bs in pairs(barSpells) do
+                        local bset = type(bs) == "table" and bs.barSettings
+                        if type(bset) == "table" and fn(bset) then return true end
+                        -- Legacy shape safety net: pre-migration data that has
+                        -- not been transformed yet (should not happen -- the
+                        -- migration runs before this addon loads).
+                        local ssAll = type(bs) == "table" and bs.spellSettings
+                        if type(ssAll) == "table" then
+                            for _, ss in pairs(ssAll) do
+                                if type(ss) == "table" and fn(ss) then return true end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local p = ECME and ECME.db and ECME.db.profile
+    local bars = p and p.cdmBars and p.cdmBars.bars
+    if type(bars) == "table" then
+        for _, bd in ipairs(bars) do
+            local abs = type(bd) == "table" and bd.barSpellSettings
+            if type(abs) == "table" and fn(abs) then return true end
+        end
+    end
+    return false
+end
+
+-- One-time copy of a user CUSTOM spell/buff (customSpellIDs-tagged) plus its
+-- per-spell settings onto the SAME bar in other specs of the active profile.
+-- Bar definitions are profile-level, so the bar exists in every spec. A target
+-- spec that already has the spell on ANY bar is skipped whole (never duplicates
+-- within a spec). Custom Active State is NOT copied here -- it lives in the
+-- profile-level customActiveStates store and is already shared across specs.
+-- Returns the number of specs actually copied to.
+function ns.CopyCustomSpellToSpecs(barKey, spellID, specKeys)
+    if not barKey or type(spellID) ~= "number" or spellID == 0 then return 0 end
+    if type(specKeys) ~= "table" then return 0 end
+    local sp = ns.GetActiveSpecProfiles and ns.GetActiveSpecProfiles()
+    if not sp then return 0 end
+    local curKey = ns.GetActiveSpecKey and ns.GetActiveSpecKey()
+    local famKey = ns.SettingsFamilyKey(barKey)
+    local DeepCopy = EllesmereUI.Lite and EllesmereUI.Lite.DeepCopy
+
+    -- Source metadata from the ACTIVE spec (the bar the menu was opened on).
+    local srcSd = ns.GetBarSpellData(barKey)
+    local dur = srcSd and srcSd.spellDurations and srcSd.spellDurations[spellID]
+    local srcStore = ns.GetSpellSettingsStore(barKey)
+    local srcSettings = srcStore and srcStore[spellID]
+
+    local copied = 0
+    for key, on in pairs(specKeys) do
+        if on and key ~= curKey and key ~= "0" then
+            local prof = sp[key]
+            if not prof then prof = { barSpells = {} }; sp[key] = prof end
+            if not prof.barSpells then prof.barSpells = {} end
+            -- Present anywhere in this spec? Skip the whole spec.
+            local exists = false
+            for _, bs in pairs(prof.barSpells) do
+                if type(bs) == "table" and type(bs.assignedSpells) == "table" then
+                    for _, id in ipairs(bs.assignedSpells) do
+                        if id == spellID then exists = true; break end
+                    end
+                end
+                if exists then break end
+            end
+            if not exists then
+                local bs = prof.barSpells[barKey]
+                if not bs then bs = {}; prof.barSpells[barKey] = bs end
+                if not bs.assignedSpells then bs.assignedSpells = {} end
+                bs.assignedSpells[#bs.assignedSpells + 1] = spellID
+                if not bs.customSpellIDs then bs.customSpellIDs = {} end
+                bs.customSpellIDs[spellID] = true
+                if dur and dur > 0 then
+                    if not bs.spellDurations then bs.spellDurations = {} end
+                    bs.spellDurations[spellID] = dur
+                end
+                if type(srcSettings) == "table" and DeepCopy then
+                    -- pairs()-based DeepCopy takes OWN keys only (no metatable
+                    -- __index follow), so this is the spell's own per-spell
+                    -- settings -- not values inherited from bar tiers. The copy
+                    -- is unchained; the renderer re-chains it to the target bar's
+                    -- tiers on first resolve.
+                    local store = prof[famKey]
+                    if not store then store = {}; prof[famKey] = store end
+                    if store[spellID] == nil then
+                        store[spellID] = DeepCopy(srcSettings)
+                    end
+                end
+                copied = copied + 1
+            end
+        end
+    end
+    return copied
+end
+
+-- Set of OTHER specs (this class, active profile) that currently have the spell
+-- on ANY bar. Drives the per-spell menu's Copy/Remove label + the Remove picker's
+-- pre-check. Excludes the active spec (that's where the menu is opened from).
+function ns.SpecsWithCustomSpell(spellID)
+    local out = {}
+    if type(spellID) ~= "number" or spellID == 0 then return out end
+    local sp = ns.GetActiveSpecProfiles and ns.GetActiveSpecProfiles()
+    if not sp then return out end
+    local curKey = ns.GetActiveSpecKey and ns.GetActiveSpecKey()
+    for key, prof in pairs(sp) do
+        if key ~= curKey and key ~= "0" and type(prof) == "table"
+           and type(prof.barSpells) == "table" then
+            local found = false
+            for _, bs in pairs(prof.barSpells) do
+                if type(bs) == "table" and type(bs.assignedSpells) == "table" then
+                    for _, id in ipairs(bs.assignedSpells) do
+                        if id == spellID then found = true; break end
+                    end
+                end
+                if found then break end
+            end
+            if found then out[key] = true end
+        end
+    end
+    return out
+end
+
+-- Inverse of CopyCustomSpellToSpecs: remove the spell + its per-spell settings
+-- from the picked specs (wherever it lives -- scans every bar). Never touches the
+-- active spec or the profile-level customActiveState (that stays as long as the
+-- spell exists on ANY spec, incl. the current one). Returns the count removed.
+function ns.RemoveCustomSpellFromSpecs(spellID, specKeys)
+    if type(spellID) ~= "number" or spellID == 0 then return 0 end
+    if type(specKeys) ~= "table" then return 0 end
+    local sp = ns.GetActiveSpecProfiles and ns.GetActiveSpecProfiles()
+    if not sp then return 0 end
+    local curKey = ns.GetActiveSpecKey and ns.GetActiveSpecKey()
+    local removed = 0
+    for key, on in pairs(specKeys) do
+        if on and key ~= curKey and key ~= "0" then
+            local prof = sp[key]
+            if type(prof) == "table" and type(prof.barSpells) == "table" then
+                local didRemove = false
+                for _, bs in pairs(prof.barSpells) do
+                    if type(bs) == "table" and type(bs.assignedSpells) == "table" then
+                        local hitHere = false
+                        for i = #bs.assignedSpells, 1, -1 do
+                            if bs.assignedSpells[i] == spellID then
+                                table.remove(bs.assignedSpells, i)
+                                hitHere = true; didRemove = true
+                            end
+                        end
+                        -- Clean the per-id metadata on the bar it lived on.
+                        if hitHere then
+                            if bs.customSpellIDs then bs.customSpellIDs[spellID] = nil end
+                            if bs.spellDurations then bs.spellDurations[spellID] = nil end
+                            if bs.customSpellDurations then bs.customSpellDurations[spellID] = nil end
+                            if bs.customSpellGroups then
+                                for variantID, primaryID in pairs(bs.customSpellGroups) do
+                                    if primaryID == spellID or variantID == spellID then
+                                        bs.customSpellGroups[variantID] = nil
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                if didRemove then
+                    -- Drop the per-spell settings entry (keyed by spellID, so
+                    -- clearing both family stores is safe -- only one holds it).
+                    if prof.spellSettingsCD then prof.spellSettingsCD[spellID] = nil end
+                    if prof.spellSettingsBuff then prof.spellSettingsBuff[spellID] = nil end
+                    removed = removed + 1
+                end
+            end
+        end
+    end
+    return removed
+end
+
 -- Custom Active State store. Keyed by spellID at the PROFILE level (shared
 -- across every bar and spec in this profile) so a preset's custom active state
 -- travels with the spell wherever it is placed -- no re-adding. The settings key
@@ -733,25 +1033,14 @@ end
 -- so this only needs to discover already-saved settings at/after login.
 function ns.RescanMaxStacksGlowFlag()
     if ns._cdmAnyMaxStacksGlow or ns._maxStacksFlagScanned then return end
-    local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
-    if not sp then return end
+    if not EllesmereUIDB then return end
     ns._maxStacksFlagScanned = true
-    for _, prof in pairs(sp) do
-        local barSpells = prof and prof.barSpells
-        if barSpells then
-            for _, bs in pairs(barSpells) do
-                local ssAll = bs and bs.spellSettings
-                if ssAll then
-                    for _, ss in pairs(ssAll) do
-                        if ss and ss.maxStacksGlow and ss.maxStacksGlow > 0 then
-                            ns._cdmAnyMaxStacksGlow = true
-                            return
-                        end
-                    end
-                end
-            end
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if ss.maxStacksGlow and ss.maxStacksGlow > 0 then
+            ns._cdmAnyMaxStacksGlow = true
+            return true
         end
-    end
+    end)
 end
 
 -- Audio on Buff Gain/Loss gate: set ns._cdmAnyBuffSound once if any saved buff
@@ -761,26 +1050,15 @@ end
 -- RescanMaxStacksGlowFlag (the option's setValue flips the flag live).
 function ns.RescanBuffSoundFlag()
     if ns._cdmAnyBuffSound or ns._buffSoundFlagScanned then return end
-    local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
-    if not sp then return end
+    if not EllesmereUIDB then return end
     ns._buffSoundFlagScanned = true
-    for _, prof in pairs(sp) do
-        local barSpells = prof and prof.barSpells
-        if barSpells then
-            for _, bs in pairs(barSpells) do
-                local ssAll = bs and bs.spellSettings
-                if ssAll then
-                    for _, ss in pairs(ssAll) do
-                        if ss and ((ss.buffActiveSoundKey and ss.buffActiveSoundKey ~= "none")
-                            or (ss.buffLostSoundKey and ss.buffLostSoundKey ~= "none")) then
-                            ns._cdmAnyBuffSound = true
-                            return
-                        end
-                    end
-                end
-            end
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if (ss.buffActiveSoundKey and ss.buffActiveSoundKey ~= "none")
+            or (ss.buffLostSoundKey and ss.buffLostSoundKey ~= "none") then
+            ns._cdmAnyBuffSound = true
+            return true
         end
-    end
+    end)
 end
 
 -- Resolve the configured buff gain/loss sound key for a spell id in the CURRENT
@@ -797,14 +1075,36 @@ function ns.FindBuffSoundKey(sid, field)
     if not specKey or specKey == "0" then return nil end
     local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
     local prof = sp and sp[specKey]
-    local barSpells = prof and prof.barSpells
-    if not barSpells then return nil end
-    for _, bs in pairs(barSpells) do
-        local ssAll = bs and bs.spellSettings
-        local ss = ssAll and ssAll[sid]
-        local key = ss and ss[field]
-        if key and key ~= "none" then return key end
+    if not prof then return nil end
+    -- Per-spell tier: the buff family store (explicit false = user turned an
+    -- inherited bar-level sound OFF for this one buff -- treat as silent).
+    local st = prof.spellSettingsBuff
+    local own = st and st[sid]
+    if own then
+        local v = rawget(own, field)
+        if v ~= nil then
+            if v and v ~= "none" then return v end
+            return nil
+        end
     end
+    -- Bar tier: the buff bar this spell renders on. Extra buff bars claim
+    -- their spells via assignedSpells; everything else lives on "buffs".
+    local homeKey = "buffs"
+    local barSpells = prof.barSpells
+    if barSpells then
+        for barKey, bs in pairs(barSpells) do
+            if barKey ~= "buffs" and ns.IsBarBuffFamily and ns.IsBarBuffFamily(barKey)
+               and type(bs.assignedSpells) == "table" then
+                for _, asid in ipairs(bs.assignedSpells) do
+                    if asid == sid then homeKey = barKey; break end
+                end
+            end
+        end
+    end
+    local bsHome = barSpells and barSpells[homeKey]
+    local tier = ns.GetBarTierSettings(bsHome, homeKey)
+    local key = tier and tier[field]
+    if key and key ~= "none" then return key end
     return nil
 end
 
@@ -815,25 +1115,14 @@ end
 -- are handled by the option's setValue).
 function ns.RescanCdReadySoundFlag()
     if ns._cdmAnyCdReadySound or ns._cdReadySoundFlagScanned then return end
-    local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
-    if not sp then return end
+    if not EllesmereUIDB then return end
     ns._cdReadySoundFlagScanned = true
-    for _, prof in pairs(sp) do
-        local barSpells = prof and prof.barSpells
-        if barSpells then
-            for _, bs in pairs(barSpells) do
-                local ssAll = bs and bs.spellSettings
-                if ssAll then
-                    for _, ss in pairs(ssAll) do
-                        if ss and ss.cdReadySoundKey and ss.cdReadySoundKey ~= "none" then
-                            ns._cdmAnyCdReadySound = true
-                            return
-                        end
-                    end
-                end
-            end
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if ss.cdReadySoundKey and ss.cdReadySoundKey ~= "none" then
+            ns._cdmAnyCdReadySound = true
+            return true
         end
-    end
+    end)
 end
 
 -- "Hide CD Text (Charges)" gate: set ns._cdmAnyChargeHideCdText once if any saved
@@ -843,25 +1132,14 @@ end
 -- the option's setValue).
 function ns.RescanChargeCdTextFlag()
     if ns._cdmAnyChargeHideCdText or ns._chargeCdTextFlagScanned then return end
-    local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
-    if not sp then return end
+    if not EllesmereUIDB then return end
     ns._chargeCdTextFlagScanned = true
-    for _, prof in pairs(sp) do
-        local barSpells = prof and prof.barSpells
-        if barSpells then
-            for _, bs in pairs(barSpells) do
-                local ssAll = bs and bs.spellSettings
-                if ssAll then
-                    for _, ss in pairs(ssAll) do
-                        if ss and ss.chargeHideCdText then
-                            ns._cdmAnyChargeHideCdText = true
-                            return
-                        end
-                    end
-                end
-            end
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if ss.chargeHideCdText then
+            ns._cdmAnyChargeHideCdText = true
+            return true
         end
-    end
+    end)
 end
 
 -- Custom Item gate: set ns._cdmAnyCustomItem once if any saved bar (any spec)
@@ -903,26 +1181,13 @@ end
 function ns.RescanReverseSwipeFlag()
     if ns._reverseSwipeFlagScanned then return end
     if ns._cdmAnyReverseSwipe and ns._cdmAnyHideCDSwipe then return end
-    local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
-    if not sp then return end
+    if not EllesmereUIDB then return end
     ns._reverseSwipeFlagScanned = true
-    -- Regular per-spell settings (per-bar spellSettings, every spec).
-    for _, prof in pairs(sp) do
-        local barSpells = prof and prof.barSpells
-        if barSpells then
-            for _, bs in pairs(barSpells) do
-                local ssAll = bs and bs.spellSettings
-                if ssAll then
-                    for _, ss in pairs(ssAll) do
-                        if ss then
-                            if ss.reverseSwipe then ns._cdmAnyReverseSwipe = true end
-                            if ss.hideCDSwipe then ns._cdmAnyHideCDSwipe = true end
-                        end
-                    end
-                end
-            end
-        end
-    end
+    -- Regular per-spell settings (family stores + bar tiers, every spec).
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if ss.reverseSwipe then ns._cdmAnyReverseSwipe = true end
+        if ss.hideCDSwipe then ns._cdmAnyHideCDSwipe = true end
+    end)
     -- Preset / custom cd-utility spells (profile-level customActiveStates).
     local cas = ns.GetCustomActiveStates and ns.GetCustomActiveStates()
     if cas then
@@ -2000,8 +2265,7 @@ local function ShowProcGlow(icon, cr, cg, cb)
         -- "proc into a second ability" override form (e.g. Reap -> base 344862).
         -- The old assignedSpells-only fallback missed this on default Essential/
         -- Utility bars, whose assignedSpells list is empty.
-        local ss = (ns.ResolveSpellSettings and ns.ResolveSpellSettings(icon, sid, sd))
-            or (sd and sd.spellSettings and sd.spellSettings[sid])
+        local ss = ns.ResolveSpellSettings and ns.ResolveSpellSettings(icon, sid, sd, bk)
         if ss then
             -- Custom shapes are locked to Shape Glow: ignore the per-spell glow type
             -- (including "None") so a custom-shaped icon always shows Shape Glow. The
@@ -2609,7 +2873,11 @@ end
 -- grow away from the first row instead of re-centering the whole bar.
 -- Defined as ns.* fields (not file-scope locals) to stay under Lua 5.1's
 -- 200-local main-chunk ceiling.
-function ns.ResolveGrowAnchorPoint(barData)
+--
+-- ignoreFirstRow: resolve the plain growth edge even if the pin is set. Used
+-- for unlock-snapped bars, whose saved-edge consumers (ApplyAnchorPosition
+-- edge preservation / target follow) only understand single-edge points.
+function ns.ResolveGrowAnchorPoint(barData, ignoreFirstRow)
     local grow = (barData and barData.growDirection) or "CENTER"
     local horiz, vert  -- "LEFT"/"RIGHT" and "TOP"/"BOTTOM" components
     if grow == "RIGHT" then
@@ -2621,7 +2889,7 @@ function ns.ResolveGrowAnchorPoint(barData)
     elseif grow == "UP" then
         vert = "BOTTOM"
     end
-    if barData and barData.anchorFirstRow then
+    if barData and barData.anchorFirstRow and not ignoreFirstRow then
         if barData.verticalOrientation then
             -- Vertical bar: rows stack along the width axis -> pin LEFT.
             horiz = horiz or "LEFT"
@@ -2676,23 +2944,51 @@ local function ApplyBarPositionCentered(frame, pos, barKey)
     if not pos or not pos.point then return end
     local fw = frame:GetWidth() or 0
     local fh = frame:GetHeight() or 0
+    local px, py = pos.x or 0, pos.y or 0
+    local anchor = pos.point
+    local bd = barKey and barDataByKey[barKey]
 
-    -- Re-derive the anchor from the bar's CURRENT growth + first-row settings.
-    -- Recover the frame center from the stored anchor coord, then re-project it
-    -- onto the resolved anchor point. This keeps the growth edge fixed across
-    -- size changes (edge preservation), transparently upgrades legacy CENTER /
-    -- edge positions (Blizzard import, dev migration gap), and lets the "anchor
-    -- first row" toggle take effect without re-dragging -- all as a lossless
-    -- coordinate round-trip. No persistence: positions are only saved by unlock
-    -- mode's Save & Exit.
-    local cx, cy = ns.AnchorCoordToCenter(pos.point, pos.x or 0, pos.y or 0, fw, fh)
-    local anchor = barKey and ns.ResolveGrowAnchorPoint(barDataByKey[barKey]) or "CENTER"
-    local px, py = ns.CenterToAnchorCoord(anchor, cx, cy, fw, fh)
+    -- Corner-capable re-derivation, taken ONLY when the first-row pin is in
+    -- play for this bar (or the stored point is a corner left over from when
+    -- it was). Recover the frame center from the stored anchor coord, then
+    -- re-project it onto the anchor resolved from the bar's CURRENT growth +
+    -- first-row settings -- a lossless coordinate round-trip, so the bar does
+    -- not move; only the pinned edge/corner changes. Bars that never use the
+    -- pin take the legacy conversion below instead, keeping their behavior
+    -- unchanged. No persistence: positions are only saved by unlock mode's
+    -- Save & Exit.
+    local storedIsCorner = (anchor:find("TOP", 1, true) or anchor:find("BOTTOM", 1, true))
+        and (anchor:find("LEFT", 1, true) or anchor:find("RIGHT", 1, true))
+    if (bd and bd.anchorFirstRow) or storedIsCorner then
+        local cx, cy = ns.AnchorCoordToCenter(anchor, px, py, fw, fh)
+        anchor = ns.ResolveGrowAnchorPoint(bd)
+        px, py = ns.CenterToAnchorCoord(anchor, cx, cy, fw, fh)
+    elseif anchor == "CENTER" and barKey then
+        -- Runtime conversion: if a non-CENTER-grow bar still has a CENTER
+        -- position (legacy data, Blizzard import, or dev migration gap),
+        -- convert to edge format for SetPoint so the bar grows from the
+        -- correct edge.
+        local grow = bd and bd.growDirection or "CENTER"
+        if grow ~= "CENTER" then
+            if grow == "RIGHT" and fw > 0 then
+                anchor = "LEFT"; px = px - fw / 2
+            elseif grow == "LEFT" and fw > 0 then
+                anchor = "RIGHT"; px = px + fw / 2
+            elseif grow == "DOWN" and fh > 0 then
+                anchor = "TOP"; py = py + fh / 2
+            elseif grow == "UP" and fh > 0 then
+                anchor = "BOTTOM"; py = py - fh / 2
+            end
+        end
+    end
 
     -- Snap to physical pixel grid. For CENTER anchor, use SnapCenterForDim
     -- to preserve the +0.5 offset that odd-pixel-dim frames need so their
-    -- edges land on whole pixels. For edge anchors (LEFT/RIGHT/TOP/BOTTOM),
-    -- the offset already represents an edge position and SnapForES is correct.
+    -- edges land on whole pixels. For single-edge anchors, the growth-axis
+    -- coordinate is an EDGE (whole-pixel snap) but the perpendicular
+    -- coordinate is the frame's CENTER on that axis -- parity-aware snap so
+    -- an odd-pixel dimension keeps whole-pixel edges there too. Corner
+    -- anchors (first-row pin) are edges on BOTH axes.
     local PPa = EllesmereUI and EllesmereUI.PP
     if PPa then
         local es = frame:GetEffectiveScale()
@@ -2700,8 +2996,16 @@ local function ApplyBarPositionCentered(frame, pos, barKey)
             px = PPa.SnapCenterForDim(px, fw, es)
             py = PPa.SnapCenterForDim(py, fh, es)
         elseif PPa.SnapForES then
-            px = PPa.SnapForES(px, es)
-            py = PPa.SnapForES(py, es)
+            if PPa.SnapCenterForDim and (anchor == "LEFT" or anchor == "RIGHT") then
+                px = PPa.SnapForES(px, es)
+                py = PPa.SnapCenterForDim(py, fh, es)
+            elseif PPa.SnapCenterForDim and (anchor == "TOP" or anchor == "BOTTOM") then
+                px = PPa.SnapCenterForDim(px, fw, es)
+                py = PPa.SnapForES(py, es)
+            else
+                px = PPa.SnapForES(px, es)
+                py = PPa.SnapForES(py, es)
+            end
         end
     end
 
@@ -2768,6 +3072,12 @@ end
 function ns.RecaptureBarAnchor(barKey)
     local frame = cdmBarFrames[barKey]
     if not frame then return end
+    -- anchorTo bars (cursor, party/player frame, ERB, another bar) are
+    -- positioned by their anchor, not cdmBarPositions -- saving from live
+    -- geometry would overwrite the stored free-standing position with the
+    -- anchored/cursor spot.
+    local bd = barDataByKey[barKey]
+    if bd and bd.anchorTo and bd.anchorTo ~= "none" then return end
     if EllesmereUI.IsUnlockAnchored and EllesmereUI.IsUnlockAnchored("CDM_" .. barKey) then return end
     if not frame:GetLeft() then return end
     SaveCDMBarPosition(barKey, frame)
@@ -3477,8 +3787,53 @@ LayoutCDMBar = function(barKey)
     iconW   = iconWPx  * onePx
     iconH   = iconHPx  * onePx
     spacing = spacingPx * onePx
+
+    -- Per-row icon size offset (Number of Rows == 2, non-matched only). One row's
+    -- icons take an Icon Scale pixel offset; the other row keeps the base size.
+    -- Re-check the match target here (not just the options gate) so a bar that was
+    -- matched AFTER the toggle was set stays uniform. Rows are centered against
+    -- each other; the larger row defines the bar's growth-axis extent.
+    local perRowActive = false
+    local rowWPx = { iconWPx, iconWPx }   -- [1] = top row, [2] = bottom row
+    local rowHPx = { iconHPx, iconHPx }
+    if effRows == 2 and not widthMatchTarget and not heightMatchTarget
+       and customTopCount > 0 and (sizeCount - customTopCount) > 0
+       and (barData.customTopRowSizeEnabled or barData.customBottomRowSizeEnabled) then
+        local base = barData.iconSize or 36
+        local function RowSizePx(sz)
+            if sz < 16 then sz = 16 end          -- clamp to the Icon Scale minimum
+            local wpx = math.floor(sz / onePx + 0.5)
+            local hCoord = (shape == "cropped") and math.floor(sz * 0.80 + 0.5) or sz
+            local hpx = math.floor(hCoord / onePx + 0.5)
+            return wpx, hpx
+        end
+        if barData.customTopRowSizeEnabled then
+            rowWPx[1], rowHPx[1] = RowSizePx(base + (barData.topRowSizeOffset or 0))
+        else
+            rowWPx[2], rowHPx[2] = RowSizePx(base + (barData.bottomRowSizeOffset or 0))
+        end
+        perRowActive = true
+    end
+
     local totalWPx, totalHPx
-    if isHoriz then
+    if perRowActive then
+        -- Two rows, independent icon sizes. Top row = customTopCount icons; the
+        -- bottom row takes the remainder. The bar spans the LARGER row along the
+        -- growth axis and the SUM of both row bands along the perpendicular axis.
+        local topN = customTopCount
+        local botN = sizeCount - topN
+        if isHoriz then
+            local topRowW = topN * rowWPx[1] + math.max(0, topN - 1) * spacingPx
+            local botRowW = botN * rowWPx[2] + math.max(0, botN - 1) * spacingPx
+            totalWPx = math.max(topRowW, botRowW)
+            totalHPx = rowHPx[1] + rowHPx[2] + spacingPx
+        else
+            local topColH = topN * rowHPx[1] + math.max(0, topN - 1) * spacingPx
+            local botColH = botN * rowHPx[2] + math.max(0, botN - 1) * spacingPx
+            totalHPx = math.max(topColH, botColH)
+            totalWPx = rowWPx[1] + rowWPx[2] + spacingPx
+        end
+    elseif isHoriz then
         totalWPx = stride  * iconWPx + (stride  - 1) * spacingPx + extraPixels
         totalHPx = effRows * iconHPx + (effRows - 1) * spacingPx + extraPixelsH
     else
@@ -3523,6 +3878,66 @@ LayoutCDMBar = function(barKey)
         frame._barBg:Hide()
     end
 
+    if perRowActive then
+        -- Two-row layout with a per-row icon size offset. Each row is laid out at
+        -- its own icon size, centered along the growth axis; the perpendicular
+        -- axis stacks the two row bands (top then bottom / left then right). No
+        -- match extras apply -- the feature is gated off whenever matched.
+        local isMouseBar = barData.anchorTo == "mouse"
+        local topN = customTopCount
+        for i, icon in ipairs(visibleIcons) do
+            local iconScale = icon:GetScale() or 1
+            if iconScale < 0.01 then iconScale = 1 end
+            local iS = 1 / iconScale
+
+            local rowIdx   = (i <= topN) and 1 or 2        -- 1 = top, 2 = bottom
+            local idxInRow = (rowIdx == 1) and (i - 1) or (i - topN - 1)
+            local rowN     = (rowIdx == 1) and topN or (sizeCount - topN)
+            local wPx, hPx = rowWPx[rowIdx], rowHPx[rowIdx]
+
+            FC(icon).matchExpanded = nil
+            icon:SetSize(wPx * onePx * iS, hPx * onePx * iS)
+
+            if isMouseBar then
+                icon:SetFrameStrata("TOOLTIP")
+                icon:SetFrameLevel(9980 + i)
+            else
+                icon:SetFrameStrata("MEDIUM")
+                icon:SetFrameLevel(5 + i)
+            end
+            icon:ClearAllPoints()
+
+            local anchorX, anchorY
+            if isHoriz then
+                -- Growth axis = width: center this row within the bar width.
+                -- Perpendicular axis = height: top band, then bottom band.
+                local rowMainPx = rowN * wPx + math.max(0, rowN - 1) * spacingPx
+                local offMainPx = math.floor((totalWPx - rowMainPx) / 2 + 0.5)
+                local xPx = offMainPx + idxInRow * (wPx + spacingPx)
+                local yPx = (rowIdx == 1) and 0 or (rowHPx[1] + spacingPx)
+                anchorX = (xPx * onePx) * iS
+                anchorY = -(yPx * onePx) * iS
+            else
+                -- Growth axis = height: center this row within the bar height.
+                -- Perpendicular axis = width: left band, then right band.
+                local rowMainPx = rowN * hPx + math.max(0, rowN - 1) * spacingPx
+                local offMainPx = math.floor((totalHPx - rowMainPx) / 2 + 0.5)
+                local yPx = offMainPx + idxInRow * (hPx + spacingPx)
+                local xPx = (rowIdx == 1) and 0 or (rowWPx[1] + spacingPx)
+                anchorX = (xPx * onePx) * iS
+                anchorY = -(yPx * onePx) * iS
+            end
+
+            local fd = _getFD(icon)
+            if fd then
+                fd._cdmAnchor = { "TOPLEFT", frame, "TOPLEFT", anchorX, anchorY }
+            end
+            icon:SetPoint("TOPLEFT", frame, "TOPLEFT", anchorX, anchorY)
+        end
+    else
+
+    -- Uniform icon size: every row uses the same size. Original layout for all
+    -- bars except the 2-row per-row-size case handled above.
     local stepW = iconW + spacing
     local stepH = iconH + spacing
 
@@ -3665,6 +4080,7 @@ LayoutCDMBar = function(barKey)
             icon:SetPoint(anchorPt, frame, anchorRelPt, anchorX, anchorY)
         end
     end
+    end  -- perRowActive vs uniform layout branch
 
     -- SetSize AFTER icon positioning: ensures bar resize and icon placement
     -- both take effect on the same rendered frame (no 1-frame size mismatch).
@@ -4115,6 +4531,149 @@ function ns.StyleOverlayCooldownText(oCd, barData, ssb, iconScale)
     end
 end
 
+-- "Custom Active State Decimals": style OUR OWN countdown FontString on a
+-- fake-active overlay to match the icon's Duration Text (Blizzard's cooldown
+-- numbers can't render a 1-decimal countdown). Mirrors StyleOverlayCooldownText's
+-- font/size/colour/position resolution. Returns true when Duration Text is on for
+-- this icon (so the caller knows whether to show the text at all).
+function ns.StyleOverlayDecimalText(fs, barData, ssb, iconScale)
+    if not fs then return false end
+    iconScale = iconScale or 1
+    if iconScale < 0.01 then iconScale = 1 end
+    local fontScale = 1 / iconScale
+    local showCD = barData and barData.showCooldownText
+    if ssb and ssb.showCooldownText ~= nil then showCD = ssb.showCooldownText end
+    if not showCD then return false end
+    local cdFont = GetCDMFont()
+    local cdSize = ((ssb and ssb.cooldownFontSize) or (barData and barData.cooldownFontSize) or 12) * fontScale
+    local cdR = (ssb and ssb.cooldownTextR) or (barData and barData.cooldownTextR) or 1
+    local cdG = (ssb and ssb.cooldownTextG) or (barData and barData.cooldownTextG) or 1
+    local cdB = (ssb and ssb.cooldownTextB) or (barData and barData.cooldownTextB) or 1
+    local cdX = (ssb and ssb.cooldownTextX) or (barData and barData.cooldownTextX) or 0
+    local cdY = (ssb and ssb.cooldownTextY) or (barData and barData.cooldownTextY) or 0
+    EllesmereUI.ApplyIconTextFont(fs, cdFont, cdSize, "cdm")
+    fs:SetTextColor(cdR, cdG, cdB)
+    fs:ClearAllPoints()
+    fs:SetPoint("CENTER", fs:GetParent(), "CENTER", cdX, cdY)
+    return true
+end
+
+-------------------------------------------------------------------------------
+--  Shared decimal countdown ("Custom Active State Decimals")
+--
+--  Renders a HARDCODED-duration cooldown's remaining time on OUR OWN FontString
+--  with a 1-decimal format under a threshold (Blizzard's cooldown numbers can't).
+--  ONLY for durations we control -- fake-active windows (cd/utility active states)
+--  and custom-buff cast timers (buff bars) -- so the remaining time is exact and
+--  the threshold crossing is reliable. Off by default = no entries = the ticker
+--  never runs (zero cost). Keyed by the Cooldown widget so each icon has one.
+-------------------------------------------------------------------------------
+do
+    local DC = {}
+    ns.DecimalCountdown = DC
+    local entries = {}   -- [cd] = { fs = FontString, expiry = t, threshold = n }
+    local ticker
+
+    local function EnsureTicker()
+        if not ticker then
+            ticker = CreateFrame("Frame")
+            ticker:Hide()
+            ticker._acc = 0
+            ticker:SetScript("OnUpdate", function(self, elapsed)
+                self._acc = self._acc + elapsed
+                if self._acc < 0.1 then return end
+                self._acc = 0
+                local now = GetTime()
+                local any = false
+                for _, e in pairs(entries) do
+                    local rem = e.expiry - now
+                    if rem <= 0 then
+                        e.fs:SetText("")
+                    else
+                        any = true
+                        local thr = e.threshold or 5
+                        -- The decimal "zone": the final seconds where 1-decimal
+                        -- shows. The optional colour change fires on the SAME edge.
+                        local inZone = rem < thr
+                        if rem >= 60 then
+                            e.fs:SetText(("%d:%02d"):format(math.floor(rem / 60), math.floor(rem % 60)))
+                        elseif inZone then
+                            e.fs:SetText(("%.1f"):format(rem))
+                        else
+                            e.fs:SetText(("%d"):format(math.ceil(rem)))
+                        end
+                        if e.colorOn then
+                            if inZone then
+                                e.fs:SetTextColor(e.cR, e.cG, e.cB)
+                            else
+                                e.fs:SetTextColor(e.nR, e.nG, e.nB)
+                            end
+                        end
+                    end
+                end
+                if not any then self:Hide() end
+            end)
+        end
+        ticker:Show()
+    end
+
+    -- Attach to a Cooldown widget for a [start, start+dur] window. styleFn(fs)
+    -- styles the text (font/size/colour/position). Hides Blizzard's numbers.
+    -- colorOpts (optional) = { on, r, g, b }: recolour the text to r,g,b while in
+    -- the decimal zone (same edge the decimals start), restoring the styled colour
+    -- above it.
+    function DC.Attach(cd, start, dur, threshold, styleFn, colorOpts)
+        if not cd then return end
+        local e = entries[cd]
+        if not e then
+            e = { fs = cd:CreateFontString(nil, "OVERLAY") }
+            entries[cd] = e
+        end
+        if styleFn then styleFn(e.fs) end
+        -- Capture the styled ("normal") colour so the ticker can restore it above
+        -- the threshold (styleFn set it, e.g. the icon's Duration Text colour).
+        e.nR, e.nG, e.nB = e.fs:GetTextColor()
+        if colorOpts and colorOpts.on then
+            e.colorOn = true
+            e.cR = colorOpts.r or 1
+            e.cG = colorOpts.g or 0.2
+            e.cB = colorOpts.b or 0.2
+        else
+            e.colorOn = false
+        end
+        e.expiry = (start or GetTime()) + (dur or 0)
+        e.threshold = threshold or 5
+        -- Apply the in-zone colour right now so a re-attach mid-zone (e.g. a buff
+        -- reanchor) doesn't flash the normal colour for one tick.
+        if e.colorOn then
+            local rem = e.expiry - GetTime()
+            if rem > 0 and rem < e.threshold then
+                e.fs:SetTextColor(e.cR, e.cG, e.cB)
+            end
+        end
+        cd:SetHideCountdownNumbers(true)
+        e.fs:Show()
+        EnsureTicker()
+    end
+
+    -- Remove our text. Acts ONLY if this cd was actually attached (so the common
+    -- faDecimals-off case never touches a countdown we never managed). Restores
+    -- Blizzard's numbers we hid on Attach -- shown unless the caller says Duration
+    -- Text is off (showNumbers == false).
+    function DC.Detach(cd, showNumbers)
+        local e = cd and entries[cd]
+        if not e then return end
+        e.fs:Hide()
+        entries[cd] = nil
+        -- Restore Blizzard's numbers only when the caller asks (showNumbers non-nil).
+        -- Callers that re-style the numbers themselves each pass (fake-active ->
+        -- StyleOverlayCooldownText) pass nothing and leave them alone.
+        if showNumbers ~= nil and cd.SetHideCountdownNumbers then
+            cd:SetHideCountdownNumbers(showNumbers == false)
+        end
+    end
+end
+
 -- (UpdateCustomBarIcons removed -- all bars now use hook-based CollectAndReanchor)
 
 -- (UpdateCDMBarIcons removed -- replaced by hook-based CollectAndReanchor)
@@ -4188,12 +4747,9 @@ local function RefreshCDMIconAppearance(barKey)
                 or (fcb and fcb.spellID)
             if sidb then
                 local sdb = ns.GetBarSpellData(barKey)
-                if sdb and sdb.spellSettings then
-                    -- Shared resolver: matches the key against the frame's full
-                    -- identity set (canon first, then resolvedSid / baseSpellID).
-                    ssb = (ns.ResolveSpellSettings and ns.ResolveSpellSettings(icon, sidb, sdb))
-                        or sdb.spellSettings[sidb]
-                end
+                -- Shared resolver: matches the key against the frame's full
+                -- identity set (canon first, then resolvedSid / baseSpellID).
+                ssb = ns.ResolveSpellSettings and ns.ResolveSpellSettings(icon, sidb, sdb, barKey)
             end
             -- Stash the effective Buff Glow on fd so the BuffTicker hot path reads
             -- it without a per-tick lookup. Only restart the live glow when the
@@ -4240,7 +4796,6 @@ local function RefreshCDMIconAppearance(barKey)
             local showCD = barData.showCooldownText
             if ssb and ssb.showCooldownText ~= nil then showCD = ssb.showCooldownText end
             cd:SetSwipeColor(0, 0, 0, barData.swipeAlpha or 0.7)
-			cd:SetHideCountdownNumbers(not showCD)
             -- Per-spell Reverse Swipe: flips this icon's swipe direction away from
             -- the bar default (buffs fill up, cooldowns deplete). Entire block is
             -- gated by the session flag, so it is ZERO cost / ZERO behavior change
@@ -4455,44 +5010,42 @@ local function RefreshCDMIconAppearance(barKey)
             local bk = fc and fc.barKey
             if sid and bk then
                 local sd = ns.GetBarSpellData(bk)
-                local ss = sd and sd.spellSettings and sd.spellSettings[sid]
-                if not ss and sd and sd.spellSettings and sd.assignedSpells
-                   and C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                    for _, asid in ipairs(sd.assignedSpells) do
-                        if asid and asid > 0 and asid ~= sid
-                           and sd.spellSettings[asid] then
-                            if C_SpellBook.FindSpellOverrideByID(asid) == sid then
-                                ss = sd.spellSettings[asid]
-                                break
-                            end
-                        end
-                    end
-                end
+                -- Shared resolver: direct hit + full identity/override matching
+                -- against the family store, with bar-tier fallback.
+                local ss = ns.ResolveSpellSettings and ns.ResolveSpellSettings(icon, sid, sd, bk)
                 local cse = ss and ss.cdStateEffect
-                if (cse == "pixelGlowReady" or cse == "buttonGlowReady") and glowOv then
+                if (cse == "pixelGlowReady" or cse == "buttonGlowReady"
+                    or cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable") and glowOv then
+                    local glowUsable = (cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable")
                     local glowLive = sid
                     if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
                         glowLive = C_SpellBook.FindSpellOverrideByID(sid) or sid
                     end
                     local cseInfo = C_Spell.GetSpellCooldown(glowLive)
                     if cseInfo and (not cseInfo.isActive or cseInfo.isOnGCD) then
-                        -- Not on cooldown is not the same as "ready": resource-gated
-                        -- spells (e.g. Void Ray, which has no cooldown at all outside
-                        -- Void Metamorphosis) must also pass IsSpellUsable + a live
-                        -- resource check, same as the CD Ready Glow logic in
-                        -- EllesmereUICdmHooks.lua. This rebuild path runs independently
-                        -- of those event listeners, so it needs its own copy of the gate.
-                        local isUsable = C_Spell.IsSpellUsable and C_Spell.IsSpellUsable(glowLive)
-                        if isUsable == true and ns.HasEnoughResources
-                           and (not ns._cdGlowPowerConfirmed or not ns.HasEnoughResources(glowLive)) then
-                            isUsable = false
+                        -- Plain variants glow purely from cooldown state (legacy
+                        -- behavior, zero extra reads). Resource Aware variants
+                        -- also require usability, except during the loading-screen
+                        -- settle window (API untrustworthy; the watched-set pass
+                        -- after the window corrects it).
+                        local isUsable = true
+                        if glowUsable then
+                            if ns._cdmSoundSuppressed and ns._cdmSoundSuppressed() then
+                                isUsable = true
+                            else
+                                isUsable = C_Spell.IsSpellUsable and C_Spell.IsSpellUsable(glowLive)
+                            end
                         end
                         if isUsable == true then
                             local gr, gg, gb = ResolveGlowColor(ss)
-                            StartNativeGlow(glowOv, cse == "pixelGlowReady" and 1 or 3, gr or 1, gg or 1, gb or 1)
+                            local isPixel = (cse == "pixelGlowReady" or cse == "pixelGlowReadyUsable")
+                            StartNativeGlow(glowOv, isPixel and 1 or 3, gr or 1, gg or 1, gb or 1)
                             ifd._cdStateGlowOn = true
                         end
                     end
+                    -- Event-driven re-evaluation for Resource Aware glows only
+                    -- (inert unless watched).
+                    if glowUsable and ns.CDGlowWatch then ns.CDGlowWatch(icon) end
                 end
             end
         elseif glowOv then
@@ -4508,19 +5061,9 @@ local function RefreshCDMIconAppearance(barKey)
         local csBk = fc and fc.barKey
         if csSid and csBk and csBk:sub(1, 7) ~= "__ghost" then
             local csSd = ns.GetBarSpellData(csBk)
-            local csSs = csSd and csSd.spellSettings and csSd.spellSettings[csSid]
-            if not csSs and csSd and csSd.spellSettings and csSd.assignedSpells
-               and C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                for _, asid in ipairs(csSd.assignedSpells) do
-                    if asid and asid > 0 and asid ~= csSid
-                       and csSd.spellSettings[asid] then
-                        if C_SpellBook.FindSpellOverrideByID(asid) == csSid then
-                            csSs = csSd.spellSettings[asid]
-                            break
-                        end
-                    end
-                end
-            end
+            -- Shared resolver: direct hit + full identity/override matching
+            -- against the family store, with bar-tier fallback.
+            local csSs = ns.ResolveSpellSettings and ns.ResolveSpellSettings(icon, csSid, csSd, csBk)
             local cse = csSs and csSs.cdStateEffect
             if cse then
                 local csLive = csSid
@@ -4546,23 +5089,31 @@ local function RefreshCDMIconAppearance(barKey)
                         icon:SetAlpha(barData.barOpacity or 1)
                     end
                     if not ifd or not ifd._cdStateGlowOn then
-                        if (cse == "pixelGlowReady" or cse == "buttonGlowReady")
+                        if (cse == "pixelGlowReady" or cse == "buttonGlowReady"
+                            or cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable")
                            and not onCD and glowOv then
-                            -- Same gate as above: not-on-cooldown is not "ready" for
-                            -- resource-gated spells. Mirrors EllesmereUICdmHooks.lua's
-                            -- CD Ready Glow check since this rebuild path runs outside
-                            -- those event listeners.
-                            local isUsable = C_Spell.IsSpellUsable and C_Spell.IsSpellUsable(csLive)
-                            if isUsable == true and ns.HasEnoughResources
-                               and (not ns._cdGlowPowerConfirmed or not ns.HasEnoughResources(csLive)) then
-                                isUsable = false
+                            -- Plain variants glow purely from cooldown state
+                            -- (legacy). Resource Aware variants also require
+                            -- usability outside the loading-screen settle window.
+                            local isUsable = true
+                            if cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable" then
+                                if ns._cdmSoundSuppressed and ns._cdmSoundSuppressed() then
+                                    isUsable = true
+                                else
+                                    isUsable = C_Spell.IsSpellUsable and C_Spell.IsSpellUsable(csLive)
+                                end
                             end
                             if isUsable == true then
                                 local gr, gg, gb = ResolveGlowColor(csSs)
-                                StartNativeGlow(glowOv, cse == "pixelGlowReady" and 1 or 3, gr or 1, gg or 1, gb or 1)
+                                local isPixel = (cse == "pixelGlowReady" or cse == "pixelGlowReadyUsable")
+                                StartNativeGlow(glowOv, isPixel and 1 or 3, gr or 1, gg or 1, gb or 1)
                                 if ifd then ifd._cdStateGlowOn = true end
-                            end  
+                            end
                         end
+                    end
+                    if (cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable")
+                       and glowOv and ns.CDGlowWatch then
+                        ns.CDGlowWatch(icon)
                     end
                 end
             elseif fc and fc._cdStateHidden then
@@ -4950,11 +5501,8 @@ do
         local barKey = fc and fc.barKey
         if barKey then
             local sd = ns.GetBarSpellData and ns.GetBarSpellData(barKey)
-            if sd and sd.spellSettings then
-                local ss = (ns.ResolveSpellSettings and ns.ResolveSpellSettings(f, sid, sd))
-                    or sd.spellSettings[sid]
-                key = ss and ss[field]
-            end
+            local ss = ns.ResolveSpellSettings and ns.ResolveSpellSettings(f, sid, sd, barKey)
+            key = ss and ss[field]
         end
         if not key then key = ns.FindBuffSoundKey and ns.FindBuffSoundKey(sid, field) end
         if not key or key == "none" then return end
@@ -6107,11 +6655,11 @@ function ns.FullCDMRebuild(reason)
 
     -- 7. Glows
     if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end
-	    -- Re-evaluate CD ready glow resource state now that all frames are fully
-    -- decorated. The SetDesaturated hook may have started glows before
-    -- IsSpellUsable was checked (e.g. on login/reload). This runs once, after
-    -- CollectAndReanchor has finished, so fd.glowOverlay is guaranteed to exist.
-    if ns.QueueCDGlowResourceCheck then ns.QueueCDGlowResourceCheck() end																		 																	 
+    -- Re-evaluate CD ready glow state now that all frames are fully decorated.
+    -- Decoration paths may have started glows during the loading-screen settle
+    -- window (login/reload); this queued pass corrects them once the API is
+    -- trustworthy again. No-ops instantly when no icon uses a ready-glow effect.
+    if ns.QueueCDGlowResourceCheck then ns.QueueCDGlowResourceCheck() end
 end
 
 function ns.GetRebuildGen()
@@ -6472,7 +7020,13 @@ RegisterCDMUnlockElements = function()
                     -- the fixed edge/corner. Unlock mode always provides CENTER
                     -- coords; convert to the resolved anchor. Skip a conversion
                     -- on any axis with no extent yet (empty bar).
-                    local resolved = ns.ResolveGrowAnchorPoint(bd2)
+                    -- Snapped bars always store the plain growth edge: the
+                    -- anchor system's saved-edge consumers only understand
+                    -- single-edge points, so a corner would silently break
+                    -- edge preservation and target follow for them.
+                    local isSnapped = EllesmereUI.IsUnlockAnchored
+                        and EllesmereUI.IsUnlockAnchored("CDM_" .. key)
+                    local resolved = ns.ResolveGrowAnchorPoint(bd2, isSnapped)
                     if resolved ~= "CENTER" and frame then
                         local fw = frame:GetWidth() or 0
                         local fh = frame:GetHeight() or 0

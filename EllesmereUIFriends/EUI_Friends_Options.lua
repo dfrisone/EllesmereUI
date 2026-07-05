@@ -197,19 +197,43 @@ initFrame:SetScript("OnEvent", function(self)
         "arcade", "legend", "midnight", "runic",
     }
 
-    local function MakeCogBtn(rgn, showFn)
+    -- Inline cog button. When disabledFn/disabledLabel are given, the cog dims
+    -- and blocks (with a requirement tooltip) while disabledFn() is true --
+    -- the standard inline-control disabled-state pattern.
+    local function MakeCogBtn(rgn, showFn, disabledFn, disabledLabel)
         local cogBtn = CreateFrame("Button", nil, rgn)
         cogBtn:SetSize(26, 26)
         cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
         rgn._lastInline = cogBtn
         cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
-        cogBtn:SetAlpha(0.4)
+        local function baseAlpha()
+            return (disabledFn and disabledFn()) and 0.15 or 0.4
+        end
+        cogBtn:SetAlpha(baseAlpha())
         local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
         cogTex:SetAllPoints()
         cogTex:SetTexture(EllesmereUI.COGS_ICON)
         cogBtn:SetScript("OnEnter", function(s) s:SetAlpha(0.7) end)
-        cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
+        cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(baseAlpha()) end)
         cogBtn:SetScript("OnClick", function(s) showFn(s) end)
+
+        if disabledFn then
+            local block = CreateFrame("Frame", nil, cogBtn)
+            block:SetAllPoints()
+            block:SetFrameLevel(cogBtn:GetFrameLevel() + 10)
+            block:EnableMouse(true)
+            block:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip(disabledLabel))
+            end)
+            block:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateState()
+                local off = disabledFn()
+                cogBtn:SetAlpha(off and 0.15 or 0.4)
+                if off then block:Show() else block:Hide() end
+            end
+            EllesmereUI.RegisterWidgetRefresh(UpdateState)
+            UpdateState()
+        end
         return cogBtn
     end
 
@@ -343,22 +367,29 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                 local f = FriendsDB(); if not f then return end
                 f.autoAcceptFriendInvites = v
+                EllesmereUI:RefreshPage()  -- update the auto-accept cog disabled state
               end }
         );  y = y - h
 
+        -- Guildmate option lives in a cog on Auto-Accept Friend Invites; it
+        -- only extends that feature, so the cog blocks while the toggle is off.
         local rgn = row._rightRegion
+        local function autoAcceptOff()
+            local f = FriendsDB()
+            return not (f and f.autoAcceptFriendInvites)
+        end
         local _, cogShow = EllesmereUI.BuildCogPopup({
             title = "Auto Accept Settings",
             rows = {
-                { type="toggle", label="Accept Guild Invites",
-                  get=function() local f = FriendsDB(); return f and (f.autoAcceptGuildInvites ~= false) end,
+                { type="toggle", label="Accept Invites from Guildmates",
+                  get=function() local f = FriendsDB(); return f and f.autoAcceptGuildInvites end,
                   set=function(v)
                     local f = FriendsDB(); if not f then return end
                     f.autoAcceptGuildInvites = v
                   end }
             },
         })
-        MakeCogBtn(rgn, cogShow)
+        MakeCogBtn(rgn, cogShow, autoAcceptOff, "Auto-Accept Friend Invites")
 
         return math.abs(y)
     end

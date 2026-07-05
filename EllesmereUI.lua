@@ -767,6 +767,7 @@ EllesmereUI.RegisterSyncExclusions("EllesmereUICooldownManager", {
     "cdmBarPositions",
     "cdmBars.bars.*.iconSize",
     "cdmBars.bars.*.numRows",
+    "cdmBars.bars.*.anchorFirstRow",
     "cdmBars.bars.*.spacing",
     "cdmBars.bars.*.verticalOrientation",
     "cdmBars.bars.*.anchorTo",
@@ -1881,9 +1882,13 @@ do
     end
 
     --- Convert a coord-space value to its physical pixel count (for display).
+    --- Epsilon-guarded round: a value sitting a hair off a half-pixel boundary
+    --- (float dust from a uiScale CVar that isn't exactly 768/screenHeight)
+    --- must round the same way on every call and every reload, or displayed
+    --- coordinates flip by 1 between sessions. Ties break toward +infinity.
     function PP.ToPixels(coord)
         if coord == 0 then return 0 end
-        return math.floor(coord / PP.mult + 0.5)
+        return math.floor(coord / PP.mult + 0.5 + 0.001)
     end
 
     --- Convert a physical pixel count to a grid-aligned coord value (for storage).
@@ -1907,7 +1912,10 @@ do
     function PP.SnapForES(x, es)
         if x == 0 then return 0 end
         local onePixel = PP.perfect / es
-        local physPixels = math.floor(x / onePixel + 0.5)
+        -- Epsilon-guarded round: inputs a hair below a half-pixel boundary
+        -- (float dust from imperfect uiScale CVars) must snap the same way on
+        -- every call, or frames shift 1px between reloads. Ties break up.
+        local physPixels = math.floor(x / onePixel + 0.5 + 0.001)
         local result = physPixels * onePixel
         local rounded = math.floor(result + 0.5)
         if math.abs(result - rounded) < 0.001 then result = rounded end
@@ -1933,9 +1941,16 @@ do
         es = es or (UIParent and UIParent:GetEffectiveScale() or 1)
         local onePixel = PP.perfect / es
         local valuePx = value / onePixel
+        -- Clean float dust BEFORE any floor: a stored whole-pixel value that
+        -- arrives as N +/- 1e-9 (imperfect uiScale CVars) must not flip which
+        -- half-pixel (odd dims) or whole pixel (even dims) it lands on between
+        -- reloads -- that flip is a visible 1px jump. After cleaning, an exact
+        -- integer deterministically takes the +0.5 side in the odd branch.
+        local vClean = math.floor(valuePx + 0.5)
+        if math.abs(valuePx - vClean) < 0.001 then valuePx = vClean end
         local result
         if dim and dim > 0 then
-            local dimPx = math.floor(dim / onePixel + 0.5)
+            local dimPx = math.floor(dim / onePixel + 0.5 + 0.001)
             if dimPx % 2 == 1 then
                 -- Odd dimension: snap center to nearest half-pixel grid point
                 -- (integer + 0.5) so edges land on whole pixels.
@@ -1947,7 +1962,7 @@ do
             end
         end
         -- Even dimension (or unknown): snap center to nearest whole pixel.
-        result = math.floor(valuePx + 0.5) * onePixel
+        result = math.floor(valuePx + 0.5 + 0.001) * onePixel
         local rounded = math.floor(result + 0.5)
         if math.abs(result - rounded) < 0.001 then result = rounded end
         return result
@@ -2599,6 +2614,7 @@ do
         -- in the per-addon default lookups below.
         { key = "shadow",  name = "Shadow",          path = "Interface\\AddOns\\EllesmereUI\\media\\borders\\glow-border",  defaultOffset = 0, defaultOffsetY = 0, scaleOffset = true, defaultThickness = "normal" },
         { key = "blizz",   name = "Blizzard",        path = "Interface\\AddOns\\EllesmereUI\\media\\borders\\blizz-border", defaultOffset = 3, defaultOffsetY = 2, scaleOffset = true, defaultThickness = "heavy" },
+        { key = "lightspark", name = "Lightspark Border", path = "Interface\\AddOns\\EllesmereUI\\media\\borders\\lightspark-border", defaultOffset = 0, defaultOffsetY = 0, scaleOffset = true, defaultThickness = "normal" },
         { key = "dialog",  name = "Blizzard Dialog",  path = "Interface\\DialogFrame\\UI-DialogBox-Border",                 defaultOffset = 4, defaultOffsetY = 4, defaultThickness = "normal" },
     }
     local DEFAULT_LSM_OFFSET = 0
@@ -3121,6 +3137,7 @@ end
 -- Canonical font name -> filename mapping (shared across all addons)
 EllesmereUI.FONT_FILES = {
     ["Expressway"]          = "Expressway.TTF",
+    ["Expressway Bold"]     = "Expressway Bold.ttf",
     ["Avant Garde"]         = "Avant Garde Naowh.ttf",
     ["Arial Bold"]          = "Arial Bold.TTF",
     ["Poppins"]             = "Poppins.ttf",
@@ -3152,7 +3169,7 @@ EllesmereUI.FONT_BLIZZARD = {
     ["Skurri"]        = "Fonts\\skurri.ttf",
 }
 EllesmereUI.FONT_ORDER = {
-    "Expressway", "Avant Garde", "Arial Bold", "Poppins", "Fira Sans Medium",
+    "Expressway", "Expressway Bold", "Avant Garde", "Arial Bold", "Poppins", "Fira Sans Medium",
     "---",
     "Arial Narrow", "Changa", "Cinzel Decorative", "Exo",
     "Fira Sans Bold", "Fira Sans Light", "Future X Black",
@@ -3360,12 +3377,17 @@ function EllesmereUI.GetFontOutlineFlag(addonKey)
     return EllesmereUI.SlugFlag(flag)
 end
 
--- Global "Never Show Slug" toggle. When ON, the SLUG token is stripped from
+-- Per-profile "Never Show Slug" toggle. When ON, the SLUG token is stripped from
 -- every outline flag the UI produces -- body text and icon/aura text across all
--- modules, plus the global Outline Mode itself. Stored centrally in
--- EllesmereUIDB.neverShowSlug; OFF by default (slug outlines render as normal).
+-- modules, plus the global Outline Mode itself. Stored in the per-profile fonts
+-- DB so it travels with profile export/import. Falls back to the legacy
+-- account-global EllesmereUIDB.neverShowSlug key for installs that set it before
+-- the move. OFF by default (slug outlines render as normal).
 function EllesmereUI.IsSlugDisabled()
-    return (EllesmereUIDB and EllesmereUIDB.neverShowSlug == true) or false
+    local f = EllesmereUI.GetFontsDB()
+    local v = f and f.neverShowSlug
+    if v == nil then v = EllesmereUIDB and EllesmereUIDB.neverShowSlug end
+    return v == true
 end
 
 -- Strip the SLUG token from a font outline flag:
@@ -3532,7 +3554,10 @@ end
 -- user's global/per-module outline choice (each of the five modules has its
 -- own per-module font key registered in _addonKeyToFolder).
 function EllesmereUI.GetIconTextOutlineFlag(moduleKey)
-    local t = EllesmereUIDB and EllesmereUIDB.outlineIconText
+    -- Per-profile now (rides profile export); the legacy account-global table is
+    -- the read-time fallback for installs that set it before the move.
+    local f = EllesmereUI.GetFontsDB()
+    local t = (f and f.outlineIconText) or (EllesmereUIDB and EllesmereUIDB.outlineIconText)
     if t and t[moduleKey] == false then
         -- Follows the outline mode, which is already slug-gated at the source.
         return (EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag(moduleKey)) or ""
@@ -9491,7 +9516,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "8.3.6"
+EllesmereUI.VERSION = "8.3.7"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -9535,78 +9560,6 @@ do
                 })
             end
         end)
-    end)
-end
-
--- Combat reload warning: if the UI was reloaded while in combat, show a
--- red warning in the center of the screen. Fades after 5s or on combat drop.
-do
-    local cf = CreateFrame("Frame")
-    cf:RegisterEvent("PLAYER_ENTERING_WORLD")
-    cf:SetScript("OnEvent", function(self, event)
-        if event == "PLAYER_ENTERING_WORLD" then
-            self:UnregisterEvent("PLAYER_ENTERING_WORLD")
-            local function HasAnchoredActionBars()
-                local adb = EllesmereUIDB and EllesmereUIDB.unlockAnchors
-                if not adb then return false end
-                for key, info in pairs(adb) do
-                    if info.target then
-                        -- Check if an action bar itself is anchored to something
-                        local isBar = (key == "MainBar" or key == "StanceBar" or key == "PetBar"
-                            or key == "MicroBar" or key == "BagBar" or key == "XPBar" or key == "RepBar"
-                            or (key:sub(1, 3) == "Bar" and tonumber(key:sub(4))))
-                        if isBar then return true end
-                    end
-                end
-                return false
-            end
-            local function ShowWarning()
-                if self._warn then return end
-                if not HasAnchoredActionBars() then return end
-                local warn = UIParent:CreateFontString(nil, "OVERLAY")
-                if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(warn, true) end
-                warn:SetFont("Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF", 24, "")
-                warn:SetTextColor(0.878, 0.247, 0.247, 1)
-                warn:SetPoint("CENTER", UIParent, "CENTER", 0, 50)
-                warn:SetJustifyH("CENTER")
-                warn:SetText("EUI: Combat Reload UI Warning:\nDrop combat to fix any layout issues")
-                warn:Show()
-                self:RegisterEvent("PLAYER_REGEN_ENABLED")
-                self._warn = warn
-                local elapsed = 0
-                local fadeFrame = CreateFrame("Frame")
-                fadeFrame:SetScript("OnUpdate", function(ff, dt)
-                    elapsed = elapsed + dt
-                    if elapsed >= 10 then
-                        warn:Hide()
-                        ff:SetScript("OnUpdate", nil)
-                    elseif elapsed >= 9 then
-                        warn:SetAlpha(1 - (elapsed - 9))
-                    end
-                end)
-                self._fadeFrame = fadeFrame
-            end
-            if InCombatLockdown() then
-                ShowWarning()
-            else
-                -- Brief delay: combat state may not be set yet at PEW
-                C_Timer.After(0.5, function()
-                    if InCombatLockdown() and not self._warn then
-                        ShowWarning()
-                    end
-                end)
-            end
-        elseif event == "PLAYER_REGEN_ENABLED" then
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            if self._warn then
-                self._warn:Hide()
-                self._warn = nil
-            end
-            if self._fadeFrame then
-                self._fadeFrame:SetScript("OnUpdate", nil)
-                self._fadeFrame = nil
-            end
-        end
     end)
 end
 
@@ -9681,7 +9634,6 @@ EllesmereUI._RunConflictCheck = function()
             { addon = "Healers-Have-To-Die",      label = "Healers Have To Die",        targets = { "EllesmereUINameplates" } },
             { addon = "Aloft",                    label = "Aloft",                      targets = { "EllesmereUINameplates" } },
             { addon = "SenseiClassResourceBar",   label = "Sensei Class Resource Bar",  targets = { "EllesmereUIResourceBars" } },
-            { addon = "FriendGroups",             label = "FriendGroups",               targets = { "EllesmereUIFriends" }, },
             { addon = "AccWideUILayoutSelection", label = "Account Wide Interface Settings", targets = { "EllesmereUIQuestTracker" }, },
             { addon = "EditModeExpanded",     label = "Edit Mode Expanded",         targets = { "EllesmereUIQuestTracker", "EllesmereUIChat" } },
             { addon = "SexyMap",                  label = "SexyMap",                    targets = { "EllesmereUIMinimap" }, },
@@ -10560,12 +10512,12 @@ initFrame:SetScript("OnEvent", function(self, event)
         -- shows them whenever Show Max Stack for items is on (the original
         -- behavior); the others only surface the lines while that key is held.
         local function IsItemStackModifierHeld()
-        local mod = (EllesmereUIDB and EllesmereUIDB.itemStackModifier) or "none"
-        if mod == "none" then return true end
+            local mod = (EllesmereUIDB and EllesmereUIDB.itemStackModifier) or "none"
+            if mod == "none" then return true end
             if mod == "control" then return IsControlKeyDown() end
-                if mod == "alt" then return IsAltKeyDown() end
-                    return IsShiftKeyDown()
-                    end
+            if mod == "alt" then return IsAltKeyDown() end
+            return IsShiftKeyDown()
+        end
 
         -- Shared dedup check: only scan last 5 lines (we add at most 3)
         local function hasDupLine(tooltip, name, tag)
@@ -10611,6 +10563,9 @@ initFrame:SetScript("OnEvent", function(self, event)
             if not tooltip or not tooltip.GetName then return end
             local ok, name = pcall(tooltip.GetName, tooltip)
             if not ok or not name then return end
+            -- The gem-socketing window's item text is a tooltip-data frame;
+            -- ID lines do not belong inside that window.
+            if name == "ItemSocketingDescription" then return end
             if hasDupLine(tooltip, name, "ItemID") then return end
             tooltip:AddDoubleLine("ItemID", tostring(data.id), 1, 1, 1, 1, 1, 1)
             local iconID = C_Item.GetItemIconByID and C_Item.GetItemIconByID(data.id)
@@ -10621,7 +10576,6 @@ initFrame:SetScript("OnEvent", function(self, event)
             tooltip:Show()
         end
 
-
         local function ItemIdMaxStackHook(tooltip, data)
             if not (EllesmereUIDB and EllesmereUIDB.showItemMaxStacks) then return end
             if not IsItemStackModifierHeld() then return end
@@ -10630,19 +10584,16 @@ initFrame:SetScript("OnEvent", function(self, event)
             if not tooltip or not tooltip.GetName then return end
             local ok, name = pcall(tooltip.GetName, tooltip)
             if not ok or not name then return end
+            if name == "ItemSocketingDescription" then return end
             if hasDupLine(tooltip, name, "Max Stack") then return end
 
-            local itemID = data.id
-            if itemID then
-                -- Retrieve the 8th value from GetItemInfo, which is the native Max Stack Size
-                local _, _, _, _, _, _, _, maxStack = C_Item.GetItemInfo(itemID)
-
-            -- Only print if the item is actually stackable (greater than 1)
+            -- 8th return of GetItemInfo is the native max stack size; nil while
+            -- the item is uncached (the line then appears on the next hover).
+            local _, _, _, _, _, _, _, maxStack = C_Item.GetItemInfo(data.id)
             if maxStack and maxStack > 1 then
                 tooltip:AddDoubleLine("Max Stack", tostring(maxStack), 1, 1, 1, 1, 1, 1)
-                end
+                tooltip:Show()
             end
-            tooltip:Show()
         end
 
         -- Macros surface as their own tooltip type, so the Spell hook above never
@@ -10682,20 +10633,25 @@ initFrame:SetScript("OnEvent", function(self, event)
         end
         TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, ItemIdMaxStackHook)
 
-        -- Live toggle: when the selected modifier is pressed/released while a
-        -- tooltip is hovered, re-process the shown GameTooltip so the ID lines
-        -- appear/disappear without re-hovering. RefreshData re-runs the post-calls
-        -- above (which then add or skip the lines per IsSpellIDModifierHeld). Only
-        -- fires when the feature is on and the relevant modifier actually changed.
+        -- Live toggle: when a selected modifier is pressed/released while a
+        -- tooltip is hovered, re-process the shown GameTooltip so the ID and
+        -- Max Stack lines appear/disappear without re-hovering. RefreshData
+        -- re-runs the post-calls above (which then add or skip their lines per
+        -- their own modifier checks). Only fires when a feature is on and its
+        -- chosen modifier actually changed.
+        local function KeyMatchesModifier(key, mod)
+            return (mod == "shift"   and (key == "LSHIFT" or key == "RSHIFT"))
+                or (mod == "control" and (key == "LCTRL"  or key == "RCTRL"))
+                or (mod == "alt"     and (key == "LALT"   or key == "RALT"))
+        end
         local modWatcher = CreateFrame("Frame")
         modWatcher:RegisterEvent("MODIFIER_STATE_CHANGED")
         modWatcher:SetScript("OnEvent", function(_, key)
-            if not (EllesmereUIDB and EllesmereUIDB.showSpellID) then return end
-            local mod = EllesmereUIDB.spellIDModifier or "none"
+            local db = EllesmereUIDB
+            if not db then return end
             local relevant =
-                (mod == "shift"   and (key == "LSHIFT" or key == "RSHIFT")) or
-                (mod == "control" and (key == "LCTRL"  or key == "RCTRL"))  or
-                (mod == "alt"     and (key == "LALT"   or key == "RALT"))
+                (db.showSpellID and KeyMatchesModifier(key, db.spellIDModifier or "none"))
+                or (db.showItemMaxStacks and KeyMatchesModifier(key, db.itemStackModifier or "none"))
             if not relevant then return end
             if GameTooltip and GameTooltip:IsShown() and GameTooltip.RefreshData then
                 GameTooltip:RefreshData()

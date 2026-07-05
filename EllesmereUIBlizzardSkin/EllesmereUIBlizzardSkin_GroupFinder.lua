@@ -24,7 +24,7 @@
 --   - The whole skin is gated on EllesmereUIDB.reskinLFGMenu; when off, no hooks
 --     are installed and the file costs nothing.
 -------------------------------------------------------------------------------
-local ADDON_NAME = ...
+local ADDON_NAME, ns = ...
 local EUI = EllesmereUI
 local issecretvalue = issecretvalue or function() return false end
 
@@ -51,10 +51,10 @@ local Theme = {}
 local function ResolveTheme()
     local EG = (EUI and EUI.ELLESMERE_GREEN) or { r = 0.047, g = 0.824, b = 0.616 }
     Theme.accR, Theme.accG, Theme.accB = EG.r or 0.047, EG.g or 0.824, EG.b or 0.616
-    -- Cool dark glass, matching the EUI-native popup family.
-    Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA = 0.06, 0.08, 0.10, 0.92
-    -- Darker fill for nested insets so sub-panels melt into the main backdrop.
-    Theme.insetR, Theme.insetG, Theme.insetB, Theme.insetA = 0.03, 0.045, 0.05, 0.85
+    -- Neutral dark gray glass (no color cast).
+    Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA = 0.08, 0.08, 0.08, 0.92
+    -- Darker gray for nested insets so sub-panels melt into the main backdrop.
+    Theme.insetR, Theme.insetG, Theme.insetB, Theme.insetA = 0.04, 0.04, 0.04, 0.85
     -- Panel border (matches CharacterSheet grey).
     Theme.brdR, Theme.brdG, Theme.brdB, Theme.brdA = 0.2, 0.2, 0.2, 1
     Theme.fontPath = (EUI and EUI.GetFontPath and EUI.GetFontPath("blizzardSkin")) or STANDARD_TEXT_FONT
@@ -103,8 +103,27 @@ local function Restrip()
         if frame and not frame:IsForbidden() then
             local k = (type(keep) == "table") and keep or nil
             local d = FFD[frame]
-            if d and d.bg then k = k or {}; k[d.bg] = true end
-            if d and d.bgOverlay then k = k or {}; k[d.bgOverlay] = true end
+            -- Protect every texture we created ourselves: the backdrop pieces,
+            -- the hover highlight, and state bars. Without this the re-strip
+            -- pass zeroes our own hover/selection art along with Blizzard's.
+            if d then
+                k = k or {}
+                if d.bg then k[d.bg] = true end
+                if d.bgOverlay then k[d.bgOverlay] = true end
+                if d.topBar then k[d.topBar] = true end
+                if d.hover then k[d.hover] = true end
+                if d.selWash then k[d.selWash] = true end
+                if d.leftWash then k[d.leftWash] = true end
+                if d.leftSep then k[d.leftSep] = true end
+            end
+            -- The Modern flat backdrop (AdoptShell) lives in the ENGINE's FFD,
+            -- not ours -- protect it too, or every restrip blanks the Modern
+            -- style's only background on this window.
+            local ed = ns.WSkin and ns.WSkin.FFD and ns.WSkin.FFD[frame]
+            if ed and ed.modernBg then
+                k = k or {}
+                k[ed.modernBg] = true
+            end
             FadeRegions(frame, k)
         end
     end
@@ -123,6 +142,12 @@ local function SkinAtlasPanel(frame)
     local keep = {}
     if d.bg then keep[d.bg] = true end
     if d.bgOverlay then keep[d.bgOverlay] = true end
+    if d.topBar then keep[d.topBar] = true end
+    if d.leftWash then keep[d.leftWash] = true end
+    if d.leftSep then keep[d.leftSep] = true end
+    -- Spare the engine-owned Modern flat backdrop (see Restrip).
+    local ed0 = ns.WSkin and ns.WSkin.FFD and ns.WSkin.FFD[frame]
+    if ed0 and ed0.modernBg then keep[ed0.modernBg] = true end
     FadeRegions(frame, keep)
     Register(frame, true)
     if not d.bg then
@@ -131,9 +156,18 @@ local function SkinAtlasPanel(frame)
         bg:SetAllPoints(frame)
         d.bg = bg
         local overlay = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
-        overlay:SetColorTexture(0, 0, 0, 0.55)
+        overlay:SetColorTexture(0, 0, 0, 0.62)
         overlay:SetAllPoints(frame)
         d.bgOverlay = overlay
+
+        -- Black top bar behind the window title, matching the engine shell's
+        -- strip. Sits above both style backdrops (-8/-7/-6) and below content.
+        local topBar = frame:CreateTexture(nil, "BACKGROUND", nil, -5)
+        topBar:SetColorTexture(0, 0, 0, 0.5)
+        topBar:SetPoint("TOPLEFT")
+        topBar:SetPoint("TOPRIGHT")
+        topBar:SetHeight(25)
+        d.topBar = topBar
 
         local BASE_L, BASE_R, BASE_T, BASE_B = 0.25, 1, 0, 0.75
         local BASE_U, BASE_V = BASE_R - BASE_L, BASE_B - BASE_T
@@ -156,7 +190,18 @@ local function SkinAtlasPanel(frame)
         hooksecurefunc(frame, "SetHeight", UpdateBgTexCoords)
         UpdateBgTexCoords()
     end
-    AddBorder(frame)
+    -- Window border: the shared atlas frame border every other reskinned
+    -- window uses (1px line fallback if the engine is unavailable).
+    if ns.WSkin and ns.WSkin.AtlasBorder then
+        ns.WSkin.AtlasBorder(frame)
+    else
+        AddBorder(frame)
+    end
+    -- Register with the window-style system so the Modern flat backdrop can
+    -- live-swap in for the atlas when the user picks Modern for this window.
+    if ns.WSkin and ns.WSkin.AdoptShell then
+        ns.WSkin.AdoptShell("lfg", frame, d.bg, d.bgOverlay)
+    end
 end
 
 -- Flat solid panel. opts.noBg = strip only (let the parent backdrop show through);
@@ -190,13 +235,6 @@ local function FadeInset(inset)
     Register(inset, true)
 end
 
-local function SkinFontString(fs)
-    if not fs or fs:IsForbidden() then return end
-    local _, size = fs:GetFont()
-    if size and issecretvalue(size) then return end
-    fs:SetFont(Theme.fontPath, size or 12, "")
-end
-
 -- Generic action button -> flat dark block with hover. keepKeys preserves named
 -- regions (e.g. {"Icon"}); never reads any data.
 local function SkinButton(btn, keepKeys)
@@ -226,12 +264,32 @@ local function SkinButton(btn, keepKeys)
     d.bg = fill
     AddBorder(btn)
 
-    local hover = SolidTex(btn, "HIGHLIGHT", Theme.accR, Theme.accG, Theme.accB, 0.18)
+    local hover = SolidTex(btn, "HIGHLIGHT", 1, 1, 1, 0.1)
     hover:SetAllPoints(btn)
+    d.hover = hover
 
-    local fs = btn.GetFontString and btn:GetFontString()
-    if fs then SkinFontString(fs) end
+    -- Button labels keep Blizzard's font (no-font widget policy).
     Register(btn, keep)
+end
+
+-- Seat a button 5px higher (one-shot: captured original anchors + fixed lift,
+-- so repeated skin passes never compound it). Handles multi-point anchoring by
+-- lifting every point, not just the first.
+local function LiftButton(btn)
+    if not btn or btn:IsForbidden() then return end
+    local d = GetFFD(btn)
+    if d.lifted then return end
+    local n = btn:GetNumPoints() or 0
+    if n < 1 then return end
+    local pts = {}
+    for i = 1, n do
+        local p, rel, rp, x, y = btn:GetPoint(i)
+        if not p then return end
+        pts[i] = { p, rel, rp, x or 0, (y or 0) + 5 }
+    end
+    d.lifted = true
+    btn:ClearAllPoints()
+    for i = 1, #pts do local t = pts[i]; btn:SetPoint(t[1], t[2], t[3], t[4], t[5]) end
 end
 
 -- Search / input box -> flat block, keep the magnifier + clear button art.
@@ -249,23 +307,52 @@ local function SkinEditBox(eb)
     AddBorder(eb, 0.25, 0.25, 0.25, 1)
 end
 
--- Checkbox -> strip native check art, keep the check tick, frame it.
+-- Checkbox -> the guild-roster "Show Offline Members" treatment: strip ALL
+-- native art (regions + state textures) and drop a dedicated 14x14 bordered
+-- box on the left, with a green tick when checked and a soft wash on
+-- hover-or-checked. State is driven off the Blizzard checkbox via hooks so it
+-- always mirrors the real value (no writing to the Blizzard frame's table).
 local function SkinCheckbox(cb)
     if not cb or cb:IsForbidden() then return end
     local d = GetFFD(cb)
     if d.skinned then return end
     d.skinned = true
-    if cb.SetNormalTexture then cb:SetNormalTexture("") end
-    if cb.SetPushedTexture then cb:SetPushedTexture("") end
-    if cb.SetHighlightTexture then cb:SetHighlightTexture("") end
-    local fill = SolidTex(cb, "BACKGROUND", 0.02, 0.02, 0.02, 1)
-    fill:SetPoint("TOPLEFT", 4, -4)
-    fill:SetPoint("BOTTOMRIGHT", -4, 4)
+    for i = 1, select("#", cb:GetRegions()) do
+        local r = select(i, cb:GetRegions())
+        if r and r.IsObjectType and r:IsObjectType("Texture") and r.SetTexture then
+            r:SetTexture("")
+        end
+    end
+    for _, g in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture",
+                         "GetCheckedTexture", "GetDisabledCheckedTexture" }) do
+        local t = cb[g] and cb[g](cb)
+        if t and t.SetTexture then t:SetTexture("") end
+    end
+    local boxF = CreateFrame("Frame", nil, cb)
+    boxF:SetSize(14, 14)
+    boxF:SetPoint("LEFT", cb, "LEFT", 4, 0)
+    local fill = SolidTex(boxF, "BACKGROUND", 0.02, 0.02, 0.02, 1)
+    fill:SetAllPoints(boxF)
     d.bg = fill
-    AddBorder(cb, 0.25, 0.25, 0.25, 1)
-    -- Tint the checked tick to the accent without touching its geometry.
-    local checked = cb.GetCheckedTexture and cb:GetCheckedTexture()
-    if checked then checked:SetVertexColor(Theme.accR, Theme.accG, Theme.accB, 1) end
+    AddBorder(boxF, 0.25, 0.25, 0.25, 1)
+    local tick = boxF:CreateTexture(nil, "OVERLAY")
+    tick:SetPoint("TOPLEFT", 3, -3)
+    tick:SetPoint("BOTTOMRIGHT", -3, 3)
+    tick:SetColorTexture(Theme.accR, Theme.accG, Theme.accB, 1)
+    local wash = SolidTex(boxF, "ARTWORK", 1, 1, 1, 0.1)
+    wash:SetAllPoints(boxF)
+    wash:Hide()
+    local hovering = false
+    local function updState()
+        local checked = cb:GetChecked() and true or false
+        tick:SetShown(checked)
+        wash:SetShown(hovering or checked)
+    end
+    cb:HookScript("OnEnter", function() hovering = true; updState() end)
+    cb:HookScript("OnLeave", function() hovering = false; updState() end)
+    cb:HookScript("OnClick", updState)
+    hooksecurefunc(cb, "SetChecked", updState)
+    updState()
 end
 
 -- Modern dropdown / selector -> flat block. Heavily nil-guarded because the
@@ -285,14 +372,25 @@ local function SkinDropdown(dd)
     end
     if dd.Background then dd.Background:SetAlpha(0) end
     if dd.Texture then dd.Texture:SetAlpha(0) end
-    if dd.Arrow and dd.Arrow.SetVertexColor then dd.Arrow:SetVertexColor(0.8, 0.8, 0.8) end
     local fill = SolidTex(dd, "BACKGROUND", Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA)
     fill:SetAllPoints(dd)
     d.bg = fill
     AddBorder(dd, 0.25, 0.25, 0.25, 1)
+    -- Slight lighten on hover.
+    local hover = SolidTex(dd, "HIGHLIGHT", 1, 1, 1, 0.05)
+    hover:SetAllPoints(dd)
+    d.hover = hover
+    -- Our own arrow on the right (Blizzard's is faded with the rest).
+    -- Sized to the atlas's native 62x44 aspect.
+    local arrow = dd:CreateTexture(nil, "OVERLAY")
+    arrow:SetAtlas("Azerite-PointingArrow")
+    arrow:SetSize(14, 10)
+    arrow:SetPoint("RIGHT", dd, "RIGHT", -6, 0)
+    d.arrow = arrow
 end
 
--- MinimalScrollBar -> strip track/arrows, flat accent thumb.
+-- MinimalScrollBar -> strip track/arrows; the thumb becomes a slim 5px white
+-- strip centered in the thumb's hit area (the house scrollbar look).
 local function SkinScrollBar(sb)
     if not sb or sb:IsForbidden() then return end
     local d = GetFFD(sb)
@@ -310,13 +408,15 @@ local function SkinScrollBar(sb)
     local thumb = (track and track.Thumb) or (sb.GetThumb and sb:GetThumb())
     if thumb and not GetFFD(thumb).bg then
         FadeRegions(thumb)
-        local t = SolidTex(thumb, "ARTWORK", Theme.accR, Theme.accG, Theme.accB, 0.5)
-        t:SetAllPoints(thumb)
+        local t = SolidTex(thumb, "ARTWORK", 1, 1, 1, 0.3)
+        t:SetPoint("TOP", thumb, "TOP", 0, 0)
+        t:SetPoint("BOTTOM", thumb, "BOTTOM", 0, 0)
+        t:SetWidth(4)
         GetFFD(thumb).bg = t
     end
 end
 
--- Close (X) button -> CharacterSheet pattern: strip art, draw our own 'x'.
+-- Close (X) button -> strip art, draw the house close glyph.
 local function SkinCloseButton(btn)
     if not btn or btn:IsForbidden() then return end
     local d = GetFFD(btn)
@@ -326,14 +426,14 @@ local function SkinCloseButton(btn)
     if btn.SetHighlightTexture then btn:SetHighlightTexture("") end
     if btn.SetDisabledTexture then btn:SetDisabledTexture("") end
     FadeRegions(btn)
-    local x = btn:CreateFontString(nil, "OVERLAY")
-    x:SetFont(Theme.fontPath, 16, "")
-    x:SetText("x")
-    x:SetTextColor(1, 1, 1, 0.75)
-    x:SetPoint("CENTER", -2, -3)
+    local x = btn:CreateTexture(nil, "OVERLAY")
+    x:SetAtlas("uitools-icon-close")
+    x:SetSize(14, 14)
+    x:SetPoint("CENTER", -2, 0)
+    x:SetVertexColor(1, 1, 1, 0.75)
     d.x = x
-    btn:HookScript("OnEnter", function() if d.x then d.x:SetTextColor(1, 1, 1, 1) end end)
-    btn:HookScript("OnLeave", function() if d.x then d.x:SetTextColor(1, 1, 1, 0.75) end end)
+    btn:HookScript("OnEnter", function() if d.x then d.x:SetVertexColor(1, 1, 1, 1) end end)
+    btn:HookScript("OnLeave", function() if d.x then d.x:SetVertexColor(1, 1, 1, 0.75) end end)
 end
 
 -- PVEFrame bottom tab -> CharacterSheet tab pattern (bg + accent underline when
@@ -388,24 +488,56 @@ local function SkinTab(tab)
     end
     underline:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", 0, 0)
     underline:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 0, 0)
-    underline:SetColorTexture(Theme.accR, Theme.accG, Theme.accB, 1)
-    if EUI and EUI.RegAccent then EUI.RegAccent({ type = "solid", obj = underline, a = 1 }) end
+    -- Color + visibility follow the Blizzard Window Skins "Global Options"
+    -- accent-bar setting; the window-skin engine recolors registered
+    -- underlines on option edits and accent changes.
+    local wsk = ns.WSkin
+    if wsk and wsk.AccentBarColor then
+        local ur, ug, ub = wsk.AccentBarColor()
+        underline:SetColorTexture(ur, ug, ub, 1)
+        if wsk.RegisterAccentUnderline then wsk.RegisterAccentUnderline(underline) end
+    else
+        underline:SetColorTexture(Theme.accR, Theme.accG, Theme.accB, 1)
+        if EUI and EUI.RegAccent then EUI.RegAccent({ type = "solid", obj = underline, a = 1 }) end
+    end
     underline:Hide()
     d.underline = underline
 end
 
+local _gfLooksHooked = false
+-- The left rail zone (wash + divider) belongs only to tabs that HAVE a left
+-- category rail: Dungeons & Raids (GroupFinderFrame) and PvP (PVPUIFrame). It
+-- is anchored to PVEFrame, so without this it persists onto the Mythic+ tab
+-- (which has no rail). Gate its visibility on a rail-owning frame being shown.
+local function UpdateRailZone()
+    local d = PVEFrame and FFD[PVEFrame]
+    if not d then return end
+    local show = (GroupFinderFrame and GroupFinderFrame:IsShown())
+        or (_G.PVPUIFrame and _G.PVPUIFrame:IsShown()) or false
+    if d.leftWash then d.leftWash:SetShown(show and true or false) end
+    if d.leftSep then d.leftSep:SetShown(show and true or false) end
+end
+
 local function UpdateTabVisuals()
     if not PVEFrame then return end
+    UpdateRailZone()
     local sel = PVEFrame.selectedTab or 1
+    local barsOn = not (ns.WSkin and ns.WSkin.AccentBarShown) or ns.WSkin.AccentBarShown()
     for i = 1, 4 do
         local tab = _G["PVEFrameTab" .. i]
         local d = tab and FFD[tab]
         if d then
             local isActive = (sel == i)
             if d.label then d.label:SetTextColor(1, 1, 1, isActive and 1 or 0.5) end
-            if d.underline then d.underline:SetShown(isActive) end
+            if d.underline then d.underline:SetShown(isActive and barsOn) end
             if d.activeHL then d.activeHL:SetShown(isActive) end
         end
+    end
+    -- Registered lazily: the engine file loads after this one, so ns.WSkin
+    -- is only reachable at runtime.
+    if not _gfLooksHooked and ns.WSkin and ns.WSkin.OnLooksChanged then
+        _gfLooksHooked = true
+        ns.WSkin.OnLooksChanged(UpdateTabVisuals)
     end
 end
 
@@ -416,50 +548,186 @@ local function CategoryButton(i)
 end
 
 -- Left category rail button (GroupFinderGroupButtonTemplate): keep the icon,
--- flatten the rest, add a selected-state accent border.
-local function SkinCategoryButton(btn)
+-- flatten the rest, add a selected-state accent border. opts.keepRing spares
+-- the icon's ring border (PvP rail keeps it per user; D&R strips it).
+-- Re-apply a rail button's converted anchors from its stored spec. Chained
+-- buttons hang off the previous button; the chain root pins to the rail wash.
+local function ApplyRailAnchors(btn)
+    local d = FFD[btn]
+    local a = d and d.railAnchors
+    if not a then return end
+    btn:ClearAllPoints()
+    if a.rel then
+        btn:SetPoint("TOPLEFT", a.rel, "BOTTOMLEFT", 0, a.y)
+        btn:SetPoint("TOPRIGHT", a.rel, "BOTTOMRIGHT", 0, a.y)
+    else
+        btn:SetPoint("TOPLEFT", a.wash, "TOPLEFT", 0, a.y)
+        btn:SetPoint("TOPRIGHT", a.wash, "TOPRIGHT", 0, a.y)
+    end
+end
+
+local function SkinCategoryButton(btn, opts)
     if not btn or btn:IsForbidden() then return end
     local d = GetFFD(btn)
+    d.isRail = true
+    -- Full-width cards: pin both side edges to the rail-column wash so every
+    -- card runs edge-to-edge (offset guesses always left a gap against the
+    -- stock insets). One-shot per button, retries until laid out. The chain
+    -- root keeps its exact vertical seat; chained buttons keep their vertical
+    -- gap (closed 10px) and ride the 12px-taller previous button down.
+    if not d.railWide then
+        local h = btn:GetHeight()
+        local pd = PVEFrame and FFD[PVEFrame]
+        local wash = pd and pd.leftWash
+        if h and h > 10 and wash and btn:GetTop() and wash:GetTop() then
+            d.railWide = true
+            btn:SetHeight(h + 12)
+            local p, rel, rp, x, y = btn:GetPoint(1)
+            if p and rel and FFD[rel] and FFD[rel].isRail then
+                d.railAnchors = { rel = rel, y = (y or 0) + 10 }
+            else
+                d.railAnchors = { wash = wash, y = btn:GetTop() - wash:GetTop() }
+            end
+            ApplyRailAnchors(btn)
+            -- Blizzard re-anchors these buttons from its own layout passes
+            -- (the PvP rail re-seats on every show), stomping a one-shot
+            -- conversion: re-assert ours synchronously, reentry-guarded.
+            hooksecurefunc(btn, "SetPoint", function()
+                if d.inPin then return end
+                d.inPin = true
+                ApplyRailAnchors(btn)
+                d.inPin = false
+            end)
+        end
+    end
+    -- Icon (and its ring, so the border keeps hugging it) 10px smaller and
+    -- shifted 3px right; the BUTTON keeps its stock size. Outside the skinned
+    -- guard so it retries per pass until the icon has a laid-out size.
+    local icon0 = btn.icon or btn.Icon
+    if icon0 and not GetFFD(icon0).shrunk then
+        local w, h = icon0:GetSize()
+        if w and h and w > 10 and h > 10 then
+            GetFFD(icon0).shrunk = true
+            icon0:SetSize(w - 10, h - 10)
+            local np = icon0:GetNumPoints() or 0
+            local pts, ok = {}, np > 0
+            for i = 1, np do
+                local p, rel, rp, x, y = icon0:GetPoint(i)
+                if not p then ok = false break end
+                pts[i] = { p, rel, rp, (x or 0) + 3, y or 0 }
+            end
+            if ok then
+                icon0:ClearAllPoints()
+                for i = 1, #pts do local t = pts[i]; icon0:SetPoint(t[1], t[2], t[3], t[4], t[5]) end
+            end
+            local ring0 = btn.ring or btn.Ring
+            if ring0 and ring0.GetSize then
+                local rw, rh = ring0:GetSize()
+                if rw and rh and rw > 10 and rh > 10 then
+                    ring0:SetSize(rw - 10, rh - 10)
+                end
+            end
+        end
+    end
     if d.skinned then return end
     d.skinned = true
 
     local keep = {}
-    if btn.icon then keep[btn.icon] = true end
+    -- D&R buttons use lowercase keys (icon/ring); the PvP queue buttons use
+    -- capitalized ones (Icon/Ring). Same template family otherwise.
+    local icon = btn.icon or btn.Icon
+    if icon then keep[icon] = true end
     if btn.bgGlow then btn.bgGlow:SetAlpha(0) end
-    if btn.ring then btn.ring:SetAlpha(0) end
+    local ring = btn.ring or btn.Ring
+    if ring then
+        if opts and opts.keepRing then
+            keep[ring] = true
+        else
+            ring:SetAlpha(0)
+        end
+    end
     FadeRegions(btn, keep)
     local hl = btn.GetHighlightTexture and btn:GetHighlightTexture()
     if hl then hl:SetAlpha(0) end
 
-    d.bg = SolidTex(btn, "BACKGROUND", Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA)
-    d.bg:SetAllPoints(btn)
-    AddBorder(btn)
+    -- Card look matches the Guild & Communities sidebar entries: the same
+    -- dialog-sheet card atlas at half strength, pulled in 2px top and bottom
+    -- so stacked tabs never sit flush. No border -- the card art carries its
+    -- own soft edge.
+    -- The stock template clips child regions to the button rect, which
+    -- swallows any card overhang -- unclip so the art can reach the edges.
+    if btn.SetClipsChildren then btn:SetClipsChildren(false) end
+    local card = btn:CreateTexture(nil, "BACKGROUND")
+    card:SetAtlas("Ui-Dialog-New-Background")
+    card:SetAlpha(0.5)
+    -- Horizontal overhang compensates for the atlas's baked-in transparent
+    -- margins (and the rail column's own inset from the window edge) so the
+    -- VISIBLE art reads edge-to-edge (user-measured offsets).
+    card:SetPoint("TOPLEFT", btn, "TOPLEFT", -6, -2)
+    card:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, 2)
+    d.bg = card
 
-    local hover = SolidTex(btn, "HIGHLIGHT", Theme.accR, Theme.accG, Theme.accB, 0.18)
-    hover:SetAllPoints(btn)
+    -- Hover + active wash: subtle white clamped 3px inside the card rect
+    -- (the card atlas bakes in soft transparent edges, so a wash on the full
+    -- rect reads bigger than the visible art).
+    local hover = SolidTex(btn, "HIGHLIGHT", 1, 1, 1, 0.05)
+    hover:SetPoint("TOPLEFT", card, "TOPLEFT", 3, -3)
+    hover:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -3, 3)
+    d.hover = hover
 
-    -- Accent bar on the left edge, shown when this category is selected.
-    local sel = btn:CreateTexture(nil, "OVERLAY", nil, 7)
-    sel:SetColorTexture(Theme.accR, Theme.accG, Theme.accB, 1)
-    sel:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
-    sel:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 0)
-    sel:SetWidth(2)
-    sel:Hide()
-    if EUI and EUI.RegAccent then EUI.RegAccent({ type = "solid", obj = sel, a = 1 }) end
-    d.selBar = sel
+    -- Held on while this category is selected.
+    local selWash = SolidTex(btn, "ARTWORK", 1, 1, 1, 0.05)
+    selWash:SetPoint("TOPLEFT", card, "TOPLEFT", 3, -3)
+    selWash:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -3, 3)
+    selWash:Hide()
+    d.selWash = selWash
 
-    if btn.name then SkinFontString(btn.name) end
+    -- Re-derive the selection visuals after Blizzard's own click handler has
+    -- processed the category change.
+    if opts and opts.onSelect then
+        btn:HookScript("OnClick", opts.onSelect)
+    end
+
+    -- Category button labels keep Blizzard's font (no-font widget policy).
     Register(btn, keep)
 end
 
+-- Latest selection captured from Blizzard's own select call (authoritative
+-- when available; the frame state fields proved unreliable in Midnight).
+local _gfSelIndex
+local _pvpSel
+
+-- Resolve the selected rail entry from the strongest available signal:
+-- captured select-call arg > CheckButton checked state > Blizzard's own
+-- selection glow (we alpha-0 it, but Blizzard still Show/Hides it; only
+-- trusted when exactly one is shown, i.e. it behaves like a selection) >
+-- legacy holder-frame selection fields. Returns an index or a button.
+local function ResolveRailSelection(getBtn, captured, holder)
+    if captured ~= nil then return captured end
+    for i = 1, 4 do
+        local b = getBtn(i)
+        if b and b.GetChecked and b:GetChecked() then return i end
+    end
+    local glowSel, glowCount = nil, 0
+    for i = 1, 4 do
+        local b = getBtn(i)
+        local g = b and (b.bgGlow or b.bg or b.SelectedTexture)
+        if g and g.IsShown and g:IsShown() then
+            glowCount = glowCount + 1
+            glowSel = i
+        end
+    end
+    if glowCount == 1 then return glowSel end
+    return holder and (holder.selection or holder.selectionIndex) or nil
+end
+
 local function UpdateCategorySelection()
-    local gff = _G.GroupFinderFrame
-    local selected = gff and gff.selection
+    local sel = ResolveRailSelection(CategoryButton, _gfSelIndex, _G.GroupFinderFrame)
     for i = 1, 4 do
         local btn = CategoryButton(i)
         local d = btn and FFD[btn]
-        if d and d.selBar then
-            d.selBar:SetShown(selected == btn)
+        if d and d.selWash then
+            d.selWash:SetShown((sel == i or sel == btn) and true or false)
         end
     end
 end
@@ -487,17 +755,45 @@ local function Skin_PVEFrame()
     local leftInset = PVEFrame.Inset or _G["PVEFrameLeftInset"]
     if leftInset then SkinPanel(leftInset, { noBg = true, noBorder = true }) end
 
+    -- Rail zone: 10% black wash over the LEFT sidebar column + a
+    -- 1-physical-px divider on its right edge, between the rail tabs and the
+    -- content. Rides the left inset's rect (the definitive rail column).
+    local d = GetFFD(PVEFrame)
+    if not d.leftWash then
+        local px = 1
+        local PPx = EUI and EUI.PP
+        local es = PVEFrame:GetEffectiveScale()
+        if PPx and PPx.perfect and es and es > 0 then px = PPx.perfect / es end
+        local wash = PVEFrame:CreateTexture(nil, "BACKGROUND", nil, -6)
+        wash:SetColorTexture(0, 0, 0, 0.1)
+        if leftInset then
+            wash:SetAllPoints(leftInset)
+        else
+            wash:SetPoint("TOPLEFT", PVEFrame, "TOPLEFT", 7, -62)
+            wash:SetPoint("BOTTOMRIGHT", PVEFrame, "BOTTOMLEFT", 206, 7)
+        end
+        d.leftWash = wash
+        local sep = PVEFrame:CreateTexture(nil, "ARTWORK")
+        sep:SetColorTexture(0.15, 0.15, 0.15, 1)
+        sep:SetWidth(px)
+        sep:SetPoint("TOPLEFT", wash, "TOPRIGHT", 0, 0)
+        sep:SetPoint("BOTTOMLEFT", wash, "BOTTOMRIGHT", 0, 0)
+        d.leftSep = sep
+    end
+
+    local pveTabs = {}
     for i = 1, 4 do
         local tab = _G["PVEFrameTab" .. i]
-        if tab then SkinTab(tab) end
+        if tab then SkinTab(tab); pveTabs[#pveTabs + 1] = tab end
     end
+    if ns.WSkin and ns.WSkin.NormalizeTabRow then ns.WSkin.NormalizeTabRow(pveTabs) end
     UpdateTabVisuals()
 end
 
 local function Skin_GroupFinder()
     for i = 1, 4 do
         local gb = CategoryButton(i)
-        if gb then SkinCategoryButton(gb) end
+        if gb then SkinCategoryButton(gb, { keepRing = true, onSelect = UpdateCategorySelection }) end
     end
     UpdateCategorySelection()
 
@@ -506,12 +802,83 @@ local function Skin_GroupFinder()
     if _G.LFDParentFrameInset then FadeInset(_G.LFDParentFrameInset) end
     if LFDQueueFrame then SkinPanel(LFDQueueFrame, { noBg = true, noBorder = true }) end
     if LFDQueueFrameRandomScrollFrame then SkinPanel(LFDQueueFrameRandomScrollFrame, { noBg = true, noBorder = true }) end
-    if LFDQueueFrameFindGroupButton then SkinButton(LFDQueueFrameFindGroupButton) end
+    if LFDQueueFrameFindGroupButton then
+        SkinButton(LFDQueueFrameFindGroupButton)
+        LiftButton(LFDQueueFrameFindGroupButton)
+    end
     if _G.LFDQueueFrameTypeDropdown then SkinDropdown(_G.LFDQueueFrameTypeDropdown) end
     local lfdSB = _G["LFDQueueFrameRandomScrollFrameScrollBar"]
         or (LFDQueueFrameRandomScrollFrame and LFDQueueFrameRandomScrollFrame.ScrollBar)
     if lfdSB then SkinScrollBar(lfdSB) end
     if _G.LFDQueueFrameSpecific and _G.LFDQueueFrameSpecific.ScrollBar then SkinScrollBar(_G.LFDQueueFrameSpecific.ScrollBar) end
+end
+
+-- Premade Groups category buttons (Dungeons / Raids / Arenas / ...): the base
+-- button skin plus a white selection wash held on while that category is the
+-- active pick, matching the left sidebar rail's active state.
+local function SkinLFGCategoryButton(btn)
+    if not btn or btn:IsForbidden() then return end
+    SkinButton(btn)
+    local d = GetFFD(btn)
+    if not d.selWash then
+        -- ARTWORK below the button label (sublevel -1) and above the fill.
+        local selWash = SolidTex(btn, "ARTWORK", 1, 1, 1, 0.05, -1)
+        selWash:SetAllPoints(btn)
+        selWash:Hide()
+        d.selWash = selWash
+    end
+    -- Match the sidebar rail: hover + active both 0.05 white.
+    if d.hover then d.hover:SetColorTexture(1, 1, 1, 0.05) end
+end
+
+-- Is this category button the active pick? Blizzard's authoritative state is
+-- CategorySelection.selectedCategory (+ selectedFilters), matched against each
+-- button's own categoryID/filters. This is why SelectedTexture:IsShown() failed
+-- for the first button: Blizzard HIDES that texture in the AddButton rebuild
+-- and re-derives selection from the ID, and the first category is auto-selected
+-- by default (never passing through the click hook).
+local function IsLFGCategorySelected(cs, btn)
+    return cs.selectedCategory ~= nil
+        and btn.categoryID == cs.selectedCategory
+        and btn.filters == cs.selectedFilters
+end
+
+local function UpdateLFGCategorySelection()
+    local CS = LFGListFrame and LFGListFrame.CategorySelection
+    if not (CS and CS.CategoryButtons) then return end
+    for _, btn in ipairs(CS.CategoryButtons) do
+        local d = FFD[btn]
+        if d and d.selWash then
+            d.selWash:SetShown(IsLFGCategorySelected(CS, btn) and true or false)
+        end
+    end
+end
+
+-- Refresh button -> strip art, draw the house white UI-RefreshButton glyph
+-- (desaturated + white vertex, 0.9 -> 1 on hover). Matches the Auction House
+-- refresh button.
+local function SkinRefreshGlyph(rb)
+    if not rb or rb:IsForbidden() then return end
+    local d = GetFFD(rb)
+    if d.glyph then return end
+    if not (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("UI-RefreshButton")) then return end
+    for i = 1, select("#", rb:GetRegions()) do
+        local r = select(i, rb:GetRegions())
+        if r and r.IsObjectType and r:IsObjectType("Texture") then r:SetAlpha(0) end
+    end
+    for _, g in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture", "GetDisabledTexture" }) do
+        local t = rb[g] and rb[g](rb)
+        if t and t.SetAlpha then t:SetAlpha(0) end
+    end
+    local glyph = rb:CreateTexture(nil, "OVERLAY")
+    glyph:SetAtlas("UI-RefreshButton", false)
+    glyph:SetSize(16, 16)
+    glyph:SetPoint("CENTER")
+    glyph:SetDesaturated(true)
+    glyph:SetVertexColor(1, 1, 1, 0.9)
+    d.glyph = glyph
+    rb:HookScript("OnEnter", function() glyph:SetVertexColor(1, 1, 1, 1) end)
+    rb:HookScript("OnLeave", function() glyph:SetVertexColor(1, 1, 1, 0.9) end)
 end
 
 local function Skin_LFGList()
@@ -522,10 +889,28 @@ local function Skin_LFGList()
         SkinPanel(CS, { noBg = true, noBorder = true })
         if CS.Inset then FadeInset(CS.Inset) end
         if CS.CategoryButtons then
-            for _, b in ipairs(CS.CategoryButtons) do SkinButton(b) end
+            for _, b in ipairs(CS.CategoryButtons) do SkinLFGCategoryButton(b) end
+            UpdateLFGCategorySelection()
         end
-        if CS.FindGroupButton then SkinButton(CS.FindGroupButton) end
-        if CS.StartGroupButton then SkinButton(CS.StartGroupButton) end
+        -- Blizzard rebuilds every category button through AddButton on the
+        -- initial show AND on every selection change (SelectButton ->
+        -- UpdateCategoryButtons -> AddButton per button), so this is the one
+        -- hook that catches the default selection and every click alike.
+        if LFGListCategorySelection_AddButton and not GetFFD(CS).addBtnHook then
+            GetFFD(CS).addBtnHook = true
+            hooksecurefunc("LFGListCategorySelection_AddButton", function(cs, btnIndex, categoryID, filters)
+                local b = cs and cs.CategoryButtons and cs.CategoryButtons[btnIndex]
+                if not b or b:IsForbidden() then return end
+                SkinLFGCategoryButton(b)
+                local d = FFD[b]
+                if d and d.selWash then
+                    local sel = (cs.selectedCategory == categoryID) and (cs.selectedFilters == filters)
+                    d.selWash:SetShown(sel and true or false)
+                end
+            end)
+        end
+        if CS.FindGroupButton then SkinButton(CS.FindGroupButton); LiftButton(CS.FindGroupButton) end
+        if CS.StartGroupButton then SkinButton(CS.StartGroupButton); LiftButton(CS.StartGroupButton) end
     end
 
     local SP = LFGListFrame.SearchPanel
@@ -534,7 +919,7 @@ local function Skin_LFGList()
         if SP.ResultsInset then FadeInset(SP.ResultsInset) end
         if SP.SearchBox then SkinEditBox(SP.SearchBox) end
         if SP.FilterButton then SkinButton(SP.FilterButton) end
-        if SP.RefreshButton then SkinButton(SP.RefreshButton, { "Icon" }) end
+        if SP.RefreshButton then SkinRefreshGlyph(SP.RefreshButton) end
         if SP.BackButton then SkinButton(SP.BackButton) end
         if SP.BackToGroupButton then SkinButton(SP.BackToGroupButton) end
         if SP.SignUpButton then SkinButton(SP.SignUpButton) end
@@ -569,7 +954,7 @@ local function Skin_LFGList()
     if AV then
         SkinPanel(AV, { noBg = true, noBorder = true })
         if AV.Inset then FadeInset(AV.Inset) end
-        if AV.RefreshButton then SkinButton(AV.RefreshButton, { "Icon" }) end
+        if AV.RefreshButton then SkinRefreshGlyph(AV.RefreshButton) end
         if AV.RemoveEntryButton then SkinButton(AV.RemoveEntryButton) end
         if AV.EditButton then SkinButton(AV.EditButton) end
         if AV.BrowseGroupsButton then SkinButton(AV.BrowseGroupsButton) end
@@ -581,23 +966,68 @@ local function Skin_LFGList()
         if AV.InfoBackground then AV.InfoBackground:SetAlpha(0) end
     end
 
-    -- Per-row hook: restyle ONLY the row's CancelButton. We never read result
-    -- data (secret in Midnight) and never blanket-strip the row (would blank
-    -- role/class/data-display art).
-    if LFGListSearchEntry_Update and not GetFFD(LFGListFrame).rowHook then
-        GetFFD(LFGListFrame).rowHook = true
-        hooksecurefunc("LFGListSearchEntry_Update", function(entry)
-            if not entry or entry:IsForbidden() then return end
-            if entry.CancelButton then SkinButton(entry.CancelButton) end
-        end)
-    end
+    -- Search result rows are left FULLY stock. We used to skin the per-row
+    -- CancelButton (shown while you're applied/queued to that group), but that
+    -- made the queued-state button read wrong, so it stays Blizzard's. We never
+    -- read row data (secret in Midnight) or blanket-strip the row either.
 end
 
+-- Raid Finder leftover art. Blizzard re-raises the role inset's backdrop from
+-- a path that fires when the panel shows (none of our restrip hooks cover that
+-- transition), so this runs from both the skin pass AND an OnShow refade.
+local _rbGuard = false
+local function FadeRaidFinderArt()
+    local ri = _G.RaidFinderFrameRoleInset
+    if ri then
+        FadeInset(ri)
+        -- Explicit by key too: survives the case where Bg is not a direct
+        -- region the sweep reaches.
+        if ri.Bg and ri.Bg.SetAlpha then ri.Bg:SetAlpha(0) end
+    end
+    if _G.RaidFinderFrameBottomInset then FadeInset(_G.RaidFinderFrameBottomInset) end
+    -- Role background (orange gradient behind the role buttons): Blizzard's
+    -- rewards updaters (RaidFinderQueueFrameRewards_UpdateFrame and the shared
+    -- LFGRewardsFrame_UpdateFrame) re-raise this art on every rewards/role/raid
+    -- update, which is why one-shot fades never stuck. This helper is hooked to
+    -- those updaters below, AND the art image itself is cleared so nothing
+    -- shows even if a raise path slips through.
+    local rb = _G.RaidFinderFrameRoleBackground
+    if rb and rb.SetAlpha then
+        _rbGuard = true
+        rb:SetAlpha(0)
+        _rbGuard = false
+        if rb.SetTexture then rb:SetTexture("") end
+        if rb.SetAtlas then rb:SetAtlas("") end
+        local rd = GetFFD(rb)
+        if not rd.alphaGuarded then
+            rd.alphaGuarded = true
+            hooksecurefunc(rb, "SetAlpha", function(t)
+                if _rbGuard then return end
+                _rbGuard = true
+                t:SetAlpha(0)
+                _rbGuard = false
+            end)
+        end
+    end
+    -- Questpaper scenic art behind the rewards list: re-textured by the same
+    -- updaters.
+    local qb = _G.RaidFinderQueueFrameBackground
+    if qb and qb.SetAlpha then qb:SetAlpha(0) end
+end
+
+local _rfShowHooked = false
 local function Skin_RaidFinder()
     if RaidFinderFrame then SkinPanel(RaidFinderFrame, { noBg = true, noBorder = true }) end
-    if _G.RaidFinderFrameRoleInset then FadeInset(_G.RaidFinderFrameRoleInset) end
+    FadeRaidFinderArt()
+    if RaidFinderFrame and not _rfShowHooked then
+        _rfShowHooked = true
+        RaidFinderFrame:HookScript("OnShow", FadeRaidFinderArt)
+    end
     if RaidFinderQueueFrame then SkinPanel(RaidFinderQueueFrame, { noBg = true, noBorder = true }) end
-    if RaidFinderFrameFindRaidButton then SkinButton(RaidFinderFrameFindRaidButton) end
+    if RaidFinderFrameFindRaidButton then
+        SkinButton(RaidFinderFrameFindRaidButton)
+        LiftButton(RaidFinderFrameFindRaidButton)
+    end
     if _G.RaidFinderQueueFrameSelectionDropdown then SkinDropdown(_G.RaidFinderQueueFrameSelectionDropdown) end
     local rfSB = (_G.RaidFinderQueueFrameScrollFrame and _G.RaidFinderQueueFrameScrollFrame.ScrollBar)
         or _G.RaidFinderQueueFrameScrollFrameScrollBar
@@ -606,13 +1036,129 @@ end
 
 local function Skin_Challenges()
     if not _G.ChallengesFrame then return end
-    SkinPanel(_G.ChallengesFrame, { noBg = true, noBorder = true })
+    local cf = _G.ChallengesFrame
+    SkinPanel(cf, { noBg = true, noBorder = true })
+    -- The M+ main-area scenic backdrop (ChallengesFrame.Background + an anon
+    -- BG texture) defeated every ALPHA approach we tried -- Blizzard re-raises
+    -- their alpha from paths we never caught. Disabling the whole BACKGROUND
+    -- draw LAYER kills them regardless of alpha (Blizzard would have to
+    -- re-ENABLE the layer to bring them back, which it doesn't). Re-asserted
+    -- each pass as a belt-and-braces against a future re-enable.
+    if cf.DisableDrawLayer then cf:DisableDrawLayer("BACKGROUND") end
     if _G.ChallengesFrameInset then FadeInset(_G.ChallengesFrameInset) end
     local kf = _G.ChallengesKeystoneFrame
     if kf then
         SkinPanel(kf, { inset = true })
         if kf.StartButton then SkinButton(kf.StartButton) end
         if kf.CloseButton then SkinCloseButton(kf.CloseButton) end
+    end
+end
+
+-- PvP tab (PVPUIFrame, Blizzard_PVPUI -- separate LoD addon): the D&R
+-- treatment mirrored. Category rail buttons share SkinCategoryButton; panels
+-- stripped so the shell backdrop shows through.
+local function PVPCategoryButton(i)
+    return _G.PVPQueueFrame and _G.PVPQueueFrame["CategoryButton" .. i]
+end
+
+local function UpdatePVPCategorySelection()
+    local sel = ResolveRailSelection(PVPCategoryButton, _pvpSel, _G.PVPQueueFrame)
+    for i = 1, 4 do
+        local btn = PVPCategoryButton(i)
+        local d = btn and FFD[btn]
+        if d and d.selWash then
+            d.selWash:SetShown((sel == i or sel == btn) and true or false)
+        end
+    end
+end
+
+local function Skin_PVP()
+    local pvp = _G.PVPUIFrame
+    if not pvp then return end
+    -- The PvP rail lays out late: at Blizzard_PVPUI load (and even inside the
+    -- tab-switch hooks) the category buttons can still report no geometry, so
+    -- the one-shot full-width conversion has nothing to measure and skips --
+    -- leaving stock anchors that hang the card overhang off the rail edge.
+    -- Re-run one frame after the window shows, when layout is real.
+    if not GetFFD(pvp).showHook then
+        GetFFD(pvp).showHook = true
+        pvp:HookScript("OnShow", function()
+            C_Timer.After(0, function()
+                if pvp:IsShown() and SkinEnabled() then Skin_PVP() end
+            end)
+        end)
+    end
+    SkinPanel(pvp, { noBg = true, noBorder = true })
+    local pq = _G.PVPQueueFrame
+    if pq then
+        SkinPanel(pq, { noBg = true, noBorder = true })
+        for i = 1, 4 do
+            local b = PVPCategoryButton(i)
+            if b then SkinCategoryButton(b, { keepRing = true, onSelect = UpdatePVPCategorySelection }) end
+        end
+        UpdatePVPCategorySelection()
+    end
+    -- Casual (Honor) panel.
+    local hf = _G.HonorFrame
+    if hf then
+        SkinPanel(hf, { noBg = true, noBorder = true })
+        local inset = hf.Inset or _G.HonorFrameInset
+        if inset then FadeInset(inset) end
+        if hf.QueueButton then SkinButton(hf.QueueButton); LiftButton(hf.QueueButton) end
+        if hf.TypeDropdown then SkinDropdown(hf.TypeDropdown) end
+        local sfr = hf.SpecificScrollBox or hf.SpecificFrame
+        local sb = (sfr and sfr.ScrollBar) or hf.ScrollBar
+        if sb then SkinScrollBar(sb) end
+        if hf.BonusFrame then SkinPanel(hf.BonusFrame, { noBg = true, noBorder = true }) end
+    end
+    -- Rated (Conquest) panel.
+    local cf = _G.ConquestFrame
+    if cf then
+        SkinPanel(cf, { noBg = true, noBorder = true })
+        local inset = cf.Inset or _G.ConquestFrameInset
+        if inset then FadeInset(inset) end
+        if cf.JoinButton then SkinButton(cf.JoinButton); LiftButton(cf.JoinButton) end
+    end
+    -- Training Grounds panel (PvP practice queue; mirrors the Honor panel).
+    local tg = _G.TrainingGroundsFrame
+    if tg then
+        SkinPanel(tg, { noBg = true, noBorder = true })
+        local inset = tg.Inset or _G.TrainingGroundsFrameInset
+        if inset then FadeInset(inset) end
+        if tg.QueueButton then SkinButton(tg.QueueButton); LiftButton(tg.QueueButton) end
+        if tg.TypeDropdown then SkinDropdown(tg.TypeDropdown) end
+        local spec = tg.SpecificTrainingGroundList
+        if spec then
+            SkinPanel(spec, { noBg = true, noBorder = true })
+            local sb = spec.ScrollBar or (spec.ScrollBox and spec.ScrollBox.ScrollBar)
+            if sb then SkinScrollBar(sb) end
+        end
+        local bonus = tg.BonusTrainingGroundList
+        if bonus then
+            SkinPanel(bonus, { noBg = true, noBorder = true })
+            -- Leftover scenic art the panel sweep does not reach by region.
+            if bonus.ShadowOverlay and bonus.ShadowOverlay.SetAlpha then bonus.ShadowOverlay:SetAlpha(0) end
+            if bonus.WorldBattlesTexture and bonus.WorldBattlesTexture.SetAlpha then bonus.WorldBattlesTexture:SetAlpha(0) end
+            if bonus.RandomTrainingGroundButton then SkinButton(bonus.RandomTrainingGroundButton) end
+        end
+    end
+end
+
+-- Selection/repaint hooks for the PvP tab; installable only once its addon
+-- has loaded (the globals don't exist before Blizzard_PVPUI).
+local _pvpHooksInstalled = false
+local function InstallPVPHooks()
+    if _pvpHooksInstalled then return end
+    _pvpHooksInstalled = true
+    if _G.PVPQueueFrame_SelectButton then
+        hooksecurefunc("PVPQueueFrame_SelectButton", function(sel)
+            -- Arg is an index on some builds, the button itself on others.
+            if type(sel) == "number" or type(sel) == "table" then _pvpSel = sel end
+            Restrip(); UpdatePVPCategorySelection()
+        end)
+    end
+    if _G.PVPQueueFrame_ShowFrame then
+        hooksecurefunc("PVPQueueFrame_ShowFrame", Restrip)
     end
 end
 
@@ -624,6 +1170,7 @@ local function RefreshAll()
     Skin_LFGList()
     Skin_RaidFinder()
     Skin_Challenges()
+    Skin_PVP()
     Restrip()
 end
 
@@ -639,13 +1186,32 @@ local function InstallHooks()
     if PVEFrame_ShowFrame then hooksecurefunc("PVEFrame_ShowFrame", function() RefreshAll(); UpdateTabVisuals() end) end
     if PVEFrame_TabOnClick then hooksecurefunc("PVEFrame_TabOnClick", function() RefreshAll(); UpdateTabVisuals() end) end
     if GroupFinderFrame_SelectGroupButton then
-        hooksecurefunc("GroupFinderFrame_SelectGroupButton", function() Restrip(); UpdateCategorySelection() end)
+        hooksecurefunc("GroupFinderFrame_SelectGroupButton", function(index)
+            if type(index) == "number" then _gfSelIndex = index end
+            Restrip(); UpdateCategorySelection()
+        end)
     end
     if GroupFinderFrameGroupButton_OnClick then
         hooksecurefunc("GroupFinderFrameGroupButton_OnClick", function() Restrip(); UpdateCategorySelection() end)
     end
     if LFGListCategorySelectionButton_OnClick then
+        -- Selection wash is driven by the AddButton rebuild hook (fires on
+        -- every pick); here we only re-flatten art after the click.
         hooksecurefunc("LFGListCategorySelectionButton_OnClick", Restrip)
+    end
+    -- Blizzard's rewards updaters re-apply the questpaper background (LFD /
+    -- Raid Finder / Scenario) and the Raid Finder role-row gradient on every
+    -- rewards/role/raid update; one-shot fades never stick against them, so
+    -- re-fade from the updaters themselves.
+    if LFGRewardsFrame_UpdateFrame then
+        hooksecurefunc("LFGRewardsFrame_UpdateFrame", function(_, _, background)
+            if background and not issecretvalue(background) and background.SetAlpha then
+                background:SetAlpha(0)
+            end
+        end)
+    end
+    if RaidFinderQueueFrameRewards_UpdateFrame then
+        hooksecurefunc("RaidFinderQueueFrameRewards_UpdateFrame", FadeRaidFinderArt)
     end
 end
 
@@ -656,67 +1222,7 @@ end
 --  data, or clean control APIs -- never per-result/member search data.
 -------------------------------------------------------------------------------
 
--- (1) AUTO-REFRESH -----------------------------------------------------------
--- Re-runs the active Premade Groups search on a steady interval while the
--- search panel is open. LFGListSearchPanel_DoSearch re-issues the player's own
--- query (it carries no secret payload). The ticker is HIDDEN when idle, so it
--- costs nothing unless you are actively browsing with the feature on.
-local AUTO_REFRESH_INTERVAL = 5  -- seconds; stays clear of Blizzard's search throttle
-local autoTicker
-
-local function AutoRefreshOn()
-    return EllesmereUIDB and EllesmereUIDB.lfgAutoRefresh == true
-end
-
-local function EnsureAutoTicker()
-    if autoTicker then return end
-    autoTicker = CreateFrame("Frame")
-    autoTicker:Hide()
-    autoTicker:SetScript("OnUpdate", function(self, e)
-        self._elapsed = (self._elapsed or 0) + e
-        if self._elapsed < AUTO_REFRESH_INTERVAL then return end
-        self._elapsed = 0
-        local SP = LFGListFrame and LFGListFrame.SearchPanel
-        if not (AutoRefreshOn() and SP and SP:IsShown()) then self:Hide(); return end
-        -- Only refresh an active search (categoryID set). Skip while the search
-        -- box has focus so we never yank text the user is mid-typing.
-        if SP.categoryID and LFGListSearchPanel_DoSearch then
-            local box = SP.SearchBox
-            if box and box.HasFocus and box:HasFocus() then return end
-            pcall(LFGListSearchPanel_DoSearch, SP)
-        end
-    end)
-end
-
--- Start/stop the ticker to match the current state. Lazily creates the ticker
--- frame only when auto-refresh is actually enabled (zero allocation when off).
-local function EUI_RefreshAutoTicker()
-    if not AutoRefreshOn() then
-        if autoTicker then autoTicker:Hide() end
-        return
-    end
-    EnsureAutoTicker()
-    local SP = LFGListFrame and LFGListFrame.SearchPanel
-    if SP and SP:IsShown() then
-        autoTicker._elapsed = 0
-        autoTicker:Show()
-    else
-        autoTicker:Hide()
-    end
-end
-
--- Install the search-panel show/hide hooks once, only on first enable.
-local _autoHooksInstalled = false
-local function InstallAutoRefreshHooks()
-    if _autoHooksInstalled then return end
-    local SP = LFGListFrame and LFGListFrame.SearchPanel
-    if not SP then return end  -- frames not loaded yet; InitQoL retries on addon load
-    _autoHooksInstalled = true
-    SP:HookScript("OnShow", EUI_RefreshAutoTicker)
-    SP:HookScript("OnHide", function() if autoTicker then autoTicker:Hide() end end)
-end
-
--- (2) REMEMBER SIGN-UP ROLES -------------------------------------------------
+-- REMEMBER SIGN-UP ROLES ------------------------------------------------------
 -- Persists the Tank/Healer/DPS checkboxes you last applied with and restores
 -- them when the sign-up dialog opens (intersected with the roles your spec can
 -- actually fill, so it never checks an impossible role). Pure clean widget
@@ -787,16 +1293,13 @@ end
 -- feature's hooks are installed ONLY when that feature is enabled, so a disabled
 -- feature attaches no hooks and creates no frames.
 EllesmereUI._GroupFinder_InitQoL = function()
-    if AutoRefreshOn() then InstallAutoRefreshHooks(); EUI_RefreshAutoTicker() end
     if RememberRolesOn() then InstallRememberRolesHooks() end
 end
 
--- Called by the options toggles when a QoL flag flips: installs that feature's
--- hooks lazily on first enable and re-evaluates the ticker. No reload needed.
+-- Called by the options toggle when a QoL flag flips: installs that feature's
+-- hooks lazily on first enable. No reload needed.
 EllesmereUI._GroupFinder_RefreshQoL = function()
-    if AutoRefreshOn() then InstallAutoRefreshHooks() end
     if RememberRolesOn() then InstallRememberRolesHooks() end
-    EUI_RefreshAutoTicker()
 end
 
 -------------------------------------------------------------------------------
@@ -816,6 +1319,11 @@ local ON_ADDON = {
         if not SkinEnabled() then return end
         if not Theme.bgR then ResolveTheme() end
         Skin_Challenges(); Restrip()
+    end,
+    Blizzard_PVPUI = function()
+        if not SkinEnabled() then return end
+        if not Theme.bgR then ResolveTheme() end
+        Skin_PVP(); InstallPVPHooks(); Restrip()
     end,
 }
 

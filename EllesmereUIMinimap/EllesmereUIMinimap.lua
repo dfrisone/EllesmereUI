@@ -8,6 +8,47 @@ local EBS = EllesmereUI.Lite.NewAddon("EllesmereUIMinimap")
 
 local PP = EllesmereUI.PP
 
+-- Per-size offset/shift defaults for the textured border styles, registered
+-- with the shared border engine (same values as the unit frames).
+do
+    local ALL_SIZES = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true }
+    local function AllSizes(ox, oy, sx, sy)
+        local t = {}
+        for k in pairs(ALL_SIZES) do t[k] = { offsetX = ox, offsetY = oy, shiftX = sx, shiftY = sy } end
+        return t
+    end
+    EllesmereUI.RegisterBorderDefaults("minimap", {
+        ["glow"] = {
+            defaultSize = 1,
+            sizes = AllSizes(0, 0, 0, 0),
+        },
+        ["blizz"] = {
+            defaultSize = 4,
+            sizes = {
+                [0] = { offsetX = 0, offsetY = 0, shiftX = 0, shiftY = 0 },
+                [1] = { offsetX = 2, offsetY = 1, shiftX = 0, shiftY = 0 },
+                [2] = { offsetX = 3, offsetY = 1, shiftX = 1, shiftY = 0 },
+                [3] = { offsetX = 4, offsetY = 2, shiftX = 2, shiftY = 0 },
+                [4] = { offsetX = 5, offsetY = 3, shiftX = 2, shiftY = 0 },
+            },
+        },
+        ["dialog"] = {
+            defaultSize = 2,
+            sizes = {
+                [0] = { offsetX = 0, offsetY = 0, shiftX = 0, shiftY = 0 },
+                [1] = { offsetX = 2, offsetY = 2, shiftX = 0, shiftY = 0 },
+                [2] = { offsetX = 2, offsetY = 2, shiftX = 0, shiftY = 0 },
+                [3] = { offsetX = 4, offsetY = 4, shiftX = 0, shiftY = 0 },
+                [4] = { offsetX = 8, offsetY = 8, shiftX = 0, shiftY = 0 },
+            },
+        },
+        ["sm:Blizzard Achievement Wood"] = {
+            defaultSize = 1,
+            sizes = AllSizes(1, 1, 0, 0),
+        },
+    })
+end
+
 local EG = EllesmereUI.ELLESMERE_GREEN
 
 -- External weak-keyed lookup table for frame state (prevents tainting Blizzard frames)
@@ -31,17 +72,67 @@ local defaults = {
             borderSize    = 1,
             showCoords    = false,
             coordPrecision = 0,
+            -- Coordinates display: mode (never/hover/always) + anchor position.
+            -- Existing users are migrated from the legacy coordsBelow toggle
+            -- (minimap_coords_mode_position_v1): true -> always/belowMap,
+            -- false -> hover/topLeft.
+            coordsMode     = "always",
+            coordsPosition = "topLeft",
+            -- FPS/MS readout (Text section); options mirror the QoL FPS counter
+            showFPS           = false,
+            fpsTextSize       = 12,
+            fpsShowLocalMS    = true,
+            fpsShowWorldMS    = false,
+            fpsUseAccent      = false,  -- description text: accent vs custom fpsColor
+            fpsColorClockAMPM = false,  -- also tint the clock's AM/PM suffix
+            fpsPosition       = "bottomLeft",
+            fpsOffsetX        = 0,
+            fpsOffsetY        = 0,
+            fpsHoverTooltip   = "none",  -- none | lockouts | vault
+            fpsUpdateInterval = 3,       -- seconds between FPS/MS refreshes (1-5)
+            clockHoverTooltip = "none",
+            -- Show Instance Difficulty as Text: replaces the Blizzard
+            -- difficulty flag with a compact "20M"-style readout.
+            diffTextEnabled   = false,
+            diffTextPosition  = "topLeft",
+            diffTextSize      = 12,
+            diffTextOffsetX   = 0,
+            diffTextOffsetY   = 0,
+            -- Accented Text: which Text-section elements colour their
+            -- description parts (clock AM/PM key is fpsColorClockAMPM).
+            -- diffTextReactive colours the difficulty letter by TIER instead
+            -- of the flat accent/custom colour; mutually exclusive with
+            -- diffTextAccent.
+            fpsColorSuffix    = true,
+            diffTextAccent    = false,
+            diffTextReactive  = false,
             borderR       = 0, borderG = 0, borderB = 0, borderA = 1,
             useClassColor = false,
-            hideZoneText  = false,
-            zoneInside    = false,
+            -- Location/clock display: none | inside (on the map) | edge (boxed
+            -- on the map edge). Existing users are migrated from the legacy
+            -- zoneInside/clockInside toggles and the removed Show Blizzard
+            -- Elements Zone/Clock checkboxes (minimap_clock_location_mode_v2).
+            locationMode  = "inside",
+            locationPosition = "bottom",
+            zoneReactiveColor = false,  -- tint zone text by the zone's PvP ruleset
+            zoneShowSubZone   = false,  -- prefer the subzone name (zone fallback)
             scrollZoom    = true,
             openMicroMenuOnMiddleClick = true,
             savedZoom     = 0,
-            hideZoomButtons      = true,
+            -- false = Zoom +/- Icons checked in Show Blizzard Elements (the
+            -- buttons hover-show as usual). The old true default was inert on
+            -- Midnight (it targeted the pre-Midnight global button names), so
+            -- flipping it changes nobody's visual state.
+            hideZoomButtons      = false,
             hideTrackingButton   = true,
             hideGameTime         = false,
             hideMail             = false,
+            -- Mail indicator: "button" = in the element row; or a map corner
+            -- (TOPLEFT/TOPRIGHT/BOTTOMLEFT/BOTTOMRIGHT), pinned like the
+            -- Omnium Folio corner option, nudged by the X/Y offsets.
+            mailPosition         = "button",
+            mailOffsetX          = 0,
+            mailOffsetY          = 0,
             hideRaidDifficulty   = false,
             hideCraftingOrder    = false,
             friendsMaxRows       = 0,   -- 0 = no cap; else cap per section, show "...and N more"
@@ -49,7 +140,10 @@ local defaults = {
             mouseoverExtraBtns   = false,  -- extra buttons only show on minimap mouseover
             greatVaultExtraInfo  = true,
             hideAddonCompartment = false,
-            showOmniumFolio      = true,   -- expansion landing page button
+            -- Expansion landing page button: never | hover | always. Existing
+            -- users are migrated from the legacy showOmniumFolio toggle
+            -- (minimap_omnium_folio_mode_v1).
+            omniumFolioMode      = "always",
             omniumFolioCorner    = "BOTTOMLEFT",  -- which minimap corner to anchor to
             omniumFolioX         = 0,
             omniumFolioY         = 0,
@@ -60,12 +154,19 @@ local defaults = {
             ungroupedButtons     = {},
             freeMoveBtns         = false,
             btnBackgrounds       = true,
-            customBtnSizeEnabled = false,
-            customBtnSize        = 24,
             btnPositions         = {},
-            extraFlyoutScale     = 1.0,
-            showClock     = true,
-            clockInside   = true,
+            btnRowPosition       = "blUp",   -- blUp = original corner + direction
+            btnRowSpacing        = 0,
+            btnRowDistance       = 0,
+            flyoutGrowDir        = "auto",   -- Grow Tooltip/Popup: auto/up/down/left/right
+            elementRowPosition   = "tlDown", -- tlDown = original corner + direction
+            elementRowSpacing    = 0,
+            elementRowDistance   = 0,
+
+            extraFlyoutScale     = 1.0,   -- M+ Portals flyout scale
+            customTooltipScale   = 1.0,   -- custom tooltips on the unique minimap buttons
+            clockMode     = "inside",
+            clockPosition = "top",
             clockFormat   = "12h",
             clockScale    = 1.15,
             clockOffsetX  = 0,
@@ -96,6 +197,24 @@ local function GetBorderColor(cfg)
         return EG.r, EG.g, EG.b, 1
     end
     return cfg.borderR, cfg.borderG, cfg.borderB, cfg.borderA or 1
+end
+
+-- Map BORDER colour, driven by the three Border Size swatches: class colour >
+-- accent (legacy useClassColor flag) > custom (borderColor, set by the swatch
+-- or style select) > legacy borderR/G/B fallback, so pre-style users keep
+-- their existing border colour until they touch the new controls. The
+-- clock/zone edge boxes follow the same colour.
+local function GetBorderStyleColor(cfg)
+    if cfg.borderUseClassColor and EllesmereUI.GetClassColor then
+        local cc = EllesmereUI.GetClassColor(select(2, UnitClass("player")))
+        if cc then return cc.r, cc.g, cc.b, cfg.borderA or 1 end
+    end
+    if cfg.useClassColor then
+        return EG.r, EG.g, EG.b, cfg.borderA or 1
+    end
+    local c = cfg.borderColor
+    if c then return c.r, c.g, c.b, cfg.borderA or 1 end
+    return GetBorderColor(cfg)
 end
 
 -------------------------------------------------------------------------------
@@ -131,7 +250,8 @@ local minimapDecorations = {
 }
 
 local minimapButtonMap = {
-    { key = "hideZoomButtons",      names = { "MinimapZoomIn", "MinimapZoomOut" } },
+    -- Zoom buttons are handled in ApplyMinimap (hideZoomButtons reparents
+    -- Minimap.ZoomIn/ZoomOut to the hidden frame), not via this name map.
     { key = "hideTrackingButton",   names = { "MiniMapTrackingButton" } },
     { key = "hideGameTime",         names = { "GameTimeFrame" } },
     { key = "hideMail",             names = { "MiniMapMailFrame" } },
@@ -184,6 +304,12 @@ local flyoutOwnedFrames = {}
 -- Forward-declared here so the flyout panels (created earlier than the
 -- controller) can trigger a re-evaluate from their OnShow/OnHide hooks.
 local MO_Evaluate
+
+-- Map-region hover reveal: EBS._HVRevealMapHover, defined next to the folio
+-- code further down (namespace-scoped, not a local -- this file is close to
+-- the 200-local main-chunk cap). Child elements created earlier in the file
+-- (mail indicator etc.) fire it from their OnEnter -- entering the map
+-- directly onto a mouse-enabled child never fires the minimap's own OnEnter.
 
 -------------------------------------------------------------------------------
 --  Minimap Button Flyout
@@ -325,10 +451,14 @@ local function LayoutFlyoutButtons()
     end
 
     local btnSize = GetAddonBtnSize()
+    -- Outer breathing room; gaps between buttons stay FLYOUT_PADDING. The
+    -- ring overlay overhangs each button by 3px, so 8 leaves 5px of VISIBLE
+    -- clearance between the rings and the panel edge.
+    local margin = 8
     local cols = math.min(count, FLYOUT_COLS)
     local rows = math.ceil(count / cols)
-    local pw = FLYOUT_PADDING + cols * (btnSize + FLYOUT_PADDING)
-    local ph = FLYOUT_PADDING + rows * (btnSize + FLYOUT_PADDING)
+    local pw = margin * 2 + cols * btnSize + (cols - 1) * FLYOUT_PADDING
+    local ph = margin * 2 + rows * btnSize + (rows - 1) * FLYOUT_PADDING
     flyoutPanel:SetSize(pw, ph)
 
     for i, btn in ipairs(buttons) do
@@ -344,8 +474,8 @@ local function LayoutFlyoutButtons()
 
         local col = (i - 1) % cols
         local row = math.floor((i - 1) / cols)
-        local xOff = FLYOUT_PADDING + col * (btnSize + FLYOUT_PADDING)
-        local yOff = -(FLYOUT_PADDING + row * (btnSize + FLYOUT_PADDING))
+        local xOff = margin + col * (btnSize + FLYOUT_PADDING)
+        local yOff = -(margin + row * (btnSize + FLYOUT_PADDING))
 
         btn:SetParent(flyoutPanel)
         -- Unlock fixed strata/level first (LibDBIcon locks these)
@@ -425,6 +555,47 @@ local function RestoreFlyoutButtons()
     wipe(flyoutSavedParents)
 end
 
+-- Grow Tooltip/Popup: which way the popups (M+ portals flyout, button group
+-- flyout) and the custom tooltips open out from their buttons. All consumers
+-- share one direction. Auto follows Button Row Position: vertical rows
+-- (columns on the left/right edges) open left, horizontal rows (above/below
+-- the map) open down. Namespace-scoped (EBS field, not locals) -- this file
+-- is close to the 200-local main-chunk cap.
+-- edge = anchor tuples (tooltip point, anchor point, x, y) hanging the popup
+-- from a corner of its anchor (friends/calendar tooltips, flyouts); center =
+-- centered on the facing edge (vault tooltip); tt = named sides for the small
+-- ShowWidgetTooltip labels (anything besides left/right/below anchors above).
+EBS._Grow = {
+    edge = {
+        left  = { "TOPRIGHT",   "TOPLEFT",    -4, 0 },
+        right = { "TOPLEFT",    "TOPRIGHT",    4, 0 },
+        up    = { "BOTTOMLEFT", "TOPLEFT",     0, 4 },
+        down  = { "TOPLEFT",    "BOTTOMLEFT",  0, -4 },
+    },
+    center = {
+        left  = { "RIGHT",  "LEFT",   -4, 0 },
+        right = { "LEFT",   "RIGHT",   4, 0 },
+        up    = { "BOTTOM", "TOP",     0, 4 },
+        down  = { "TOP",    "BOTTOM",  0, -4 },
+    },
+    tt = { left = "left", right = "right", up = "above", down = "below" },
+}
+
+function EBS._Grow.Dir()
+    local mp = EBS.db and EBS.db.profile.minimap
+    local g = (mp and mp.flyoutGrowDir) or "auto"
+    if g ~= "auto" then return g end
+    local rp = (mp and mp.btnRowPosition) or "blUp"
+    if rp == "blUp" or rp == "tlDown" or rp == "brUp" or rp == "trDown" then
+        return "left"
+    end
+    return "down"
+end
+
+function EBS._Grow.TT()
+    return EBS._Grow.tt[EBS._Grow.Dir()] or "left"
+end
+
 local _flyoutBuilt = false
 
 local function EnsureFlyoutPanel()
@@ -438,12 +609,34 @@ local function EnsureFlyoutPanel()
         })
         flyoutPanel:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
         flyoutPanel:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-        flyoutPanel:SetPoint("BOTTOMLEFT", flyoutToggle, "BOTTOMRIGHT", 2, 0)
+        -- Anchored per Grow Tooltip/Popup on every open (see ShowFlyoutPanel)
         flyoutPanel:SetClampedToScreen(true)
         flyoutOwnedFrames[flyoutPanel] = true
         -- Keep the mouseover stack in sync while this flyout opens/closes.
         flyoutPanel:HookScript("OnShow", function() if MO_Evaluate then MO_Evaluate() end end)
         flyoutPanel:HookScript("OnHide", function() if MO_Evaluate then MO_Evaluate() end end)
+        -- Start hidden: frames are created SHOWN, and OnShow only fires on a
+        -- real hide->show transition -- without this the first open of the
+        -- session never installs the click-away watcher below.
+        flyoutPanel:Hide()
+        -- Click-away dismiss (same pattern as the options-panel dropdowns):
+        -- while shown, close on any left press outside the grid and its
+        -- toggle. IsMouseButtonDown reads raw input state -- polling it never
+        -- captures the click, so world/UI clicks still land where they were
+        -- headed. Clicks on the toggle are excluded so its own OnClick
+        -- handles the close without a close/reopen race.
+        flyoutPanel:HookScript("OnShow", function(self)
+            self:SetScript("OnUpdate", function(m)
+                if IsMouseButtonDown("LeftButton")
+                   and not m:IsMouseOver()
+                   and not (flyoutToggle and flyoutToggle:IsMouseOver()) then
+                    m:Hide()
+                end
+            end)
+        end)
+        flyoutPanel:HookScript("OnHide", function(self)
+            self:SetScript("OnUpdate", nil)
+        end)
     end
 end
 
@@ -481,6 +674,20 @@ end
 
 local function ShowFlyoutPanel()
     EnsureFlyoutPanel()
+    -- Re-anchor per Grow Tooltip/Popup on every open (the setting or Auto's
+    -- underlying row position can change between opens). Left/right keep the
+    -- toggle's bottom edge; up/down keep its left edge. 2px gap.
+    local dir = EBS._Grow.Dir()
+    flyoutPanel:ClearAllPoints()
+    if dir == "right" then
+        flyoutPanel:SetPoint("BOTTOMLEFT", flyoutToggle, "BOTTOMRIGHT", 2, 0)
+    elseif dir == "up" then
+        flyoutPanel:SetPoint("BOTTOMLEFT", flyoutToggle, "TOPLEFT", 0, 2)
+    elseif dir == "down" then
+        flyoutPanel:SetPoint("TOPLEFT", flyoutToggle, "BOTTOMLEFT", 0, -2)
+    else
+        flyoutPanel:SetPoint("BOTTOMRIGHT", flyoutToggle, "BOTTOMLEFT", -2, 0)
+    end
     -- Show the panel BEFORE layout so the Show hook on addon buttons
     -- sees flyoutPanel:IsShown() == true and skips the alpha-zero path.
     flyoutPanel:Show()
@@ -508,6 +715,54 @@ end
 local function GetInteractableBtnSize()
     local mp = EBS.db and EBS.db.profile.minimap
     return mp and mp.interactableBtnSize or 22
+end
+
+-- Button/element row modes, named by the MAP corner the row starts from plus
+-- the direction it grows. Vertical growth hugs the OUTSIDE of the left/right
+-- edge (blUp = left edge from the bottom corner upward -- the original button
+-- row); horizontal growth runs above/below the map. point/rel = per-button
+-- anchor (its point -> map point), dirX/dirY = growth vector, awayX/awayY =
+-- Distance from Map push. Rows place buttons with a running cursor in snapped
+-- physical-pixel steps (see PlaceRowButton/PlaceElement), keeping icons flush
+-- at 0 spacing and every gap identical.
+local BTN_ROW_MODES = {
+    -- Left edge (vertical)
+    blUp    = { point = "BOTTOMRIGHT", rel = "BOTTOMLEFT",  dirX = 0,  dirY = 1,  awayX = -1, awayY = 0 },
+    tlDown  = { point = "TOPRIGHT",    rel = "TOPLEFT",     dirX = 0,  dirY = -1, awayX = -1, awayY = 0 },
+    -- Right edge (vertical)
+    brUp    = { point = "BOTTOMLEFT",  rel = "BOTTOMRIGHT", dirX = 0,  dirY = 1,  awayX = 1,  awayY = 0 },
+    trDown  = { point = "TOPLEFT",     rel = "TOPRIGHT",    dirX = 0,  dirY = -1, awayX = 1,  awayY = 0 },
+    -- Above the map (horizontal)
+    tlRight = { point = "BOTTOMLEFT",  rel = "TOPLEFT",     dirX = 1,  dirY = 0,  awayX = 0,  awayY = 1 },
+    trLeft  = { point = "BOTTOMRIGHT", rel = "TOPRIGHT",    dirX = -1, dirY = 0,  awayX = 0,  awayY = 1 },
+    -- Below the map (horizontal)
+    blRight = { point = "TOPLEFT",     rel = "BOTTOMLEFT",  dirX = 1,  dirY = 0,  awayX = 0,  awayY = -1 },
+    brLeft  = { point = "TOPRIGHT",    rel = "BOTTOMRIGHT", dirX = -1, dirY = 0,  awayX = 0,  awayY = -1 },
+}
+
+local function GetBtnRowMode(mp)
+    return BTN_ROW_MODES[mp and mp.btnRowPosition or "blUp"] or BTN_ROW_MODES.blUp
+end
+
+-- Blizzard element row (tracking, calendar, mail, crafting) -- same mode
+-- table; square shape only (the circle layout wraps around the clock).
+local function GetElementRowMode(mp)
+    return BTN_ROW_MODES[mp and mp.elementRowPosition or "tlDown"] or BTN_ROW_MODES.tlDown
+end
+
+-- Distance from Map push for a row: left/right rows move horizontally,
+-- above/below rows vertically. Icon Spacing is applied per link at placement,
+-- where the row cursor runs in snapped physical-pixel steps.
+local function GetRowBase(mode, distance)
+    local d = distance or 0
+    return d * mode.awayX, d * mode.awayY
+end
+
+-- Scale for the custom tooltips shown by the unique minimap buttons (Great
+-- Vault, friends, calendar, mail, tracking, crafting, flyout toggle, portals).
+local function GetCustomTooltipScale()
+    local mp = EBS.db and EBS.db.profile.minimap
+    return mp and mp.customTooltipScale or 1.0
 end
 
 local function CreateFlyoutToggle()
@@ -570,11 +825,14 @@ local function CreateFlyoutToggle()
 
     btn:SetScript("OnClick", function(self)
         if GetFFD(self).freeMoveJustDragged then return end
+        -- Opening the grid replaces the label tooltip (same as M+ Portals)
+        if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip(true) end
         ToggleFlyoutPanel()
     end)
     btn:SetScript("OnEnter", function(self)
+        if flyoutPanel and flyoutPanel:IsShown() then return end
         if not GetFFD(self).freeMoveJustDragged and EllesmereUI.ShowWidgetTooltip then
-            EllesmereUI.ShowWidgetTooltip(self, "Addon Buttons", { anchor = "left" })
+            EllesmereUI.ShowWidgetTooltip(self, "Addon Buttons", { anchor = EBS._Grow.TT(), scale = GetCustomTooltipScale() })
         end
     end)
     btn:SetScript("OnLeave", function(self)
@@ -597,6 +855,8 @@ end
 local coordFrame, coordTicker
 local clockFrame, clockTicker, clockBg
 local locationFrame, locationBg
+local fpsBg
+local diffTextFrame
 
 local function GetMinimapFont()
     local path = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("minimap") or STANDARD_TEXT_FONT
@@ -610,6 +870,21 @@ local function ApplyMinimapFont(fs, size)
     fs:SetFont(path, size, flag)
 end
 
+-- Description-text colour for the minimap texts (clock AM/PM, the "fps"/"ms"
+-- suffixes): the custom fpsColor swatch or the live accent. The dynamic
+-- values themselves stay white. Returns r, g, b plus the escape-code hex.
+local function GetDescColor(mp)
+    local r, g, b
+    if mp and mp.fpsUseAccent then
+        r, g, b = EG.r, EG.g, EG.b
+    else
+        local c = mp and mp.fpsColor
+        if c then r, g, b = c.r or 1, c.g or 1, c.b or 1 else r, g, b = 1, 1, 1 end
+    end
+    return r, g, b, format("%02x%02x%02x",
+        math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
+end
+
 -- Cache clock CVars so we don't read them every second
 local cachedUse24h, cachedUseLocal
 local function RefreshClockCVars()
@@ -620,20 +895,95 @@ end
 local function UpdateClock()
     if not clockFrame then return end
     if cachedUse24h == nil then RefreshClockCVars() end
+    local h, m
     if cachedUseLocal then
-        local fmt = cachedUse24h and "%H:%M" or "%I:%M %p"
-        clockFrame:SetText(date(fmt))
+        local t = date("*t")
+        h, m = t.hour, t.min
     else
-        local h, m = GetGameTime()
-        if cachedUse24h then
-            clockFrame:SetText(format("%02d:%02d", h, m))
+        h, m = GetGameTime()
+    end
+    if cachedUse24h then
+        clockFrame:SetText(format("%02d:%02d", h, m))
+    else
+        -- Unpadded hour in 12-hour mode (1:03, not 01:03), matching the
+        -- Blizzard clock. 24-hour mode keeps the pad, also matching Blizzard.
+        -- The AM/PM suffix only takes the description colour when opted in
+        -- (Accented Text > Clock); digits always stay white.
+        local ampm = h >= 12 and "PM" or "AM"
+        h = h % 12
+        if h == 0 then h = 12 end
+        local mp = EBS.db and EBS.db.profile.minimap
+        if mp and mp.fpsColorClockAMPM then
+            local _, _, _, hex = GetDescColor(mp)
+            clockFrame:SetFormattedText("%d:%02d |cff%s%s|r", h, m, hex, ampm)
         else
-            local ampm = h >= 12 and "PM" or "AM"
-            h = h % 12
-            if h == 0 then h = 12 end
-            clockFrame:SetText(format("%d:%02d %s", h, m, ampm))
+            clockFrame:SetFormattedText("%d:%02d %s", h, m, ampm)
         end
     end
+end
+
+-- Coordinates mode/position with legacy fallback: data imported from a
+-- pre-dropdown export carries only coordsBelow (true = always-on below the
+-- map; otherwise hover-only at the top left).
+local function GetCoordsModePos(mp)
+    if not mp then return "always", "topLeft" end
+    local mode = mp.coordsMode or (mp.coordsBelow and "always") or "always"
+    local pos = mp.coordsPosition or (mp.coordsBelow and "belowMap") or "topLeft"
+    return mode, pos
+end
+
+-- Clock/location display mode with legacy fallback: pre-dropdown data carries
+-- the clockInside/zoneInside toggles (clockInside defaulted ON, zoneInside
+-- defaulted OFF) plus the removed Show Blizzard Elements Zone/Clock
+-- checkboxes (showClock == false / hideZoneText == true meant hidden).
+local function GetElementModes(mp)
+    if not mp then return "inside", "inside" end
+    local clockMode = mp.clockMode
+    if clockMode == nil then
+        if mp.showClock == false then
+            clockMode = "none"
+        else
+            clockMode = (mp.clockInside == false) and "edge" or "inside"
+        end
+    end
+    local locationMode = mp.locationMode
+    if locationMode == nil then
+        if mp.hideZoneText == true then
+            locationMode = "none"
+        else
+            locationMode = mp.zoneInside and "inside" or "edge"
+        end
+    end
+    return clockMode, locationMode
+end
+
+-- position key -> element point, minimap relPoint, base X, base Y (inside
+-- flavor). Shared by the coordinates, clock, and zone text elements.
+local MAP_POS_ANCHORS = {
+    belowMap    = { "TOP",         "BOTTOM",       0, -5 },
+    aboveMap    = { "BOTTOM",      "TOP",          0,  5 },
+    topLeft     = { "TOPLEFT",     "TOPLEFT",      4, -4 },
+    top         = { "TOP",         "TOP",          0, -4 },
+    topRight    = { "TOPRIGHT",    "TOPRIGHT",    -4, -4 },
+    left        = { "LEFT",        "LEFT",         4,  0 },
+    right       = { "RIGHT",       "RIGHT",       -4,  0 },
+    bottomLeft  = { "BOTTOMLEFT",  "BOTTOMLEFT",   4,  4 },
+    bottom      = { "BOTTOM",      "BOTTOM",       0,  4 },
+    bottomRight = { "BOTTOMRIGHT", "BOTTOMRIGHT", -4,  4 },
+}
+
+-- Anchor for the clock/zone text bar. Inside style keeps the 4px map inset;
+-- edge style flips the inset so the box straddles the map border (7px out on
+-- square maps, 3px in on circles -- the round mask curves away from the frame
+-- edge). Above/Below Map float fully outside in both styles.
+local function ResolveElementAnchor(pos, style, isCircle)
+    local a = MAP_POS_ANCHORS[pos] or MAP_POS_ANCHORS.top
+    local x, y = a[3], a[4]
+    if style == "edge" and pos ~= "belowMap" and pos ~= "aboveMap" then
+        if x ~= 0 then x = isCircle and (x > 0 and 3 or -3) or (x > 0 and -7 or 7) end
+        if y ~= 0 then y = isCircle and (y > 0 and 3 or -3) or (y > 0 and -7 or 7) end
+    end
+    return a[1], a[2], x, y
 end
 
 -- Cache coord format string so we don't rebuild it every 0.5s
@@ -654,12 +1004,40 @@ local function UpdateCoords()
     coordFrame:SetText(format(cachedCoordFmt, x * 100, y * 100))
 end
 
+-- Reactive zone coloring: tint by the current zone's PvP ruleset (friendly
+-- green, hostile/arena/combat red, sanctuary blue, contested/unknown yellow).
+local function GetZoneReactionColor()
+    local pvpType = C_PvP and C_PvP.GetZonePVPInfo and C_PvP.GetZonePVPInfo()
+    if pvpType == "friendly" then
+        return 0.05, 0.85, 0.03
+    elseif pvpType == "sanctuary" then
+        return 0.035, 0.58, 0.84
+    elseif pvpType == "arena" or pvpType == "hostile" or pvpType == "combat" then
+        return 0.84, 0.03, 0.03
+    end
+    return 0.9, 0.85, 0.05
+end
+
 local lastLocationText
 local function UpdateLocation()
     if not locationFrame then return end
     if InCombatLockdown() then return end
-    local sub = GetSubZoneText()
-    local text = (sub and sub ~= "") and sub or (GetZoneText() or "")
+    -- Color before the text dedup below so a settings toggle or a ruleset
+    -- change within the same zone name still repaints.
+    local mp = EBS.db and EBS.db.profile.minimap
+    if mp and mp.zoneReactiveColor then
+        local r, g, b = GetZoneReactionColor()
+        locationFrame:SetTextColor(r, g, b, 0.9)
+    else
+        locationFrame:SetTextColor(1, 1, 1, 0.9)
+    end
+    local text
+    if mp and mp.zoneShowSubZone then
+        local sub = GetSubZoneText()
+        text = (sub and sub ~= "") and sub or (GetZoneText() or "")
+    else
+        text = GetZoneText() or ""
+    end
     if text == lastLocationText then return end
     lastLocationText = text
     locationFrame:SetText(text)
@@ -896,6 +1274,32 @@ local function IsPinFrame(name)
     return false
 end
 
+-- Third-party addon buttons show a game tooltip from their OnEnter: LibDBIcon
+-- buttons use the lib's own LibDBIconTooltip frame (anchored by screen half,
+-- which is what put tooltips BELOW the icons), everything else the global
+-- GameTooltip. Post-hook each collected button so whichever tooltip the
+-- button owns follows Grow Tooltip/Popup: by the time the hook runs, the
+-- addon's handler has already owned, anchored, and shown it, so re-pointing
+-- here wins. Namespace-scoped (200-local cap).
+do
+    local hooked = {}
+    local function repoint(tt, btn)
+        if tt and tt:IsShown() and tt:GetOwner() == btn then
+            local gpt = EBS._Grow.edge[EBS._Grow.Dir()] or EBS._Grow.edge.left
+            tt:ClearAllPoints()
+            tt:SetPoint(gpt[1], btn, gpt[2], gpt[3], gpt[4])
+        end
+    end
+    function EBS._HookAddonBtnTT(btn)
+        if hooked[btn] then return end
+        hooked[btn] = true
+        btn:HookScript("OnEnter", function(self)
+            repoint(_G.GameTooltip, self)
+            repoint(_G.LibDBIconTooltip, self)
+        end)
+    end
+end
+
 -- Gather all minimap buttons (Blizzard + addon) into cachedAddonButtons
 local function GatherMinimapButtons()
     wipe(cachedAddonButtons)
@@ -923,12 +1327,14 @@ local function GatherMinimapButtons()
                             _addonVisible[child] = child:IsShown()
                         end
                         cachedAddonButtons[#cachedAddonButtons + 1] = child
+                        EBS._HookAddonBtnTT(child)
                     end
                 elseif not child:IsObjectType("Button") and name and name:match("^LibDBIcon10_") then
                     if _addonVisible[child] == nil then
                         _addonVisible[child] = child:IsShown()
                     end
                     cachedAddonButtons[#cachedAddonButtons + 1] = child
+                    EBS._HookAddonBtnTT(child)
                 end
             end
         end
@@ -1175,6 +1581,7 @@ local function GetVaultTooltip()
     f:SetBackdropColor(0.06, 0.06, 0.06, 0.90)
     f:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
     f:SetFrameStrata("TOOLTIP")
+    f:SetClampedToScreen(true)
     f:Hide()
 
     -- Fade animations (matches ShowWidgetTooltip/HideWidgetTooltip)
@@ -1225,9 +1632,8 @@ local function ShowVaultTooltip(anchor)
     }
 
     local tt = GetVaultTooltip()
-    -- Scale the whole flyout to the user's Extra Button Flyout Scale (re-applied each show).
-    local _mp = EBS.db and EBS.db.profile.minimap
-    tt:SetScale(_mp and _mp.extraFlyoutScale or 1.0)
+    -- Scale the whole tooltip to the user's Custom Tooltip Size (re-applied each show).
+    tt:SetScale(GetCustomTooltipScale())
 
     -- Apply user's current font to all FontStrings
     local fontPath = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("minimap")) or "Fonts\\FRIZQT__.TTF"
@@ -1280,7 +1686,8 @@ local function ShowVaultTooltip(anchor)
     local totalH = titleTop + 3 * VAULT_ROW_H + VAULT_PAD
     tt:SetSize(totalW, totalH)
     tt:ClearAllPoints()
-    tt:SetPoint("RIGHT", anchor, "LEFT", -4, 0)
+    local gpt = EBS._Grow.center[EBS._Grow.Dir()] or EBS._Grow.center.left
+    tt:SetPoint(gpt[1], anchor, gpt[2], gpt[3], gpt[4])
 
     -- Fade in
     tt._fadeOutAG:Stop()
@@ -1434,6 +1841,7 @@ local function CreateMinimapPortalFlyout()
     flyout:SetSize(flyW, flyH)
     flyout:SetFrameStrata("DIALOG")
     flyout:SetFrameLevel(100)
+    flyout:SetClampedToScreen(true)
     flyout:Hide()
 
     local bg = flyout:CreateTexture(nil, "BACKGROUND")
@@ -1705,7 +2113,7 @@ end
 local function ToggleMinimapPortalFlyout(anchorBtn)
     if InCombatLockdown() then return end
     local flyout = CreateMinimapPortalFlyout()
-    -- Scale to the user's Extra Button Flyout Scale. Safe (combat early-returns
+    -- Scale to the user's M+ Portals Scale. Safe (combat early-returns
     -- above; secure children). Set before the anchor math so GetEffectiveScale
     -- below reflects it.
     local _mp = EBS.db and EBS.db.profile.minimap
@@ -1713,12 +2121,28 @@ local function ToggleMinimapPortalFlyout(anchorBtn)
     if flyout:IsShown() then
         flyout:Hide()
     else
+        -- Open in the Grow Tooltip/Popup direction. Anchoring goes through
+        -- UIParent in effective-scale space so the flyout's own scale never
+        -- shifts it off the button. 4px gap on the facing edge; the other
+        -- axis keeps the button's top/left edge (nudged 4px, matching the
+        -- original leftward placement).
         local bs = anchorBtn:GetEffectiveScale()
         local fs = flyout:GetEffectiveScale()
-        local bTop  = anchorBtn:GetTop()  * bs
-        local bLeft = anchorBtn:GetLeft() * bs
+        local bTop    = anchorBtn:GetTop()    * bs
+        local bBottom = anchorBtn:GetBottom() * bs
+        local bLeft   = anchorBtn:GetLeft()   * bs
+        local bRight  = anchorBtn:GetRight()  * bs
+        local dir = EBS._Grow.Dir()
         flyout:ClearAllPoints()
-        flyout:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", (bLeft - 4) / fs, (bTop + 4) / fs)
+        if dir == "right" then
+            flyout:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (bRight + 4) / fs, (bTop + 4) / fs)
+        elseif dir == "up" then
+            flyout:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", (bLeft - 4) / fs, (bTop + 4) / fs)
+        elseif dir == "down" then
+            flyout:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (bLeft - 4) / fs, (bBottom - 4) / fs)
+        else
+            flyout:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", (bLeft - 4) / fs, (bTop + 4) / fs)
+        end
         flyout:Show()
     end
 end
@@ -1757,7 +2181,7 @@ local function CreatePortalBtn(parent)
     btn:SetScript("OnEnter", function(self)
         self._icon:SetVertexColor(1, 1, 1, 1)
         if _portalFlyout and _portalFlyout:IsShown() then return end
-        if EllesmereUI.ShowWidgetTooltip then EllesmereUI.ShowWidgetTooltip(self, "M+ Portals", { anchor = "left" }) end
+        if EllesmereUI.ShowWidgetTooltip then EllesmereUI.ShowWidgetTooltip(self, "M+ Portals", { anchor = EBS._Grow.TT(), scale = GetCustomTooltipScale() }) end
     end)
     btn:SetScript("OnLeave", function(self)
         self._icon:SetVertexColor(0.85, 0.85, 0.85, 1)
@@ -1994,6 +2418,7 @@ local function GetFTTMenu()
     local m = CreateFrame("Frame", nil, UIParent)
     m:SetFrameStrata("TOOLTIP")
     m:SetFrameLevel(500)
+    m:SetClampedToScreen(true)
     m:EnableMouse(true)
     m:SetSize(MW, PAD * 2 + RH * 2)
     m:Hide()
@@ -2061,6 +2486,7 @@ local function GetFriendsTT()
     local f = CreateFrame("Frame", nil, UIParent)
     f:SetFrameStrata("TOOLTIP")
     f:SetFrameLevel(200)
+    f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetScript("OnEnter", CancelFTTHide)
     f:SetScript("OnLeave", ScheduleFTTHide)
@@ -2070,6 +2496,14 @@ local function GetFriendsTT()
     bg:SetAllPoints()
     bg:SetColorTexture(0.067, 0.067, 0.067, 0.92)
     EllesmereUI.MakeBorder(f, 1, 1, 1, 0.15, EllesmereUI.PanelPP)
+    -- Mouseover Extra Buttons: hovering this tooltip counts as hovering the
+    -- button stack, so crossing onto it must not hide the extra buttons.
+    -- MO_OverAny reads the frame via EBS (this local is do-block scoped) and
+    -- the hooks re-evaluate when the tooltip opens/closes -- without the
+    -- OnHide one, nothing would re-run the fade-out after it closes.
+    EBS._friendsTT = f
+    f:HookScript("OnShow", function() if MO_Evaluate then MO_Evaluate() end end)
+    f:HookScript("OnHide", function() if MO_Evaluate then MO_Evaluate() end end)
     _friendsTT = f
     return f
 end
@@ -2155,14 +2589,17 @@ function ShowFriendsTooltip(anchor)
     CancelFTTHide()
     local guild, favorites, friends = GatherOnlineFriends()
     local tt = GetFriendsTT()
-    -- Scale the whole flyout to the user's Extra Button Flyout Scale (re-applied each show).
-    local _mp = EBS.db and EBS.db.profile.minimap
-    tt:SetScale(_mp and _mp.extraFlyoutScale or 1.0)
+    -- Scale the whole tooltip to the user's Custom Tooltip Size (re-applied each show).
+    tt:SetScale(GetCustomTooltipScale())
     local total = #guild + #favorites + #friends
 
     local mp = EBS.db and EBS.db.profile and EBS.db.profile.minimap
     local maxRows = mp and tonumber(mp.friendsMaxRows) or 0
     if maxRows and maxRows < 0 then maxRows = 0 end
+    -- Hard cap: never more than 30 rows per section, even at 0 ("no cap")
+    -- or stale values above the slider's current max -- big guilds otherwise
+    -- build enormous tooltips. Overflow still gets the "...and N more" row.
+    if maxRows == 0 or maxRows > 30 then maxRows = 30 end
 
     -- Refresh fonts to match current global font setting
     local font = FTT_FONT()
@@ -2203,7 +2640,8 @@ function ShowFriendsTooltip(anchor)
         row.button:Show()
         row.name:Show()
         tt:ClearAllPoints()
-        tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, 0)
+        local gpt = EBS._Grow.edge[EBS._Grow.Dir()] or EBS._Grow.edge.left
+        tt:SetPoint(gpt[1], anchor, gpt[2], gpt[3], gpt[4])
         tt:Show()
         return total
     end
@@ -2315,17 +2753,11 @@ function ShowFriendsTooltip(anchor)
 
     tt:SetSize(ttW, ttH)
     tt:ClearAllPoints()
-    tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, 0)
+    local gpt = EBS._Grow.edge[EBS._Grow.Dir()] or EBS._Grow.edge.left
+    tt:SetPoint(gpt[1], anchor, gpt[2], gpt[3], gpt[4])
     tt:Show()
-    -- Clamp to screen: if the bottom edge goes off-screen, shift up
-    local bottom = tt:GetBottom()
-    if bottom and bottom < 0 then
-        local top = tt:GetTop()
-        if top then
-            tt:ClearAllPoints()
-            tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, -bottom)
-        end
-    end
+    -- Off-screen protection is SetClampedToScreen on the frame (handles all
+    -- four edges for every Grow Tooltip/Popup direction).
     return total
 end
 
@@ -2349,6 +2781,7 @@ local function GetCalendarTT()
     local f = CreateFrame("Frame", nil, UIParent)
     f:SetFrameStrata("TOOLTIP")
     f:SetFrameLevel(200)
+    f:SetClampedToScreen(true)
     f:Hide()
     local bg = f:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
@@ -2425,6 +2858,8 @@ end
 
 local function ShowCalendarTooltip(anchor, lockoutEntries)
     local tt = GetCalendarTT()
+    -- Scale the whole tooltip to the user's Custom Tooltip Size (re-applied each show).
+    tt:SetScale(GetCustomTooltipScale())
     local font = FTT_FONT()
 
     for i = 1, #_calendarTTRows do
@@ -2503,20 +2938,13 @@ local function ShowCalendarTooltip(anchor, lockoutEntries)
 
     tt:SetSize(ttW, ttH)
     tt:ClearAllPoints()
-    tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, 0)
+    local gpt = EBS._Grow.edge[EBS._Grow.Dir()] or EBS._Grow.edge.left
+    tt:SetPoint(gpt[1], anchor, gpt[2], gpt[3], gpt[4])
     tt:Show()
-
-    local bottom = tt:GetBottom()
-    if bottom and bottom < 0 then
-        local top = tt:GetTop()
-        if top then
-            tt:ClearAllPoints()
-            tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, -bottom)
-        end
-    end
+    -- Off-screen protection is SetClampedToScreen on the frame.
 end
 
--- Saved instance lockouts for the calendar tooltip (ElvUI Time datatext pattern).
+-- Saved instance lockouts for the calendar tooltip.
 local LOCKOUT_DIFFICULTIES = {
     [2] = true,   -- heroic
     [23] = true,  -- mythic
@@ -2533,7 +2961,6 @@ local LFR_DIFFICULTIES = {
 }
 
 local function GetCalendarLockoutEntries()
-    if EllesmereUIDB and EllesmereUIDB.calendarLockoutTooltip == false then return end
     if not GetNumSavedInstances or not GetSavedInstanceInfo then return end
 
     if RequestRaidInfo then RequestRaidInfo() end
@@ -2584,7 +3011,19 @@ local function GetCalendarLockoutEntries()
 end
 
 local function BuildCustomIndicators(minimap)
-    if _customIndicators.tracking then return end
+    if _customIndicators.tracking then
+        -- Re-apply the current accent to the friends icon so a later ApplyAll
+        -- (e.g. at PLAYER_ENTERING_WORLD, after EllesmereUI's theme resolution
+        -- has mutated ELLESMERE_GREEN) picks up the right color -- same
+        -- pattern as CreateFlyoutToggle. The create-once path below reads the
+        -- accent only at creation time, which can race the theme resolution.
+        local fi = _customIndicators.friends and _customIndicators.friends._icon
+        if fi then
+            local EG2 = EllesmereUI.ELLESMERE_GREEN
+            fi:SetVertexColor(EG2.r, EG2.g, EG2.b, 1)
+        end
+        return
+    end
 
     -- Tracking
     _customIndicators.tracking = CreateIndicatorBtn("_tracking", minimap,
@@ -2617,7 +3056,7 @@ local function BuildCustomIndicators(minimap)
     _customIndicators.tracking:SetScript("OnEnter", function(self)
         if trackBaseEnter then trackBaseEnter(self) end
         if not GetFFD(self).freeMoveJustDragged and EllesmereUI.ShowWidgetTooltip then
-            EllesmereUI.ShowWidgetTooltip(self, "Tracking", { anchor = "left" })
+            EllesmereUI.ShowWidgetTooltip(self, "Tracking", { anchor = EBS._Grow.TT(), scale = GetCustomTooltipScale() })
         end
     end)
     _customIndicators.tracking:SetScript("OnLeave", function(self)
@@ -2646,7 +3085,7 @@ local function BuildCustomIndicators(minimap)
         if lockoutEntries then
             ShowCalendarTooltip(self, lockoutEntries)
         elseif EllesmereUI.ShowWidgetTooltip then
-            EllesmereUI.ShowWidgetTooltip(self, "Calendar", { anchor = "left" })
+            EllesmereUI.ShowWidgetTooltip(self, "Calendar", { anchor = EBS._Grow.TT(), scale = GetCustomTooltipScale() })
         end
     end)
     _customIndicators.calendar:SetScript("OnLeave", function(self)
@@ -2661,9 +3100,10 @@ local function BuildCustomIndicators(minimap)
     local mailBaseEnter = _customIndicators.mail:GetScript("OnEnter")
     local mailBaseLeave = _customIndicators.mail:GetScript("OnLeave")
     _customIndicators.mail:SetScript("OnEnter", function(self)
+        if EBS._HVRevealMapHover then EBS._HVRevealMapHover() end
         if mailBaseEnter then mailBaseEnter(self) end
         if not GetFFD(self).freeMoveJustDragged and EllesmereUI.ShowWidgetTooltip then
-            EllesmereUI.ShowWidgetTooltip(self, HAVE_MAIL or "New Mail", { anchor = "left" })
+            EllesmereUI.ShowWidgetTooltip(self, HAVE_MAIL or "New Mail", { anchor = EBS._Grow.TT(), scale = GetCustomTooltipScale() })
         end
     end)
     _customIndicators.mail:SetScript("OnLeave", function(self)
@@ -2696,7 +3136,7 @@ local function BuildCustomIndicators(minimap)
                     end
                 end
             end
-            EllesmereUI.ShowWidgetTooltip(self, label, { anchor = "left" })
+            EllesmereUI.ShowWidgetTooltip(self, label, { anchor = EBS._Grow.TT(), scale = GetCustomTooltipScale() })
         end
     end)
     _customIndicators.crafting:SetScript("OnLeave", function(self)
@@ -2797,6 +3237,12 @@ local function MO_OverAny()
     if Minimap and Minimap:IsMouseOver() then return true end
     if _portalFlyout and _portalFlyout:IsShown() then return true end
     if flyoutPanel and flyoutPanel:IsShown() then return true end
+    -- The friends tooltip hangs off its button and is interactive (whisper/
+    -- invite rows); while it is open the stack stays shown, same as a flyout.
+    -- It hides itself once the cursor truly leaves it, and its OnHide hook
+    -- re-evaluates so the stack fades then.
+    local ftt = EBS._friendsTT
+    if ftt and ftt:IsShown() then return true end
     for i = 1, #_moButtons do
         local b = _moButtons[i]
         if b:IsShown() and b:IsMouseOver() then return true end
@@ -2864,6 +3310,24 @@ local function MO_Refresh(p)
         MO_HookFrame(Minimap)
         for i = 1, #_moButtons do MO_HookFrame(_moButtons[i]) end
         MO_Evaluate()
+        -- Diagnostic for "stack stuck visible" reports: dumps the mouseover
+        -- state so a stuck screenshot can tell us WHICH mechanism failed
+        -- (our state says shown vs a foreign alpha write, what OverAny sees).
+        if not SlashCmdList.EUIMO then
+            SLASH_EUIMO1 = "/euimo"
+            SlashCmdList.EUIMO = function()
+                print(format("EUI MO: active=%s overAny=%s mapOver=%s hideTimer=%s",
+                    tostring(_moActive), tostring(MO_OverAny()),
+                    tostring(Minimap and Minimap:IsMouseOver()),
+                    tostring(_moHideTimer ~= nil)))
+                for i = 1, #_moButtons do
+                    local b = _moButtons[i]
+                    print(format("  %d. %s shown=%s alpha=%.2f over=%s",
+                        i, b:GetName() or "(unnamed)", tostring(b:IsShown()),
+                        b:GetAlpha() or 0, tostring(b:IsMouseOver())))
+                end
+            end
+        end
     else
         MO_CancelHide()
         -- Restore full alpha (harmless on buttons hidden by hideExtraBtns).
@@ -2878,6 +3342,8 @@ local function MO_Refresh(p)
     end
 end
 
+local MAIL_CORNER_POINTS = { TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true }
+
 local function LayoutIndicatorFrames(minimap, p, circleMode)
     local flvl = minimap:GetFrameLevel() + 10
 
@@ -2889,6 +3355,10 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
     local ci = _customIndicators
     local sz = GetInteractableBtnSize()
     local showBg = p.btnBackgrounds ~= false
+    -- Mail Position: "button" keeps the mail indicator in the element row; a
+    -- corner pins it to that map corner (same anchoring as the Omnium Folio
+    -- corner option).
+    local mailCorner = MAIL_CORNER_POINTS[p.mailPosition] and p.mailPosition or nil
     -- Resize buttons and update icon aspect ratios
     local inset = 3
     local avail = sz - inset * 2
@@ -2924,12 +3394,20 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
     ResizeIndicator(ci.calendar)
     ResizeIndicator(ci.mail)
     ResizeIndicator(ci.crafting)
+    -- Corner-pinned mail renders bare: no black box, just the mail icon
+    if mailCorner and ci.mail and ci.mail._bg then
+        ci.mail._bg:SetShown(false)
+    end
     if flyoutToggle then
         flyoutToggle:SetSize(sz, sz)
         if flyoutToggle._bg then flyoutToggle._bg:SetShown(showBg) end
         -- Reset to base anchor so free-move offsets don't accumulate across relayouts
+        local rowMode = GetBtnRowMode(p)
+        local rowBaseX, rowBaseY = GetRowBase(rowMode, p.btnRowDistance)
+        local resES = minimap:GetEffectiveScale()
         flyoutToggle:ClearAllPoints()
-        flyoutToggle:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
+        flyoutToggle:SetPoint(rowMode.point, minimap, rowMode.rel,
+            PP.SnapForES(rowBaseX, resES), PP.SnapForES(rowBaseY, resES))
     end
 
     -- Calendar visibility
@@ -2942,7 +3420,9 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
         diffFrame:SetFrameLevel(flvl + 2)
         diffFrame:ClearAllPoints()
         diffFrame:SetPoint("TOPRIGHT", minimap, "TOPRIGHT", 2, 1)
-        if p.hideRaidDifficulty then
+        -- Text mode overrides the Show Blizzard Elements choice: the flag is
+        -- always suppressed while the difficulty text is enabled.
+        if p.hideRaidDifficulty or p.diffTextEnabled then
             diffFrame:SetAlpha(0)
         else
             diffFrame:SetAlpha(1)
@@ -2954,7 +3434,7 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
         -- Circle layout: horizontal row around the clock
         if ci.tracking and not p.hideTrackingButton then
             ci.tracking:ClearAllPoints()
-            if clockBg and p.showClock then
+            if clockBg and clockBg:IsShown() then
                 ci.tracking:SetPoint("RIGHT", clockBg, "LEFT", 0, 0)
             else
                 ci.tracking:SetPoint("TOP", minimap, "TOP", -20, -3)
@@ -2966,7 +3446,7 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
 
         if ci.calendar and not p.hideGameTime then
             ci.calendar:ClearAllPoints()
-            if clockBg and p.showClock then
+            if clockBg and clockBg:IsShown() then
                 ci.calendar:SetPoint("LEFT", clockBg, "RIGHT", 0, 0)
             else
                 ci.calendar:SetPoint("TOP", minimap, "TOP", 20, -3)
@@ -2975,57 +3455,103 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
 
         if ci.mail and ci.mail:IsShown() then
             ci.mail:ClearAllPoints()
-            ci.mail:SetPoint("RIGHT", ci.tracking, "LEFT", 0, 0)
+            if mailCorner then
+                ci.mail:SetPoint(mailCorner, minimap, mailCorner, p.mailOffsetX or 0, p.mailOffsetY or 0)
+            else
+                ci.mail:SetPoint("RIGHT", ci.tracking, "LEFT", 0, 0)
+            end
         end
 
         if ci.crafting and ci.crafting:IsShown() then
             ci.crafting:ClearAllPoints()
-            local anchor = (ci.mail and ci.mail:IsShown()) and ci.mail or ci.tracking
+            -- Corner-pinned mail is out of the row, so crafting chains to tracking
+            local anchor = (ci.mail and ci.mail:IsShown() and not mailCorner) and ci.mail or ci.tracking
             ci.crafting:SetPoint("RIGHT", anchor, "LEFT", 0, 0)
         end
 
         if indicatorBg then indicatorBg:Hide() end
 
     else
-        -- Square layout: vertical stack on the left side
-        local y = 0
+        -- Square layout: element row (corner + growth from Element Row Position).
+        -- Same running-total placement as the button row: the cursor advances
+        -- per element by its own size floored to whole physical pixels plus
+        -- the snapped spacing, so icons stay flush at 0 spacing and gaps
+        -- render identically. Using each element's real width also keeps
+        -- horizontal rows flush despite the varying indicator atlas ratios.
+        local rowMode = GetElementRowMode(p)
+        local baseX, baseY = GetRowBase(rowMode, p.elementRowDistance)
+        local elES = minimap:GetEffectiveScale()
+        local elPx = PP.perfect / elES
+        local elGap = PP.SnapForES(p.elementRowSpacing or 0, elES)
+        local elX = PP.SnapForES(baseX, elES)
+        local elY = PP.SnapForES(baseY, elES)
+        local function PlaceElement(btn)
+            btn:ClearAllPoints()
+            btn:SetPoint(rowMode.point, minimap, rowMode.rel, elX, elY)
+            local adv = (rowMode.dirX ~= 0) and btn:GetWidth() or btn:GetHeight()
+            adv = math.floor(adv / elPx + 0.001) * elPx + elGap
+            elX = elX + adv * rowMode.dirX
+            elY = elY + adv * rowMode.dirY
+        end
 
         if ci.tracking and not p.hideTrackingButton then
-            ci.tracking:ClearAllPoints()
-            ci.tracking:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
+            PlaceElement(ci.tracking)
             ci.tracking:Show()
-            y = y - sz
         elseif ci.tracking then
             ci.tracking:Hide()
         end
 
         if ci.calendar and not p.hideGameTime then
-            ci.calendar:ClearAllPoints()
-            ci.calendar:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
-            y = y - sz
+            PlaceElement(ci.calendar)
         end
 
         if ci.mail and ci.mail:IsShown() then
-            ci.mail:ClearAllPoints()
-            ci.mail:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
-            y = y - sz
+            if mailCorner then
+                ci.mail:ClearAllPoints()
+                ci.mail:SetPoint(mailCorner, minimap, mailCorner, p.mailOffsetX or 0, p.mailOffsetY or 0)
+            else
+                PlaceElement(ci.mail)
+            end
         end
 
         if ci.crafting and ci.crafting:IsShown() then
-            ci.crafting:ClearAllPoints()
-            ci.crafting:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
-            y = y - sz
+            PlaceElement(ci.crafting)
         end
 
         if indicatorBg then indicatorBg:Hide() end
     end
 
-    -- Position ungrouped buttons above the flyout toggle (or at its position if hidden)
+    -- Position ungrouped buttons along the button row (the flyout toggle is
+    -- the row's first slot; corner + growth come from Button Row Position)
     if flyoutToggle then
-        local btnSize = GetInteractableBtnSize()
-        local ungroupBtnSize = (p.customBtnSizeEnabled and p.customBtnSize) or btnSize
+        local rowMode = GetBtnRowMode(p)
+        local rowBaseX, rowBaseY = GetRowBase(rowMode, p.btnRowDistance)
+        local ungroupBtnSize = GetInteractableBtnSize()
+        -- Running-total placement: the row cursor starts at the snapped
+        -- Distance from Map and advances per button by its own size FLOORED
+        -- to whole physical pixels (rounding up would open hairline seams
+        -- between flush icons at 0 spacing; flooring can only overlap-flush)
+        -- plus the snapped Icon Spacing. Every anchor lands on the physical
+        -- pixel grid and every gap renders identically.
+        local rowES = minimap:GetEffectiveScale()
+        local rowPx = PP.perfect / rowES
+        local rowGap = PP.SnapForES(p.btnRowSpacing or 0, rowES)
+        local rowX = PP.SnapForES(rowBaseX, rowES)
+        local rowY = PP.SnapForES(rowBaseY, rowES)
+        local function PlaceRowButton(btn)
+            btn:SetPoint(rowMode.point, minimap, rowMode.rel, rowX, rowY)
+            local adv = (rowMode.dirX ~= 0) and btn:GetWidth() or btn:GetHeight()
+            adv = math.floor(adv / rowPx + 0.001) * rowPx + rowGap
+            rowX = rowX + adv * rowMode.dirX
+            rowY = rowY + adv * rowMode.dirY
+        end
+        flyoutToggle:ClearAllPoints()
         local flyoutVisible = flyoutToggle:IsShown()
-        local anchor = flyoutVisible and flyoutToggle or nil
+        if flyoutVisible then
+            PlaceRowButton(flyoutToggle)
+        else
+            flyoutToggle:SetPoint(rowMode.point, minimap, rowMode.rel, rowX, rowY)
+        end
         local mp = EBS.db and EBS.db.profile.minimap
         local ungrouped = {}
         for _, btn in ipairs(cachedAddonButtons) do
@@ -3037,12 +3563,6 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
             end
         end
         table.sort(ungrouped, function(a, b) return a.order < b.order end)
-        local freeMove = p.freeMoveBtns
-        -- Calculate base Y for free-move independent anchoring
-        local fmBaseY = 0
-        if freeMove and flyoutVisible then
-            fmBaseY = ungroupBtnSize  -- start above flyout toggle
-        end
         for idx, entry in ipairs(ungrouped) do
             local btn = entry.btn
             -- Restore from flyout if needed
@@ -3061,14 +3581,7 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
                 StripButtonDecorations(btn)
                 btn:SetSize(ungroupBtnSize, ungroupBtnSize)
             end
-            if freeMove then
-                local yOff = fmBaseY + (idx - 1) * ungroupBtnSize
-                btn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, yOff)
-            elseif anchor then
-                btn:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
-            else
-                btn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
-            end
+            PlaceRowButton(btn)
             btn:SetMovable(false)
             btn:RegisterForDrag()
             btn:SetScript("OnDragStart", nil)
@@ -3122,84 +3635,67 @@ local function LayoutIndicatorFrames(minimap, p, circleMode)
             btn:SetAlpha(1)
             btn:Show()
             _suppressVisTrack = false
-            anchor = btn
         end
 
         -- Extra buttons: Great Vault, M+ Portals, Friends Online
         -- Visibility controlled by hideExtraBtns table
         local heb = p.hideExtraBtns or {}
 
-        -- Great Vault button: top of the ungrouped stack
-        if _greatVaultBtn then
-            if heb.greatVault then
-                _greatVaultBtn:Hide()
-            else
-                SizeGreatVaultBtn(_greatVaultBtn, showBg)
-                _greatVaultBtn:SetParent(minimap)
-                _greatVaultBtn:SetFrameLevel(minimap:GetFrameLevel() + 11)
-                _greatVaultBtn:ClearAllPoints()
-                if freeMove then
-                    local idx = #ungrouped + (flyoutVisible and 1 or 0)
-                    local yOff = idx * ungroupBtnSize
-                    _greatVaultBtn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, yOff)
-                elseif anchor then
-                    _greatVaultBtn:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
-                else
-                    _greatVaultBtn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
+        -- Extra buttons: Great Vault, Friends Online, M+ Portals. Visibility
+        -- from hideExtraBtns; row order from extraBtnOrder (drag-to-reorder
+        -- in options; nil = default order in the fallback list below).
+        local function PlaceExtraButton(key)
+            if key == "greatVault" then
+                if _greatVaultBtn then
+                    if heb.greatVault then
+                        _greatVaultBtn:Hide()
+                    else
+                        SizeGreatVaultBtn(_greatVaultBtn, showBg)
+                        _greatVaultBtn:SetParent(minimap)
+                        _greatVaultBtn:SetFrameLevel(minimap:GetFrameLevel() + 11)
+                        _greatVaultBtn:ClearAllPoints()
+                        PlaceRowButton(_greatVaultBtn)
+                        _greatVaultBtn:Show()
+                    end
                 end
-                _greatVaultBtn:Show()
-                anchor = _greatVaultBtn
+            elseif key == "friendsOnline" then
+                if ci.friends then
+                    if heb.friendsOnline then
+                        ci.friends:Hide()
+                    else
+                        ci.friends:SetSize(sz, sz)
+                        if ci.friends._bg then ci.friends._bg:SetShown(showBg) end
+                        ci.friends:SetParent(minimap)
+                        ci.friends:SetFrameLevel(minimap:GetFrameLevel() + 11)
+                        ci.friends:ClearAllPoints()
+                        PlaceRowButton(ci.friends)
+                        ci.friends:Show()
+                    end
+                end
+            elseif key == "portals" then
+                if _portalBtn then
+                    if heb.portals then
+                        _portalBtn:Hide()
+                    else
+                        SizePortalBtn(_portalBtn, showBg)
+                        _portalBtn:SetParent(minimap)
+                        _portalBtn:SetFrameLevel(minimap:GetFrameLevel() + 11)
+                        _portalBtn:ClearAllPoints()
+                        PlaceRowButton(_portalBtn)
+                        _portalBtn:Show()
+                    end
+                end
             end
         end
-
-        -- Friends Online button: sits above the Great Vault button
-        if ci.friends then
-            if heb.friendsOnline then
-                ci.friends:Hide()
-            else
-                ci.friends:SetSize(sz, sz)
-                if ci.friends._bg then ci.friends._bg:SetShown(showBg) end
-                ci.friends:SetParent(minimap)
-                ci.friends:SetFrameLevel(minimap:GetFrameLevel() + 11)
-                ci.friends:ClearAllPoints()
-                if freeMove then
-                    local idx = #ungrouped + (flyoutVisible and 1 or 0)
-                        + ((_greatVaultBtn and not heb.greatVault) and 1 or 0)
-                    local yOff = idx * ungroupBtnSize
-                    ci.friends:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, yOff)
-                elseif anchor then
-                    ci.friends:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
-                else
-                    ci.friends:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
-                end
-                ci.friends:Show()
-                anchor = ci.friends
+        local placedExtra = {}
+        if type(p.extraBtnOrder) == "table" then
+            for _, key in ipairs(p.extraBtnOrder) do
+                if not placedExtra[key] then placedExtra[key] = true; PlaceExtraButton(key) end
             end
         end
-
-        -- M+ Portal button: sits above the Friends Online button
-        if _portalBtn then
-            if heb.portals then
-                _portalBtn:Hide()
-            else
-                SizePortalBtn(_portalBtn, showBg)
-                _portalBtn:SetParent(minimap)
-                _portalBtn:SetFrameLevel(minimap:GetFrameLevel() + 11)
-                _portalBtn:ClearAllPoints()
-                if freeMove then
-                    local idx = #ungrouped + (flyoutVisible and 1 or 0)
-                        + ((_greatVaultBtn and not heb.greatVault) and 1 or 0)
-                        + ((ci.friends and not heb.friendsOnline) and 1 or 0)
-                    local yOff = idx * ungroupBtnSize
-                    _portalBtn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, yOff)
-                elseif anchor then
-                    _portalBtn:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
-                else
-                    _portalBtn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
-                end
-                _portalBtn:Show()
-                anchor = _portalBtn
-            end
+        -- Safety net: place anything a stale saved order is missing
+        for _, key in ipairs({ "greatVault", "friendsOnline", "portals" }) do
+            if not placedExtra[key] then placedExtra[key] = true; PlaceExtraButton(key) end
         end
 
         -- Flyout toggle (EUI group button for addon icons)
@@ -3300,6 +3796,16 @@ end
 -- old-expansion button). The setting only HIDES it when off.
 -- It is a plain (non-secure) Blizzard button, so SetParent/SetPoint are safe.
 local _omniumFolioHooked = false
+
+-- Folio visibility mode with legacy fallback: pre-dropdown data carries the
+-- showOmniumFolio toggle (default ON; only false is ever stored).
+local function GetOmniumFolioMode(mp)
+    if not mp then return "always" end
+    if mp.omniumFolioMode then return mp.omniumFolioMode end
+    if mp.showOmniumFolio == false then return "never" end
+    return "always"
+end
+
 -- Re-entrancy guard: PositionOmniumFolio calls SetParent/SetScale/SetPoint, all
 -- of which we hook below. The guard stops our own writes from recursing.
 local _omniumFolioApplying = false
@@ -3309,7 +3815,7 @@ local function PositionOmniumFolio(btn)
     if not mp then return end
     _omniumFolioApplying = true
     if btn:GetParent() ~= Minimap then btn:SetParent(Minimap) end
-    btn:SetFrameStrata(Minimap:GetFrameStrata())
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel((Minimap:GetFrameLevel() or 0) + 10)
     btn:SetScale(mp.omniumFolioScale or 0.75)
     btn:ClearAllPoints()
@@ -3318,6 +3824,143 @@ local function PositionOmniumFolio(btn)
     local corner = mp.omniumFolioCorner or "BOTTOMLEFT"
     btn:SetPoint(corner, Minimap, corner, mp.omniumFolioX or 0, mp.omniumFolioY or 0)
     _omniumFolioApplying = false
+end
+
+-- True while the cursor is over the map region OR the hover-mode folio
+-- itself: the folio (anchored to a map corner at reduced scale) can overhang
+-- the minimap rect, and treating that sliver as "left the map" let the exit
+-- watcher hide the button under the cursor -- after which re-entry via the
+-- folio's own OnEnter no-oped on the same rect check.
+-- The 4px slop matters: OnEnter fires the instant the ENGINE's focus test
+-- passes -- cursor at the exact edge pixel -- while this Lua-side rect test
+-- converts cursor coords through effective scale and can round the other
+-- way by a sub-pixel right at the boundary (resolution/scale dependent,
+-- which is why it repros on some machines only). Expanding the test rect
+-- makes "engine says entered" always imply "this test passes".
+function EBS._HoverStillOver(minimap)
+    if minimap:IsMouseOver(4, -4, -4, 4) then return true end
+    local b = _G.ExpansionLandingPageMinimapButton
+    if b and b:IsShown() and b:IsMouseOver(4, -4, -4, 4) then return true end
+    return false
+end
+
+-- Immediate hide for the map-region hover elements (zoom buttons, hover-mode
+-- folio and coordinates): fired straight from the minimap's OnLeave on a real
+-- exit so everything disappears the same instant Blizzard's own zoom fade
+-- starts, and from the exit watcher for exits ACROSS a child element (which
+-- never fire a second minimap OnLeave). Cancels the watcher itself.
+function EBS._HVHideNow()
+    local minimap = Minimap
+    if not minimap then return end
+    local ffd = GetFFD(minimap)
+    if ffd.hvWatcher then
+        ffd.hvWatcher:Cancel()
+        ffd.hvWatcher = nil
+    end
+    local zi, zo = minimap.ZoomIn, minimap.ZoomOut
+    if zi then zi:Hide() end
+    if zo then zo:Hide() end
+    local m2 = EBS.db and EBS.db.profile.minimap
+    if m2 then
+        if GetOmniumFolioMode(m2) == "hover" then
+            local b = _G.ExpansionLandingPageMinimapButton
+            if b then b:Hide() end
+        end
+        if GetCoordsModePos(m2) == "hover" then
+            if coordFrame then coordFrame:Hide() end
+            if coordTicker then coordTicker:Hide() end
+        end
+    end
+    -- Mouseover Extra Buttons hide in the SAME instant as the rest: the
+    -- 0.12s deferral bridges gap-crossings BETWEEN stack frames mid-hover,
+    -- but on a true region exit there is nothing to bridge. If the cursor
+    -- is still over part of the stack (a row button, the open flyouts, the
+    -- friends tooltip), OverAny keeps it shown via the normal path.
+    if _moActive then
+        if MO_OverAny() then
+            if MO_Evaluate then MO_Evaluate() end
+        else
+            MO_CancelHide()
+            MO_Apply(false)
+        end
+    end
+end
+
+-- Central map-region hover reveal (declared as an EBS field at the top of the
+-- file). Fired from the minimap's OnEnter/OnLeave AND from over-map child
+-- elements' OnEnter (clock, FPS text, corner mail, the folio itself): no-ops
+-- unless the cursor is over the map region, reveals the zoom buttons and the
+-- hover-mode folio, and runs one self-cancelling watcher (kept on the
+-- minimap's FFD data) that hides them again once the cursor truly leaves --
+-- including exits FROM a child, which never fire a second minimap OnLeave.
+function EBS._HVRevealMapHover()
+    local minimap = Minimap
+    if not minimap then return end
+    local ffd = GetFFD(minimap)
+    if not ffd.active then return end
+    if not EBS._HoverStillOver(minimap) then
+        -- OnEnter is SINGLE-SHOT per hover: if this check fails at the
+        -- boundary, nothing ever re-attempts the reveal for the whole
+        -- hover (slow entries dwell at the boundary, so they failed
+        -- consistently). Retry briefly -- a slow cursor is measurably
+        -- inside within a tick or two; self-cancels when clearly gone.
+        if not ffd.hvRetry then
+            local tries = 0
+            ffd.hvRetry = C_Timer.NewTicker(0.1, function()
+                tries = tries + 1
+                if EBS._HoverStillOver(minimap) then
+                    ffd.hvRetry:Cancel(); ffd.hvRetry = nil
+                    EBS._HVRevealMapHover()
+                elseif tries >= 8 then
+                    ffd.hvRetry:Cancel(); ffd.hvRetry = nil
+                end
+            end)
+        end
+        return
+    end
+    if ffd.hvRetry then ffd.hvRetry:Cancel(); ffd.hvRetry = nil end
+    local mp = EBS.db and EBS.db.profile.minimap
+    if not mp then return end
+    local function raiseZoom()
+        local zi, zo = minimap.ZoomIn, minimap.ZoomOut
+        if UIFrameFadeRemoveFrame then
+            if zi then UIFrameFadeRemoveFrame(zi) end
+            if zo then UIFrameFadeRemoveFrame(zo) end
+        end
+        if zi then zi:SetAlpha(1); zi:Show() end
+        if zo then zo:SetAlpha(1); zo:Show() end
+    end
+    if not mp.hideZoomButtons then
+        raiseZoom()
+    end
+    if GetOmniumFolioMode(mp) == "hover" then
+        local b = _G.ExpansionLandingPageMinimapButton
+        if b then
+            PositionOmniumFolio(b)
+            if not b:IsShown() and b.RefreshButton then b:RefreshButton(true) end
+        end
+    end
+    if GetCoordsModePos(mp) == "hover" then
+        if coordFrame then coordFrame:Show() end
+        if coordTicker then coordTicker:Show() end
+        UpdateCoords()
+    end
+    -- Mouseover Extra Buttons share the same "map region hovered" notion;
+    -- MO_Evaluate self-guards when that feature is off.
+    if MO_Evaluate then MO_Evaluate() end
+    if ffd.hvWatcher then return end
+    ffd.hvWatcher = C_Timer.NewTicker(0.2, function()
+        if EBS._HoverStillOver(minimap) then
+            -- Still over the map region: keep defeating Blizzard's fader,
+            -- which may have been re-armed by an intervening OnLeave.
+            local m2 = EBS.db and EBS.db.profile.minimap
+            if m2 and not m2.hideZoomButtons then
+                raiseZoom()
+            end
+            return
+        end
+        EBS._HVHideNow()
+    end)
 end
 
 local function ApplyOmniumFolio()
@@ -3338,7 +3981,12 @@ local function ApplyOmniumFolio()
             if _omniumFolioApplying then return end
             local m = EBS.db and EBS.db.profile and EBS.db.profile.minimap
             if not m then return end
-            if m.showOmniumFolio == false then
+            local mode = GetOmniumFolioMode(m)
+            -- Same boundary-tolerant check as the reveal path: RefreshButton
+            -- Hide()/Show()s the button, and a raw IsMouseOver here could
+            -- veto that Show at the exact edge for the same rounding reason.
+            if mode == "never"
+               or (mode == "hover" and not (Minimap and EBS._HoverStillOver(Minimap))) then
                 self:Hide()
             else
                 PositionOmniumFolio(self)
@@ -3348,9 +3996,18 @@ local function ApplyOmniumFolio()
         hooksecurefunc(btn, "SetParent", reassert)
         hooksecurefunc(btn, "SetPoint", reassert)
         hooksecurefunc(btn, "SetScale", reassert)
+        -- Hovering the folio itself counts as hovering the map region: keep
+        -- the hover-reveal elements alive (the reveal path also handles the
+        -- case where the cursor ENTERS the map directly on the folio).
+        btn:HookScript("OnEnter", function() EBS._HVRevealMapHover() end)
     end
 
-    if mp.showOmniumFolio == false then
+    local mode = GetOmniumFolioMode(mp)
+    if mode == "never" then
+        btn:Hide()
+        return
+    end
+    if mode == "hover" and not Minimap:IsMouseOver() then
         btn:Hide()
         return
     end
@@ -3441,6 +4098,9 @@ local function ApplyMinimap()
     -- route middle-click to our micro menu instead.
     -- Transparent frame on top of minimap that passes left/right clicks through
     -- but intercepts middle-click. Zero taint risk.
+    -- It is also the SQUARE mouse surface: the Minimap's own hit region stays
+    -- circular, so wheel zoom handled on the Minimap dies in the square skin's
+    -- corners -- the overlay covers the full rect and handles the wheel there.
     if not GetFFD(minimap).pingBlocker then
         local blocker = CreateFrame("Frame", nil, minimap)
         blocker:SetAllPoints()
@@ -3454,6 +4114,29 @@ local function ApplyMinimap()
                 if mp and mp.openMicroMenuOnMiddleClick == false then return end
                 EBS._ToggleMicroMenu()
             end
+        end)
+        blocker:SetScript("OnMouseWheel", function(_, delta)
+            local mp = EBS.db and EBS.db.profile.minimap
+            if not mp or not mp.scrollZoom then return end
+            local zoom = minimap:GetZoom()
+            if delta > 0 then
+                zoom = min(zoom + 1, 5)
+            else
+                zoom = max(zoom - 1, 0)
+            end
+            minimap:SetZoom(zoom)
+            SaveZoomLevel()
+        end)
+        -- Map-region hover reveal, entry-path-proof: the Minimap's own
+        -- motion focus follows its CIRCULAR hit region, so entering the
+        -- square skin through a corner (or directly onto an unhooked child)
+        -- never fires the Minimap's OnEnter -- the reveal simply had no
+        -- caller on those paths. This overlay covers the FULL square rect
+        -- and, with SetPropagateMouseMotion, receives enter/leave while
+        -- still passing motion through -- one hook here covers every entry.
+        -- _HVRevealMapHover self-guards (region check + watcher dedupe).
+        blocker:HookScript("OnEnter", function()
+            if EBS._HVRevealMapHover then EBS._HVRevealMapHover() end
         end)
         GetFFD(minimap).pingBlocker = blocker
     end
@@ -3480,7 +4163,7 @@ local function ApplyMinimap()
     if GetFFD(minimap).bg then GetFFD(minimap).bg:SetAlpha(0) end
 
     -- Border
-    local r, g, b = GetBorderColor(p)
+    local r, g, b, borderA = GetBorderStyleColor(p)
     -- Hide the circular quest area ring on square minimaps
     if minimap.SetArchBlobRingScalar then
         minimap:SetArchBlobRingScalar(isCircle and 1 or 0)
@@ -3490,19 +4173,32 @@ local function ApplyMinimap()
     end
 
     if p.shape == "square" then
-        -- Square: pixel-perfect border
+        -- Square: shared border-style engine (solid = PP strips, textured =
+        -- BackdropTemplate) on a dedicated host frame -- the engine shows and
+        -- hides the host freely, so it must never be the Minimap itself.
         local bs = p.borderSize or 1
-        if not PP.GetBorders(minimap) then
-            PP.CreateBorder(minimap, r, g, b, 1, bs, "OVERLAY", 7)
-        else
-            PP.SetBorderColor(minimap, r, g, b, 1)
+        local host = GetFFD(minimap).borderHost
+        if not host then
+            host = CreateFrame("Frame", nil, minimap)
+            host:SetAllPoints(minimap)
+            host:EnableMouse(false)
+            GetFFD(minimap).borderHost = host
         end
-        PP.SetBorderSize(minimap, bs)
+        -- Same level as the minimap keeps the border under all child buttons
+        -- (matching the old strips-on-minimap rendering); Show Behind drops it
+        -- under the map surface for the Shadow style.
+        host:SetFrameLevel(p.borderBehind and math.max(0, minimap:GetFrameLevel() - 1) or minimap:GetFrameLevel())
+        host:SetAlpha(1)
+        EllesmereUI.ApplyBorderStyle(host, bs, r, g, b, borderA,
+            p.borderTexture or "solid",
+            p.borderTextureOffset, p.borderTextureOffsetY,
+            p.borderTextureShiftX, p.borderTextureShiftY,
+            "minimap", bs)
         if GetFFD(minimap).circBorder then GetFFD(minimap).circBorder:Hide() end
         if GetFFD(minimap).texCircBorder then GetFFD(minimap).texCircBorder:Hide() end
     elseif p.shape == "circle" then
         -- Circle: solid colored disc behind the minimap, slightly larger = border ring
-        if PP.GetBorders(minimap) then PP.SetBorderSize(minimap, 0); PP.SetBorderColor(minimap, 0, 0, 0, 0) end
+        if GetFFD(minimap).borderHost then GetFFD(minimap).borderHost:Hide() end
         if not GetFFD(minimap).circBorder then
             local disc = CreateFrame("Frame", nil, minimap)
             disc:SetFrameLevel(minimap:GetFrameLevel() - 1)
@@ -3522,7 +4218,7 @@ local function ApplyMinimap()
         if GetFFD(minimap).texCircBorder then GetFFD(minimap).texCircBorder:Hide() end
     elseif p.shape == "textured_circle" then
         -- Textured Circle: void ring border, hide the solid circle border
-        if PP.GetBorders(minimap) then PP.SetBorderSize(minimap, 0); PP.SetBorderColor(minimap, 0, 0, 0, 0) end
+        if GetFFD(minimap).borderHost then GetFFD(minimap).borderHost:Hide() end
         if GetFFD(minimap).circBorder then GetFFD(minimap).circBorder:Hide() end
         if not GetFFD(minimap).texCircBorder then
             local ring = minimap:CreateTexture(nil, "OVERLAY", nil, 7)
@@ -3538,12 +4234,19 @@ local function ApplyMinimap()
         texCircBorder:Show()
     end
 
-    -- Live-update border when accent color changes (only when using accent)
-    if p.useClassColor then
+    -- Live-update border when accent color changes. Only applies while the
+    -- border actually resolves to the accent (accent swatch active, no class
+    -- colour override).
+    if p.useClassColor and not p.borderUseClassColor then
         if not GetFFD(minimap).accentBorderCB then
             GetFFD(minimap).accentBorderCB = function(ar, ag, ab)
-                if PP.GetBorders(minimap) then
-                    PP.SetBorderColor(minimap, ar, ag, ab, 1)
+                -- Registration outlives mode switches: re-check that the
+                -- border still resolves to the accent before recoloring.
+                local mp = EBS.db and EBS.db.profile.minimap
+                if not mp or not mp.useClassColor or mp.borderUseClassColor then return end
+                local host = GetFFD(minimap).borderHost
+                if host and host:IsShown() then
+                    EllesmereUI.SetBorderStyleColor(host, ar, ag, ab, 1)
                 end
                 local cb = GetFFD(minimap).circBorder
                 if cb and cb:IsShown() then
@@ -3656,15 +4359,27 @@ local function ApplyMinimap()
     -- Parent to minimap, raise frame level above the map surface, and
     -- hook SetPoint to prevent Blizzard from re-anchoring them.
     -- Midnight uses Minimap.ZoomIn/ZoomOut (not global MinimapZoomIn).
+    -- With Zoom +/- Icons unchecked (hideZoomButtons), the buttons live under
+    -- the hidden frame instead, so Blizzard's hover show/fade never renders
+    -- them; re-checking reparents them back to the minimap.
     local zoomIn = minimap.ZoomIn or _G.MinimapZoomIn
     local zoomOut = minimap.ZoomOut or _G.MinimapZoomOut
+    local hideZoom = p.hideZoomButtons
+    if hideZoom and (zoomIn or zoomOut) and not EBS._hiddenFrame then
+        EBS._hiddenFrame = CreateFrame("Frame")
+        EBS._hiddenFrame:Hide()
+    end
     if zoomIn then
-        zoomIn:SetParent(minimap)
+        zoomIn:SetParent(hideZoom and EBS._hiddenFrame or minimap)
         zoomIn:SetFrameLevel(minimap:GetFrameLevel() + 10)
         zoomIn:ClearAllPoints()
         zoomIn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMRIGHT", -2, 20)
         zoomIn:EnableMouse(true)
-        zoomIn:Show()
+        zoomIn:SetAlpha(1)
+        -- Start in Blizzard's between-hovers state (hidden; its hover
+        -- handlers Show/Hide on map enter/leave) so the button is not
+        -- visible from /reload until hovered.
+        zoomIn:SetShown(minimap:IsMouseOver())
         if not GetFFD(zoomIn).hooked then
             hooksecurefunc(zoomIn, "SetPoint", function(self)
                 if GetFFD(self).inHook then return end
@@ -3677,12 +4392,14 @@ local function ApplyMinimap()
         end
     end
     if zoomOut then
-        zoomOut:SetParent(minimap)
+        zoomOut:SetParent(hideZoom and EBS._hiddenFrame or minimap)
         zoomOut:SetFrameLevel(minimap:GetFrameLevel() + 10)
         zoomOut:ClearAllPoints()
         zoomOut:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMRIGHT", -2, 2)
         zoomOut:EnableMouse(true)
-        zoomOut:Show()
+        zoomOut:SetAlpha(1)
+        -- Same between-hovers start as ZoomIn above
+        zoomOut:SetShown(minimap:IsMouseOver())
         if not GetFFD(zoomOut).hooked then
             hooksecurefunc(zoomOut, "SetPoint", function(self)
                 if GetFFD(self).inHook then return end
@@ -3693,6 +4410,29 @@ local function ApplyMinimap()
             end)
             GetFFD(zoomOut).hooked = true
         end
+    end
+
+    -- Map-region hover reveal (zoom buttons + hover-mode folio). Blizzard's
+    -- fader hides the zoom buttons on the Minimap's OnLeave, which also fires
+    -- when the mouse moves onto one of the map's mouse-enabled child elements
+    -- (clock, FPS text, folio, buttons) -- and the OnEnter never fires at all
+    -- when the cursor ENTERS the map region directly on such a child. Both
+    -- scripts route through EBS._HVRevealMapHover, which no-ops unless the cursor
+    -- is over the map region and runs one self-cancelling exit watcher; the
+    -- hooked children's own OnEnter covers the direct-entry case.
+    if not GetFFD(minimap).hoverRevealHooked then
+        GetFFD(minimap).hoverRevealHooked = true
+        minimap:HookScript("OnEnter", function() EBS._HVRevealMapHover() end)
+        -- Real exits hide instantly (matching Blizzard's own zoom fade);
+        -- moving onto a child over the map keeps the reveal alive and the
+        -- watcher covers the eventual exit from there.
+        minimap:HookScript("OnLeave", function(self)
+            if EBS._HoverStillOver(self) then
+                EBS._HVRevealMapHover()
+            else
+                EBS._HVHideNow()
+            end
+        end)
     end
 
     -- Save zoom level when zoom buttons are clicked
@@ -3767,8 +4507,9 @@ local function ApplyMinimap()
     -- Refresh cached clock CVars when settings are applied
     RefreshClockCVars()
 
-    -- Clock -- top center (outside) or top inside the minimap
-    if p.showClock then
+    -- Clock -- none, inside the map, or boxed on the map edge
+    local clockMode, locationMode = GetElementModes(p)
+    if clockMode ~= "none" then
         if not clockBg then
             clockBg = CreateFrame("Button", nil, minimap, "BackdropTemplate")
             clockBg:SetSize(80, 16)
@@ -3777,6 +4518,14 @@ local function ApplyMinimap()
             clockBg:SetFrameLevel(minimap:GetFrameLevel() + 5)
             clockBg:RegisterForClicks("AnyUp")
             clockBg:SetScript("OnClick", function()
+                -- With the Great Vault hover tooltip assigned, clicking the
+                -- clock opens the vault (same as the Great Vault button)
+                -- instead of the Blizzard clock config.
+                local mp = EBS.db and EBS.db.profile.minimap
+                if mp and mp.clockHoverTooltip == "vault" then
+                    ToggleGreatVault()
+                    return
+                end
                 if ToggleTimeManager then ToggleTimeManager() end
             end)
         end
@@ -3786,20 +4535,28 @@ local function ApplyMinimap()
             clockFrame:SetPoint("CENTER", clockBg, "CENTER", 0, 0)
             clockFrame:SetTextColor(1, 1, 1, 0.9)
         end
-        -- Position and background based on inside/outside setting
-        local clockInside = p.clockInside
+        -- Background style + anchor position
         local cxOff = p.clockOffsetX or 0
         local cyOff = p.clockOffsetY or 0
-        if clockInside then
+        if clockMode == "inside" then
             clockBg:SetBackdropColor(0, 0, 0, 0)
-            clockBg:ClearAllPoints()
-            clockBg:SetPoint("TOP", minimap, "TOP", cxOff, -4 + cyOff)
         else
-            local ar, ag, ab = GetBorderColor(p)
+            local ar, ag, ab = GetBorderStyleColor(p)
             clockBg:SetBackdropColor(ar, ag, ab, 1)
-            local clockYOff = isCircle and -3 or 7
-            clockBg:ClearAllPoints()
-            clockBg:SetPoint("TOP", minimap, "TOP", cxOff, clockYOff + cyOff)
+        end
+        local cpt, crel, cbx, cby = ResolveElementAnchor(p.clockPosition or "top", clockMode, isCircle)
+        clockBg:ClearAllPoints()
+        clockBg:SetPoint(cpt, minimap, crel, cbx + cxOff, cby + cyOff)
+        -- Align the TEXT edge with the anchor so it lands exactly where the
+        -- coordinates text would: inside style pins the text to the same
+        -- corner of the wrapper that the wrapper pins to the map (the wrapper
+        -- is wider than the text, so a centered text would drift toward the
+        -- middle); edge style keeps it centered in the box.
+        clockFrame:ClearAllPoints()
+        if clockMode == "inside" then
+            clockFrame:SetPoint(cpt, clockBg, cpt, 0, 0)
+        else
+            clockFrame:SetPoint("CENTER", clockBg, "CENTER", 0, 0)
         end
         local cs = p.clockScale or 1.15
         clockBg:SetScale(cs)
@@ -3828,6 +4585,28 @@ local function ApplyMinimap()
         end
         clockTicker:Show()
         UpdateClock()
+        -- Hover tooltip (Show on Clock Hover): instance lockouts or Great
+        -- Vault, both reuse the calendar/vault custom tooltips (and their
+        -- Custom Tooltip Size scaling). Mode is read live on each hover.
+        if not clockBg._euiHoverHooked then
+            clockBg._euiHoverHooked = true
+            clockBg:SetScript("OnEnter", function(self)
+                EBS._HVRevealMapHover()
+                local mp = EBS.db and EBS.db.profile.minimap
+                local mode = (mp and mp.clockHoverTooltip) or "none"
+                if mode == "lockouts" then
+                    if EllesmereUI.InProtectedInstance and EllesmereUI.InProtectedInstance() then return end
+                    local entries = GetCalendarLockoutEntries()
+                    if entries then ShowCalendarTooltip(self, entries) end
+                elseif mode == "vault" then
+                    ShowVaultTooltip(self)
+                end
+            end)
+            clockBg:SetScript("OnLeave", function()
+                HideCalendarTooltip()
+                HideVaultTooltip()
+            end)
+        end
     else
         if clockBg then clockBg:Hide() end
         if clockFrame then clockFrame:Hide() end
@@ -3864,8 +4643,8 @@ local function ApplyMinimap()
         hooksecurefunc(craftingFrame, "Hide", onCraftChange)
     end
 
-    -- Location bar -- bottom center (outside) or bottom inside the minimap
-    if not p.hideZoneText then
+    -- Location bar -- none, inside the map, or boxed on the map edge
+    if locationMode ~= "none" then
         if not locationBg then
             locationBg = CreateFrame("Frame", nil, minimap, "BackdropTemplate")
             locationBg:SetSize(120, 18)
@@ -3884,20 +4663,26 @@ local function ApplyMinimap()
             locationFrame:SetPoint("CENTER", locationBg, "CENTER", 0, 0)
             locationFrame:SetTextColor(1, 1, 1, 0.9)
         end
-        -- Position and background based on inside/outside setting
-        local zoneInside = p.zoneInside
+        -- Background style + anchor position
         local lxOff = p.locationOffsetX or 0
         local lyOff = p.locationOffsetY or 0
-        if zoneInside then
+        if locationMode == "inside" then
             locationBg:SetBackdropColor(0, 0, 0, 0)
-            locationBg:ClearAllPoints()
-            locationBg:SetPoint("BOTTOM", minimap, "BOTTOM", lxOff, 4 + lyOff)
         else
-            local ar, ag, ab = GetBorderColor(p)
+            local ar, ag, ab = GetBorderStyleColor(p)
             locationBg:SetBackdropColor(ar, ag, ab, 1)
-            local locYOff = isCircle and 3 or -7
-            locationBg:ClearAllPoints()
-            locationBg:SetPoint("BOTTOM", minimap, "BOTTOM", lxOff, locYOff + lyOff)
+        end
+        local lpt, lrel, lbx, lby = ResolveElementAnchor(p.locationPosition or "bottom", locationMode, isCircle)
+        locationBg:ClearAllPoints()
+        locationBg:SetPoint(lpt, minimap, lrel, lbx + lxOff, lby + lyOff)
+        -- Align the TEXT edge with the anchor (see the clock block above):
+        -- inside style pins the text to the wrapper corner matching the map
+        -- anchor; edge style keeps it centered in the box.
+        locationFrame:ClearAllPoints()
+        if locationMode == "inside" then
+            locationFrame:SetPoint(lpt, locationBg, lpt, 0, 0)
+        else
+            locationFrame:SetPoint("CENTER", locationBg, "CENTER", 0, 0)
         end
         local ls = p.locationScale or 1.15
         locationBg:SetScale(ls)
@@ -3910,21 +4695,18 @@ local function ApplyMinimap()
         if locationFrame then locationFrame:Hide() end
     end
 
-    -- Coordinates -- hover mode (inside minimap) or always-on below minimap
+    -- Coordinates -- mode (never/hover/always) + anchor position around the map
     if not coordFrame then
         coordFrame = minimap:CreateFontString(nil, "OVERLAY")
         ApplyMinimapFont(coordFrame, 11)
         coordFrame:SetTextColor(1, 1, 1, 0.9)
     end
-    local coordsBelow = p and p.coordsBelow
+    local coordsMode, coordsPos = GetCoordsModePos(p)
+    local cpAnchor = MAP_POS_ANCHORS[coordsPos] or MAP_POS_ANCHORS.topLeft
+    local cpx = p and p.coordsBelowOffsetX or 0
+    local cpy = p and p.coordsBelowOffsetY or 0
     coordFrame:ClearAllPoints()
-    if coordsBelow then
-        local cx = p and p.coordsBelowOffsetX or 0
-        local cy = p and p.coordsBelowOffsetY or 0
-        coordFrame:SetPoint("TOP", minimap, "BOTTOM", cx, -5 + cy)
-    else
-        coordFrame:SetPoint("TOPLEFT", minimap, "TOPLEFT", 4, -4)
-    end
+    coordFrame:SetPoint(cpAnchor[1], minimap, cpAnchor[2], cpAnchor[3] + cpx, cpAnchor[4] + cpy)
     if not coordTicker then
         coordTicker = CreateFrame("Frame")  -- kept for Show/Hide API
         coordTicker._ticker = nil
@@ -3938,7 +4720,7 @@ local function ApplyMinimap()
             if self._ticker then self._ticker:Cancel(); self._ticker = nil end
         end
     end
-    if coordsBelow then
+    if coordsMode == "always" then
         coordFrame:Show()
         coordTicker:Show()
         UpdateCoords()
@@ -3946,45 +4728,274 @@ local function ApplyMinimap()
         coordFrame:Hide()
         coordTicker:Hide()
     end
-    -- Coords ticker only runs while hovering the minimap (when not in below mode)
-    if not GetFFD(minimap).coordsHooked then
-        minimap:HookScript("OnEnter", function(self)
-            if not GetFFD(self).active then return end
-            local mp = EBS.db and EBS.db.profile.minimap
-            if mp and mp.coordsBelow then return end
-            if coordFrame then coordFrame:Show() end
-            coordTicker:Show()
-            UpdateCoords()
-        end)
-        minimap:HookScript("OnLeave", function(self)
-            if not GetFFD(self).active then return end
-            local mp = EBS.db and EBS.db.profile.minimap
-            if mp and mp.coordsBelow then return end
-            if coordFrame and not self:IsMouseOver() then coordFrame:Hide() end
-            coordTicker:Hide()
-        end)
-        GetFFD(minimap).coordsHooked = true
-    end
+    -- Hover mode (coords ticker only runs while the map region is hovered)
+    -- is driven by EBS._HVRevealMapHover via the shared hover-reveal hooks
+    -- installed in the zoom-button section above.
 
-    -- Mousewheel zoom
-    if p.scrollZoom then
-        minimap:EnableMouseWheel(true)
-        if not GetFFD(minimap).zoomHooked then
-            GetFFD(minimap).zoomHooked = true
-            minimap:HookScript("OnMouseWheel", function(self, delta)
+    -- FPS/MS -- optional performance readout (Text section); same format and
+    -- options as the Quality of Life FPS counter, hosted on the minimap
+    if p.showFPS then
+        if not fpsBg then
+            fpsBg = CreateFrame("Frame", nil, minimap)
+            fpsBg:SetSize(60, 20)
+            fpsBg:SetFrameLevel(minimap:GetFrameLevel() + 5)
+            fpsBg:EnableMouse(false)
+            local function MakeFS(size)
+                local fs = fpsBg:CreateFontString(nil, "OVERLAY")
+                ApplyMinimapFont(fs, size)
+                fs:SetTextColor(1, 1, 1, 1)
+                return fs
+            end
+            local DIV_W = (PP.Snap and PP.Snap(1)) or 1
+            local DIV_H = 10
+            local DIV_PAD = 6
+            local function MakeDivider()
+                local d = fpsBg:CreateTexture(nil, "OVERLAY")
+                d:SetColorTexture(1, 1, 1, 1)
+                d:SetSize(DIV_W, DIV_H)
+                return d
+            end
+            -- One FontString per SEGMENT ("58 FPS"): number and suffix render
+            -- in a single rasterization pass, so their spacing can never
+            -- wobble sub-pixel like two separately snapped strings could.
+            -- The suffix colour rides an inline escape (Accented Text);
+            -- SetFormattedText keeps each tick's formatting C-side with no
+            -- template string rebuilds. Only the dividers stay separate.
+            local fsFps, fsWorld, fsLocal = MakeFS(12), MakeFS(12), MakeFS(12)
+            fpsBg._fsAll = { fsFps, fsWorld, fsLocal }
+            local divWorld = MakeDivider()
+            local divLocal = MakeDivider()
+
+            local floor = math.floor
+            local function UpdateFPS(self)
                 local mp = EBS.db and EBS.db.profile.minimap
-                if not mp or not mp.scrollZoom then return end
-                local zoom = self:GetZoom()
-                if delta > 0 then
-                    zoom = min(zoom + 1, 5)
-                else
-                    zoom = max(zoom - 1, 0)
+                -- Numbers render white; the "FPS"/"MS" suffixes take the
+                -- description colour while FPS/MS is checked in Accented
+                -- Text (default on).
+                local hex = "ffffff"
+                if (mp and mp.fpsColorSuffix) ~= false then
+                    local _, _, _, h = GetDescColor(mp)
+                    hex = h
                 end
-                self:SetZoom(zoom)
-                SaveZoomLevel()
+
+                local fps = floor(GetFramerate() + 0.5)
+                local showWorld = mp and mp.fpsShowWorldMS
+                local _localMS = mp and mp.fpsShowLocalMS
+                local showLocal = (_localMS == nil) and true or _localMS
+                local _, _, latHome, latWorld = GetNetStats()
+
+                fsFps:ClearAllPoints()
+                fsFps:SetPoint("LEFT", self, "LEFT", 0, 0)
+                fsFps:SetFormattedText("%d |cff%sFPS|r", fps, hex)
+                local totalW = fsFps:GetStringWidth() or 0
+                local anchor = fsFps
+
+                if showWorld then
+                    divWorld:ClearAllPoints()
+                    divWorld:SetPoint("LEFT", anchor, "RIGHT", DIV_PAD, 0)
+                    divWorld:Show()
+                    fsWorld:ClearAllPoints()
+                    fsWorld:SetPoint("LEFT", divWorld, "RIGHT", DIV_PAD, 0)
+                    fsWorld:SetFormattedText("%d |cff%sMS|r", latWorld, hex)
+                    fsWorld:Show()
+                    totalW = totalW + DIV_PAD + DIV_W + DIV_PAD + (fsWorld:GetStringWidth() or 0)
+                    anchor = fsWorld
+                else
+                    divWorld:Hide(); fsWorld:Hide()
+                end
+
+                if showLocal then
+                    divLocal:ClearAllPoints()
+                    divLocal:SetPoint("LEFT", anchor, "RIGHT", DIV_PAD, 0)
+                    divLocal:Show()
+                    fsLocal:ClearAllPoints()
+                    fsLocal:SetPoint("LEFT", divLocal, "RIGHT", DIV_PAD, 0)
+                    fsLocal:SetFormattedText("%d |cff%sMS|r", latHome, hex)
+                    fsLocal:Show()
+                    totalW = totalW + DIV_PAD + DIV_W + DIV_PAD + (fsLocal:GetStringWidth() or 0)
+                else
+                    divLocal:Hide(); fsLocal:Hide()
+                end
+
+                self:SetSize(totalW + 4, 20)
+            end
+
+            local elapsed = 0
+            fpsBg:SetScript("OnUpdate", function(self, dt)
+                elapsed = elapsed + dt
+                if elapsed < (self._interval or 3) then return end
+                elapsed = 0
+                UpdateFPS(self)
+            end)
+            fpsBg._updateNow = function() elapsed = 0; UpdateFPS(fpsBg) end
+
+            -- Hover tooltip (Show on FPS/MS Hover): same dispatch as the clock
+            fpsBg:SetScript("OnEnter", function(self)
+                EBS._HVRevealMapHover()
+                local mp = EBS.db and EBS.db.profile.minimap
+                local mode = (mp and mp.fpsHoverTooltip) or "none"
+                if mode == "lockouts" then
+                    if EllesmereUI.InProtectedInstance and EllesmereUI.InProtectedInstance() then return end
+                    local entries = GetCalendarLockoutEntries()
+                    if entries then ShowCalendarTooltip(self, entries) end
+                elseif mode == "vault" then
+                    ShowVaultTooltip(self)
+                end
+            end)
+            fpsBg:SetScript("OnLeave", function()
+                HideCalendarTooltip()
+                HideVaultTooltip()
+            end)
+            -- With the Great Vault hover tooltip assigned, clicking the
+            -- readout opens the vault (same as the Great Vault button). Mouse
+            -- is only enabled while a hover tooltip is assigned, so this never
+            -- intercepts clicks otherwise.
+            fpsBg:SetScript("OnMouseUp", function(_, button)
+                if button ~= "LeftButton" then return end
+                local mp = EBS.db and EBS.db.profile.minimap
+                if mp and mp.fpsHoverTooltip == "vault" then
+                    ToggleGreatVault()
+                end
             end)
         end
+        local fsz = p.fpsTextSize or 12
+        for _, fs in ipairs(fpsBg._fsAll) do
+            ApplyMinimapFont(fs, fsz)
+        end
+        fpsBg._interval = p.fpsUpdateInterval or 3
+        local fAnchor = MAP_POS_ANCHORS[p.fpsPosition or "bottomLeft"] or MAP_POS_ANCHORS.bottomLeft
+        -- The row is one evenly spaced chain at natural widths; the anchored
+        -- corner is the stable edge and the whole row breathes from there.
+        fpsBg:ClearAllPoints()
+        fpsBg:SetPoint(fAnchor[1], minimap, fAnchor[2],
+            fAnchor[3] + (p.fpsOffsetX or 0), fAnchor[4] + (p.fpsOffsetY or 0))
+        -- Mouse only while a hover tooltip is assigned, so the readout never
+        -- blocks map clicks otherwise
+        fpsBg:EnableMouse((p.fpsHoverTooltip or "none") ~= "none")
+        fpsBg:Show()
+        fpsBg._updateNow()
     else
+        if fpsBg then fpsBg:Hide() end
+    end
+
+    -- Instance Difficulty as Text (Text section): compact "20M"-style readout
+    -- on the map replacing the Blizzard difficulty flag (suppressed above
+    -- while this is enabled). Event-driven; zero cost while disabled. Player
+    -- count renders white, the difficulty letter follows the description
+    -- color (same accent/custom system as the FPS/MS suffixes).
+    if p.diffTextEnabled then
+        if not diffTextFrame then
+            diffTextFrame = CreateFrame("Frame", nil, minimap)
+            local fs = minimap:CreateFontString(nil, "OVERLAY")
+            fs:SetTextColor(1, 1, 1, 1)
+            diffTextFrame._text = fs
+            -- Difficulty ID -> suffix letter; count prefix rules alongside.
+            local SUFFIX = {
+                [1] = "N", [2] = "H", [23] = "M",                         -- dungeons
+                [14] = "N", [15] = "H", [16] = "M", [233] = "M",          -- raids
+                [3] = "N", [4] = "N", [5] = "H", [6] = "H",               -- legacy raids
+                [9] = "N", [148] = "N", [173] = "N", [174] = "H",
+                [7] = "LFR", [17] = "LFR", [205] = "F",
+            }
+            local FLEX = { [14] = true, [15] = true, [233] = true }       -- size = current group
+            local NOCOUNT = { [205] = true }                              -- letter only
+            local TW   = { [24] = true, [33] = true, [151] = true }
+            local EVT  = { [18] = true, [19] = true, [30] = true }
+            local PVP  = { [25] = true, [29] = true, [32] = true, [34] = true, [45] = true }
+            local SCEN = { [12] = "S", [38] = "S", [11] = "HS", [39] = "HS", [40] = "MS" }
+            local GARRISON = {
+                [1152] = true, [1153] = true, [1154] = true, [1158] = true,
+                [1159] = true, [1160] = true, [1330] = true, [1331] = true,
+            }
+            -- Difficulty (Reactive): letter colours by tier (normal and
+            -- scenarios bronze like delves, heroic blue, mythic purple,
+            -- keystones legendary orange).
+            local REACTIVE_HEX = {
+                N = "c69b6d", H = "0070dd", M = "a335ee",
+                S = "c69b6d", HS = "0070dd", MS = "a335ee",
+                LFR = "9d9d9d", F = "9d9d9d",
+                TW = "00ccff", EVT = "ffffff", PvP = "ffffff",
+            }
+            diffTextFrame._update = function(self)
+                local out = self._text
+                local mp2 = EBS.db and EBS.db.profile.minimap
+                if not (mp2 and mp2.diffTextEnabled) then out:SetText("") return end
+                local _, instanceType, diffID, _, maxPlayers, _, _, instanceID, groupSize = GetInstanceInfo()
+                if not diffID or diffID == 0 or instanceType == "none" or GARRISON[instanceID] then
+                    out:SetText("")
+                    return
+                end
+                -- Letter colour follows Accented Text: Difficulty (Reactive)
+                -- colours by tier, Difficulty by the flat accent/custom
+                -- colour, neither = plain white matching the count. Reactive
+                -- wins if both keys are somehow set (stale import).
+                local reactive = mp2.diffTextReactive
+                local hex = "ffffff"
+                if not reactive and mp2.diffTextAccent then
+                    local _, _, _, h = GetDescColor(mp2)
+                    hex = h
+                end
+                if diffID == 8 then
+                    -- Active keystone: key level after the colored M+
+                    if reactive then hex = "ff8000" end
+                    local lvl = C_ChallengeMode and C_ChallengeMode.GetActiveKeystoneInfo
+                        and C_ChallengeMode.GetActiveKeystoneInfo()
+                    out:SetFormattedText("|cff%sM+|r%s", hex, (lvl and lvl > 0) and lvl or "")
+                    return
+                end
+                if diffID == 208 then
+                    -- Delve: tier number from the scenario header widget
+                    if reactive then hex = "c69b6d" end
+                    local tier
+                    local ok, info = pcall(C_UIWidgetManager.GetScenarioHeaderDelvesWidgetVisualizationInfo, 6183)
+                    if ok and info and info.tierText then
+                        tier = tostring(info.tierText):match("%d+")
+                    end
+                    out:SetFormattedText("|cff%sT|r%s", hex, tier or "")
+                    return
+                end
+                local letter
+                if TW[diffID] then letter = "TW"
+                elseif EVT[diffID] then letter = "EVT"
+                elseif PVP[diffID] then letter = "PvP"
+                elseif SCEN[diffID] then letter = SCEN[diffID]
+                else letter = SUFFIX[diffID] end
+                if not letter then out:SetText("") return end
+                if reactive then hex = REACTIVE_HEX[letter] or "ffffff" end
+                local count
+                if SUFFIX[diffID] and not NOCOUNT[diffID] then
+                    count = FLEX[diffID] and groupSize or maxPlayers
+                end
+                out:SetFormattedText("%s|cff%s%s|r", (count and count > 0) and count or "", hex, letter)
+            end
+            diffTextFrame:SetScript("OnEvent", function(self) self._update(self) end)
+        end
+        local fs = diffTextFrame._text
+        ApplyMinimapFont(fs, p.diffTextSize or 12)
+        local a = MAP_POS_ANCHORS[p.diffTextPosition or "topLeft"] or MAP_POS_ANCHORS.topLeft
+        fs:ClearAllPoints()
+        fs:SetPoint(a[1], minimap, a[2], a[3] + (p.diffTextOffsetX or 0), a[4] + (p.diffTextOffsetY or 0))
+        fs:Show()
+        diffTextFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+        diffTextFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+        diffTextFrame:RegisterEvent("PLAYER_DIFFICULTY_CHANGED")
+        diffTextFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+        diffTextFrame:RegisterEvent("CHALLENGE_MODE_START")
+        diffTextFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+        diffTextFrame:RegisterEvent("CHALLENGE_MODE_RESET")
+        diffTextFrame._update(diffTextFrame)
+    elseif diffTextFrame then
+        diffTextFrame:UnregisterAllEvents()
+        diffTextFrame._text:Hide()
+    end
+
+    -- Mousewheel zoom: handled on the square overlay (the Minimap's own hit
+    -- region is circular, which left the square skin's corners wheel-dead).
+    -- With Scroll to Zoom off, both stay wheel-disabled so the wheel falls
+    -- through to the world (camera zoom) as before.
+    do
+        local blocker = GetFFD(minimap).pingBlocker
+        if blocker then blocker:EnableMouseWheel(p.scrollZoom and true or false) end
         minimap:EnableMouseWheel(false)
     end
 
@@ -4234,6 +5245,58 @@ do
     end)
 end
 
+-- Debug: /euiblock -- after 3 seconds, print every click-enabled frame under
+-- the cursor, INCLUDING motion-disabled ones that /fstack cannot see (those
+-- are the invisible click-blockers).
+SLASH_EUIBLOCK1 = "/euiblock"
+SlashCmdList.EUIBLOCK = function()
+    print("|cff0cd29fEllesmereUI:|r hover the blocked spot -- scanning in 3 seconds...")
+    -- Frame state on protected frames comes back as secret booleans in
+    -- Midnight and boolean-testing those throws, so each frame's probe runs
+    -- under pcall and secret/forbidden frames are simply skipped.
+    local function Probe(fr)
+        if fr:IsForbidden() or not fr:IsVisible() or not fr:IsMouseOver() then return end
+        if not (fr.IsMouseClickEnabled and fr:IsMouseClickEnabled()) then return end
+        return (fr:GetDebugName() or "?"), tostring(fr:IsMouseMotionEnabled())
+    end
+    C_Timer.After(3, function()
+        print("|cff0cd29fEllesmereUI:|r click-enabled frames under the cursor:")
+        local f = EnumerateFrames()
+        local n = 0
+        while f do
+            local okc, name, motion = pcall(Probe, f)
+            if okc and name then
+                n = n + 1
+                print(format("  %s  (motion: %s)", name, motion))
+            end
+            f = EnumerateFrames(f)
+        end
+        print(format("|cff0cd29fEllesmereUI:|r %d frame(s).", n))
+    end)
+end
+
+-- Debug: /euimap -- dump every direct Minimap child with its size, state and
+-- the atlases of its Default-state regions, to identify anonymous Blizzard
+-- widgets (like the guild banner) that need suppression.
+SLASH_EUIMAP1 = "/euimap"
+SlashCmdList.EUIMAP = function()
+    print("|cff0cd29fEllesmereUI:|r Minimap children:")
+    for i, child in ipairs({ Minimap:GetChildren() }) do
+        local okc, line = pcall(function()
+            local d = child.Default
+            local a1 = d and d.Background and d.Background.GetAtlas and d.Background:GetAtlas()
+            local a2 = d and d.Border and d.Border.GetAtlas and d.Border:GetAtlas()
+            local w, h = child:GetSize()
+            return format("  %d. %s  %.0fx%.0f  shown:%s click:%s  atlas:%s / %s",
+                i, child:GetDebugName() or "?", w or 0, h or 0,
+                tostring(child:IsShown()),
+                tostring(child.IsMouseClickEnabled and child:IsMouseClickEnabled()),
+                tostring(a1), tostring(a2))
+        end)
+        if okc and line then print(line) end
+    end
+end
+
 function EBS:OnInitialize()
     EBS.db = EllesmereUI.Lite.NewDB("EllesmereUIMinimapDB", defaults)
 
@@ -4408,18 +5471,9 @@ do
             -- Textured circle border
             if GetFFD(Minimap).texCircBorder then GetFFD(Minimap).texCircBorder:SetAlpha(alpha) end
 
-            -- Square pixel-perfect border
-            if EllesmereUI.PP and EllesmereUI.PP.GetBorders(Minimap) then
-                if show then
-                    local p = EBS.db and EBS.db.profile and EBS.db.profile.minimap
-                    if p then
-                        local r, g, b, a = GetBorderColor(p)
-                        EllesmereUI.PP.SetBorderColor(Minimap, r, g, b, a)
-                    end
-                else
-                    EllesmereUI.PP.SetBorderColor(Minimap, 0, 0, 0, 0)
-                end
-            end
+            -- Square border host (solid strips or textured backdrop)
+            local host = GetFFD(Minimap).borderHost
+            if host then host:SetAlpha(alpha) end
         end
 
         FarmHud:HookScript("OnShow", function() ToggleMinimapBorders(false) end)

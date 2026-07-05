@@ -133,6 +133,11 @@ local DB_DEFAULTS = {
         enabled           = true,
         showTitle         = true,
         showDungeonName   = true,
+        -- Show the key level (e.g. "+21") with a divider to the left of the timer
+        -- clock. Only usable while the dungeon name is hidden (the title is then
+        -- just the lone key level, which moves down onto the timer line instead).
+        showKeyLevelOnTimer = false,
+        keyLevelTimerSpacing = 8,
         showAffixes       = true,
         showPlusTwoTimer  = true,
         showPlusThreeTimer = true,
@@ -988,6 +993,44 @@ local function SetFittedText(fs, text, maxWidth, preferredSize, minSize)
     end
 end
 
+-- Widest single-digit glyph in fs's CURRENT font. Clock-width templates replace
+-- every digit with this instead of a hardcoded "9": proportional / oldstyle
+-- numeral fonts can render another digit (e.g. "0" or "3") wider than "9", so a
+-- "9" template under-measures and the pinned width then ellipsizes the live clock
+-- (e.g. "33:00"). fs must already have its final font applied. Clears the width so
+-- the per-glyph measurements are unbounded. Called only when a width cache key
+-- changes (font / size / scale / length), never per tick.
+local function WidestDigitChar(fs)
+    fs:SetWidth(0)
+    local widest, widestW = "9", 0
+    for d = 0, 9 do
+        local ch = tostring(d)
+        fs:SetText(ch)
+        local w = fs:GetStringWidth() or 0
+        if w > widestW then widestW = w; widest = ch end
+    end
+    return widest
+end
+
+-- Set a threshold FontString's text and pin it to a stable, jitter-free width
+-- based on the widest digit in the current font, so the small +2 / +3 / remaining
+-- countdowns do not "breathe" horizontally as the seconds tick in a proportional
+-- font (the same width-pin idea the main clock uses, applied to the threshold
+-- row). Color escapes are zero-width, so they are stripped before templatizing.
+-- The caller (placeAt) sets JustifyH to match the anchor edge so one edge stays
+-- fixed. Returns the pinned width for the remaining-mode overlap packing.
+local function SetThreshText(fs, text)
+    local visible = (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+    fs:SetText((visible:gsub("%d", WidestDigitChar(fs))))
+    -- +1px only (vs the clock's +3): the widest-digit template already covers the
+    -- worst-case text for this length, so 1px is enough to absorb subpixel rounding
+    -- at fractional UI scales -- keeps packed labels tight when GAP is 0.
+    local w = (fs:GetStringWidth() or 0) + 1
+    fs:SetWidth(w)
+    fs:SetText(text)
+    return w
+end
+
 local function GetAccentColor()
     if EllesmereUI.ResolveThemeColor and EllesmereUI.GetActiveTheme then
         return EllesmereUI.ResolveThemeColor(EllesmereUI.GetActiveTheme())
@@ -1056,6 +1099,12 @@ local function CreateStandaloneFrame()
     f._timerFS:SetJustifyH("CENTER")
     f._timerFS:SetWordWrap(false)
     f._timerFS:SetNonSpaceWrap(false)
+    -- Optional "+key  |" prefix rendered to the left of the timer clock
+    -- (Show Key Level on Timer). Single-anchored, no explicit width, so it
+    -- auto-sizes and never truncates.
+    f._keyLevelFS = f:CreateFontString(nil, "OVERLAY")
+    f._keyLevelFS:SetWordWrap(false)
+    f._keyLevelFS:SetNonSpaceWrap(false)
     f._timerDetailFS = f:CreateFontString(nil, "OVERLAY")
     f._timerDetailFS:SetWordWrap(false)
     f._timerDetailFS:SetNonSpaceWrap(false)
@@ -1266,6 +1315,12 @@ local function RenderStandalone()
     local innerW = frameW - PAD * 2
     local y = -PAD
 
+    -- "Show Key Level on Timer": render "+key  |" to the left of the timer clock.
+    -- Gated on the dungeon name being hidden (the title is then just the lone key
+    -- level, which relocates onto the timer line). Used by RenderTitleAffixes (to
+    -- suppress the now-redundant title) and by the timer block below.
+    local keyLevelOnTimer = (p.showKeyLevelOnTimer == true) and (p.showDungeonName == false)
+
     local function ContentPad(align)
         if align == "LEFT" or align == "RIGHT" then return PAD + ALIGN_PAD end
         return PAD
@@ -1284,7 +1339,11 @@ local function RenderStandalone()
         else
             tR, tG, tB = 1, 1, 1
         end
-        if p.showTitle ~= false then
+        -- When "Show Key Level on Timer" is on (only possible with the dungeon
+        -- name hidden), the title would be just the lone "+key" -- that moves down
+        -- onto the timer line instead, so suppress the title row entirely here.
+        -- keyLevelOnTimer is a function-scope upvalue computed once near the top.
+        if p.showTitle ~= false and not keyLevelOnTimer then
             local titleText
             if p.showDungeonName == false then
                 -- Show only the key level number, not the dungeon name.
@@ -1510,6 +1569,13 @@ local function RenderStandalone()
                 else
                     point = aboveBar and "BOTTOM" or "TOP"
                 end
+                -- Justify to the anchored edge so the pinned width leaves the
+                -- fixed edge steady: right-anchored labels keep their right edge on
+                -- the segment/bar end; center-anchored labels align left inside a
+                -- box centered on the tick (near-centered, but the digits no longer
+                -- shift as the seconds tick, since the widest-digit pin keeps the
+                -- box a couple px wider than the live text).
+                fs:SetJustifyH(rightJustified and "RIGHT" or "LEFT")
                 fs:ClearAllPoints()
                 if aboveBar then
                     -- threshold rendered before the bar -> sit above the bar
@@ -1520,21 +1586,24 @@ local function RenderStandalone()
                 end
             end
 
-            -- Prepare each visible FontString (text + style) up front so
-            -- GetStringWidth is valid before layout.
+            -- Prepare each visible FontString (text + style) up front. Each is
+            -- pinned to a jitter-free width via SetThreshText; the returned widths
+            -- feed the remaining-mode overlap packing below (in place of a live,
+            -- per-second GetStringWidth that would make the packing shift too).
+            local threshW3, threshW2, threshWr = 0, 0, 0
             if p.showPlusThreeTimer then
                 SetFS(f._threshFS, plusThreeSize)
                 ApplyShadow(f._threshFS)
                 f._threshFS:SetTextColor(1, 1, 1)
                 local c1r, c1g, c1b = GetTimerSegmentTextColor(p, 1)
-                f._threshFS:SetText(buildLabel(plusThreeT, { r = c1r, g = c1g, b = c1b }))
+                threshW3 = SetThreshText(f._threshFS, buildLabel(plusThreeT, { r = c1r, g = c1g, b = c1b }))
             end
             if p.showPlusTwoTimer then
                 SetFS(f._threshFS2, plusTwoSize)
                 ApplyShadow(f._threshFS2)
                 f._threshFS2:SetTextColor(1, 1, 1)
                 local c2r, c2g, c2b = GetTimerSegmentTextColor(p, 2)
-                f._threshFS2:SetText(buildLabel(plusTwoT, { r = c2r, g = c2g, b = c2b }))
+                threshW2 = SetThreshText(f._threshFS2, buildLabel(plusTwoT, { r = c2r, g = c2g, b = c2b }))
             end
             if showRem then
                 SetFS(f._threshRemFS, plusOneSize)
@@ -1551,7 +1620,7 @@ local function RenderStandalone()
                 else
                     f._threshRemFS:SetTextColor(tR, tG, tB)
                 end
-                f._threshRemFS:SetText(FormatRemaining(maxTime - elapsed))
+                threshWr = SetThreshText(f._threshRemFS, FormatRemaining(maxTime - elapsed))
             end
 
             if not showRem then
@@ -1593,23 +1662,25 @@ local function RenderStandalone()
                 -- +2/+3 texts prefer their tick centers but are nudged left as
                 -- needed so none of the three ever overlap. Packed right to
                 -- left with a small gap, clamped to the bar's left edge.
-                local GAP = 2
+                local GAP = 0
                 local barW = _barW_for_thresh
                 -- Visible set, left to right (plusThree < plusTwo < bar end).
                 local entries = {}
                 if p.showPlusThreeTimer then
-                    entries[#entries + 1] = { fs = f._threshFS, w = f._threshFS:GetStringWidth() or 0,
+                    entries[#entries + 1] = { fs = f._threshFS, w = threshW3,
                         center = barW * (plusThreeT / maxTime) }
                 else
                     f._threshFS:Hide()
                 end
                 if p.showPlusTwoTimer then
-                    entries[#entries + 1] = { fs = f._threshFS2, w = f._threshFS2:GetStringWidth() or 0,
+                    entries[#entries + 1] = { fs = f._threshFS2, w = threshW2,
                         center = barW * (plusTwoT / maxTime) }
                 else
                     f._threshFS2:Hide()
                 end
-                local remW = f._threshRemFS:GetStringWidth() or 0
+                -- Use the pinned width (not a live GetStringWidth) so the right-edge
+                -- pin and the overlap packing stay put as the seconds tick.
+                local remW = threshWr
                 entries[#entries + 1] = { fs = f._threshRemFS, w = remW,
                     center = barW - remW / 2, pinRight = true }
 
@@ -1834,8 +1905,11 @@ local function RenderStandalone()
             .. "|" .. (_fPath or "") .. "|" .. (_fFlags or "")
         if f._timerFS._lastLen ~= _mainKey then
             f._timerFS._lastLen = _mainKey
-            -- Measure with worst-case digits so SetWidth never clips the live text.
-            local templ = (timerText or ""):gsub("%d", "9")
+            -- Worst-case template using the WIDEST digit in the CURRENT font, not a
+            -- hardcoded "9": decorative / oldstyle numeral fonts can make another
+            -- digit (e.g. "0" or "3") wider than "9", so a "9" template under-measures
+            -- and the live clock (e.g. "33:00") gets ellipsized. Once per key change.
+            local templ = (timerText or ""):gsub("%d", WidestDigitChar(f._timerFS))
             f._timerFS:SetText(templ)
             -- Keep the SetTextDiff cache in sync with what we just wrote
             -- directly. Otherwise the cache still reflects the previous
@@ -1843,10 +1917,47 @@ local function RenderStandalone()
             -- the "99:99" template stays visible (bug seen during the
             -- 10-second pre-start window where elapsed stays at 0).
             f._timerFS._lastText = templ
+            -- Clear any previously pinned width BEFORE measuring. With wrap off,
+            -- GetStringWidth() returns a value CLAMPED to the current width whenever
+            -- the text is being truncated -- so if the box needs to GROW (bigger
+            -- timer font, a heavier font finishing load, or the clock gaining a
+            -- character in overtime, e.g. "-00:01"), measuring against the old,
+            -- narrower pinned width yields a too-small result that then stays
+            -- truncated for the rest of the run. Matches the objective-row pattern
+            -- (SetWidth(0) before GetStringWidth) used later in this file.
+            f._timerFS:SetWidth(0)
             -- +3px safety margin: subpixel rounding at fractional UI scales can
             -- otherwise clip the rightmost glyph and force a wrap.
             f._timerFS:SetWidth((f._timerFS:GetStringWidth() or 0) + 3)
             SetTextDiff(f._timerFS, timerText)
+        end
+
+        -- Optional "+key  |" prefix to the left of the timer clock. keyExtra is the
+        -- horizontal room it needs on the left; the timer group is shifted right by
+        -- keyExtra (LEFT align) or keyExtra/2 (CENTER) so the whole "+21 | timer"
+        -- block stays aligned, and is left untouched (flush right, growing left) for
+        -- RIGHT align. Single-anchored with no explicit width, so it never truncates.
+        local keyExtra, keySpacing = 0, 0
+        if keyLevelOnTimer then
+            SetTimerFS(f._keyLevelFS, _timerSz)
+            ApplyShadow(f._keyLevelFS)
+            -- Title identity color (accent / custom / white) so it does not turn red
+            -- alongside the timer on depletion.
+            local klR, klG, klB
+            if p.titleUseAccent ~= false then
+                klR, klG, klB = aR, aG, aB
+            elseif p.titleColor then
+                klR, klG, klB = p.titleColor.r or 1, p.titleColor.g or 1, p.titleColor.b or 1
+            else
+                klR, klG, klB = 1, 1, 1
+            end
+            f._keyLevelFS:SetTextColor(klR, klG, klB)
+            f._keyLevelFS:SetJustifyH("LEFT")
+            f._keyLevelFS:SetWidth(0)
+            -- "||" renders as a single literal pipe ("|" is WoW's escape introducer).
+            SetTextDiff(f._keyLevelFS, format("+%d  ||", run.level))
+            keySpacing = p.keyLevelTimerSpacing or 8
+            keyExtra = (f._keyLevelFS:GetStringWidth() or 0) + keySpacing
         end
 
         if timerDetailText then
@@ -1872,8 +1983,12 @@ local function RenderStandalone()
                 .. "|" .. (_detPath or "") .. "|" .. (_detFlags or "")
             if f._timerDetailFS._lastKey ~= _detKey then
                 f._timerDetailFS._lastKey = _detKey
-                local templ = timerDetailText:gsub("%d", "9")
+                local templ = timerDetailText:gsub("%d", WidestDigitChar(f._timerDetailFS))
                 f._timerDetailFS:SetText(templ)
+                -- Clear the pinned width first so GetStringWidth returns the true
+                -- unbounded width, not one clamped to a previous, narrower pin (see
+                -- the main-timer measurement above for the full explanation).
+                f._timerDetailFS:SetWidth(0)
                 f._timerDetailFS:SetWidth((f._timerDetailFS:GetStringWidth() or 0) + 3)
                 f._timerDetailFS:SetText(timerDetailText)
             end
@@ -1885,22 +2000,40 @@ local function RenderStandalone()
                 f._timerFS:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD + ALIGN_PAD), y)
                 f._timerDetailFS:SetPoint("BOTTOMRIGHT", f._timerFS, "BOTTOMLEFT", -gap, 4)
             elseif timerAlign == "LEFT" then
-                f._timerFS:SetPoint("TOPLEFT", f, "TOPLEFT", PAD + ALIGN_PAD, y)
+                f._timerFS:SetPoint("TOPLEFT", f, "TOPLEFT", PAD + ALIGN_PAD + keyExtra, y)
                 f._timerDetailFS:SetPoint("BOTTOMLEFT", f._timerFS, "BOTTOMRIGHT", gap, 4)
             else
-                f._timerFS:SetPoint("TOP", f, "TOP", -(detailW + gap) / 2, y)
+                f._timerFS:SetPoint("TOP", f, "TOP", -(detailW + gap) / 2 + keyExtra / 2, y)
                 f._timerDetailFS:SetPoint("BOTTOMLEFT", f._timerFS, "BOTTOMRIGHT", gap, 4)
             end
             f._timerDetailFS:Show()
+            -- Key prefix sits left of the leftmost timer element (the detail, when
+            -- it is on the left for RIGHT align; otherwise the main clock).
+            if keyLevelOnTimer then
+                local leftmost = (timerAlign == "RIGHT") and f._timerDetailFS or f._timerFS
+                f._keyLevelFS:ClearAllPoints()
+                f._keyLevelFS:SetPoint("BOTTOMRIGHT", leftmost, "BOTTOMLEFT", -keySpacing, 0)
+                f._keyLevelFS:Show()
+            else
+                f._keyLevelFS:Hide()
+            end
         else
             if timerAlign == "RIGHT" then
                 f._timerFS:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD + ALIGN_PAD), y)
             elseif timerAlign == "LEFT" then
-                f._timerFS:SetPoint("TOPLEFT", f, "TOPLEFT", PAD + ALIGN_PAD, y)
+                f._timerFS:SetPoint("TOPLEFT", f, "TOPLEFT", PAD + ALIGN_PAD + keyExtra, y)
             else
-                f._timerFS:SetPoint("TOP", f, "TOP", 0, y)
+                f._timerFS:SetPoint("TOP", f, "TOP", keyExtra / 2, y)
             end
             f._timerDetailFS:Hide()
+            -- Key prefix immediately left of the clock, separated by the spacing.
+            if keyLevelOnTimer then
+                f._keyLevelFS:ClearAllPoints()
+                f._keyLevelFS:SetPoint("BOTTOMRIGHT", f._timerFS, "BOTTOMLEFT", -keySpacing, 0)
+                f._keyLevelFS:Show()
+            else
+                f._keyLevelFS:Hide()
+            end
         end
 
         f._timerFS:Show()
@@ -1910,6 +2043,9 @@ local function RenderStandalone()
     else
         f._timerFS:Hide()
         f._timerDetailFS:Hide()
+        -- In-bar mode: the key level is folded into the bar text (below), so the
+        -- standalone prefix string is not used.
+        f._keyLevelFS:Hide()
     end
 
     if titleAffixBelowTimer then
@@ -2077,6 +2213,11 @@ local function RenderStandalone()
             local barTimerText = timerText
             if timerDetailText then
                 barTimerText = timerText .. timerDetailText
+            end
+            -- In-bar mode folds the "+key  |" prefix inline (the pixel Spacing
+            -- slider only applies to the standalone, non-in-bar clock).
+            if keyLevelOnTimer then
+                barTimerText = format("+%d  ||  ", run.level) .. barTimerText
             end
             SetTextDiff(f._barTimerFS, barTimerText)
             f._barTimerFS:ClearAllPoints()

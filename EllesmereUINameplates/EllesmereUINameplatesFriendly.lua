@@ -6,7 +6,6 @@ local GetFont = ns.GetFont
 local GetNPOutline = ns.GetNPOutline
 local GetNPUseShadow = ns.GetNPUseShadow
 local SetFSFont = ns.SetFSFont
-local GetHealthBarHeight = ns.GetHealthBarHeight
 local GetFriendlyHealthBarHeight = ns.GetFriendlyHealthBarHeight
 local GetFriendlyHealthBarWidth = ns.GetFriendlyHealthBarWidth
 
@@ -33,7 +32,6 @@ local friendlyPlates = {}
 ns.friendlyPlates = friendlyPlates
 local _cachedFriendlyTargetPlate = nil
 
-local FRIENDLY_BAR_W = 150
 local FRIENDLY_PLATE_Y_OFFSET = -18
 
 local function IsInFollowerDungeon()
@@ -202,46 +200,15 @@ local function RestoreFriendlyFontOverride()
     end
 end
 
--------------------------------------------------------------------------------
---  Per-FontString font override
---  Instead of modifying the global SystemFont_NamePlate objects (which causes
---  sub-pixel shimmer/warping), we hook each nameplate's name FontString and
---  apply our font + pixel snap settings directly on it.  This preserves
---  Blizzard's internal font object rendering properties.
--------------------------------------------------------------------------------
-local styledNameTexts = {}  -- nameText → true (tracks which FontStrings we've styled)
-local hookedNameFonts = {}  -- nameText → true (permanent hooks, applied once)
-
-local function ApplyFontToNameText(nameText)
-    if not nameText or not nameText.SetFont then return end
-    local font = GetFont()
-    local _, h = nameText:GetFont()
-    if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(nameText, GetNPUseShadow()) end
-    nameText:SetFont(font, h or 9, GetNPOutline())
-    if nameText.SetSnapToPixelGrid then
-        nameText:SetSnapToPixelGrid(false)
-    end
-    if nameText.SetTexelSnappingBias then
-        nameText:SetTexelSnappingBias(0)
-    end
-    styledNameTexts[nameText] = true
-end
+-- Name-only fonts are applied globally via the SystemFont_NamePlate override
+-- above; hookedNameFonts tracks the per-FontString SetWidth hooks installed in
+-- the OnNamePlateAdded hook below (long-name truncation fix).
+local hookedNameFonts = {}  -- nameText -> true (permanent hooks, applied once)
 
 local function ApplyFontToNameplate(nameplate)
-    -- No-op: font is now applied globally via SystemFont_NamePlate override.
+    -- No-op: font is applied globally via the SystemFont_NamePlate override.
 end
 ns.ApplyFontToNameplate = ApplyFontToNameplate
-
-local function RestoreFontOnNameplate(nameplate)
-    if not nameplate then return end
-    local uf = nameplate.UnitFrame
-    if not uf then return end
-    local nameText = uf.name
-    if nameText then
-        styledNameTexts[nameText] = nil
-        -- Blizzard will re-apply its default font on the next SetFontObject call
-    end
-end
 
 -- Exposed so the options panel can live-apply a new friendly name-only size.
 -- Re-running the override re-reads GetFriendlyNameSize and resizes the shared

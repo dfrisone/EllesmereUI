@@ -4,7 +4,7 @@
 --  Shared helpers (EllesmereUI.GetUpgradeTrack, EllesmereUI.GetEnchantText)
 --  are exported by CharacterSheet and loaded before this file.
 -------------------------------------------------------------------------------
-local ADDON_NAME = ...
+local ADDON_NAME, ns = ...
 local skinned = false
 
 -- External weak-keyed lookup table for frame state (prevents tainting Blizzard frames)
@@ -315,7 +315,7 @@ local function SkinInspectSheet()
         bg:SetAlpha(1)
         GetFFD(frame).bg = bg
         GetFFD(frame).bgOverlay = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
-        GetFFD(frame).bgOverlay:SetColorTexture(0, 0, 0, 0.55)
+        GetFFD(frame).bgOverlay:SetColorTexture(0, 0, 0, 0.62)
         GetFFD(frame).bgOverlay:SetAllPoints(frame)
         -- Aspect-ratio-preserving cover mode (matches character sheet)
         local BASE_L, BASE_R, BASE_T, BASE_B = 0.25, 1, 0, 0.75
@@ -339,6 +339,11 @@ local function SkinInspectSheet()
         hooksecurefunc(frame, "SetWidth", UpdateBgTexCoords)
         hooksecurefunc(frame, "SetHeight", UpdateBgTexCoords)
         UpdateBgTexCoords()
+        -- Follows the Character Sheet window's style pick (the two share one
+        -- enable + style setting).
+        if ns.WSkin and ns.WSkin.AdoptShell then
+            ns.WSkin.AdoptShell("charsheet", frame, bg, GetFFD(frame).bgOverlay)
+        end
     end
 
     -- Hide Blizzard backgrounds and borders
@@ -524,25 +529,24 @@ local function SkinInspectSheet()
 
         for i = 1, select("#", closeBtn:GetRegions()) do
             local region = select(i, closeBtn:GetRegions())
-            if region and region:IsObjectType("Texture") then
+            if region and region:IsObjectType("Texture") and region ~= GetFFD(closeBtn).x then
                 region:SetAlpha(0)
             end
         end
 
-        local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("blizzardSkin") or STANDARD_TEXT_FONT
-
         if not GetFFD(closeBtn).x then
-            GetFFD(closeBtn).x = closeBtn:CreateFontString(nil, "OVERLAY")
-            GetFFD(closeBtn).x:SetFont(fontPath, 16, nil)
-            GetFFD(closeBtn).x:SetText("x")
-            GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.75)
-            GetFFD(closeBtn).x:SetPoint("CENTER", -2, -3)
+            local closeX = closeBtn:CreateTexture(nil, "OVERLAY")
+            closeX:SetAtlas("uitools-icon-close")
+            closeX:SetSize(14, 14)
+            closeX:SetPoint("CENTER", -2, 0)
+            closeX:SetVertexColor(1, 1, 1, 0.75)
+            GetFFD(closeBtn).x = closeX
 
             closeBtn:HookScript("OnEnter", function()
-                if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 1) end
+                if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetVertexColor(1, 1, 1, 1) end
             end)
             closeBtn:HookScript("OnLeave", function()
-                if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.75) end
+                if GetFFD(closeBtn).x then GetFFD(closeBtn).x:SetVertexColor(1, 1, 1, 0.75) end
             end)
         end
     end
@@ -808,9 +812,11 @@ local function SkinInspectSheet()
     local EG = EllesmereUI.ELLESMERE_GREEN or { r = 0.51, g = 0.784, b = 1 }
     local FRAME_BG_R, FRAME_BG_G, FRAME_BG_B = 0.03, 0.045, 0.05
 
+    local inspTabs = {}
     for i = 1, 3 do
         local tab = _G["InspectFrameTab" .. i]
         if tab then
+            inspTabs[#inspTabs + 1] = tab
             -- Remove Blizzard textures
             for j = 1, select("#", tab:GetRegions()) do
                 local region = select(j, tab:GetRegions())
@@ -889,6 +895,7 @@ local function SkinInspectSheet()
             end
         end
     end
+    if ns.WSkin and ns.WSkin.NormalizeTabRow then ns.WSkin.NormalizeTabRow(inspTabs) end
 
     -- Update tab visuals on show
     local function UpdateTabVisuals()

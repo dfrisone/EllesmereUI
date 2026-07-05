@@ -997,7 +997,10 @@ local function PixelSnap(value)
     if not perfect then return value end
     local es = containerFrame and containerFrame:GetEffectiveScale() or (UIParent and UIParent:GetEffectiveScale() or 1)
     local onePixel = perfect / es
-    return floor(value / onePixel + 0.5) * onePixel
+    -- Epsilon-guarded round (matches PP.SnapForES): the CENTER->TOPLEFT
+    -- derivation puts odd-footprint edges exactly on half-pixel boundaries,
+    -- where uiScale float dust otherwise decides the direction per reload.
+    return floor(value / onePixel + 0.5 + 0.001) * onePixel
 end
 
 -------------------------------------------------------------------------------
@@ -4665,9 +4668,22 @@ local function UpdateDebuffs(button, unit, updateInfo)
                 if iid and C_UnitAuras_IsAuraFilteredOutByInstanceID
                     and not C_UnitAuras_IsAuraFilteredOutByInstanceID(unit, iid, "HARMFUL")
                     and IsDisplayDebuff(unit, auraData, s) then
-                    local idx = #cache + 1
-                    cache[idx] = auraData
-                    imap[auraData.auraInstanceID] = idx
+                    -- Blizzard re-announces an already-visible aura as "added"
+                    -- when its visibility/classification is re-evaluated (duel
+                    -- start/end, phasing, PvP flag changes). Appending it again
+                    -- would render the same debuff twice -- the stale snapshot
+                    -- (often still typed non-dispellable) next to the fresh
+                    -- dispellable one -- and orphan the stale copy in the cache
+                    -- until the next full scan. Refresh the existing slot in
+                    -- place instead.
+                    local existing = imap[iid]
+                    if existing and cache[existing] then
+                        cache[existing] = auraData
+                    else
+                        local idx = #cache + 1
+                        cache[idx] = auraData
+                        imap[auraData.auraInstanceID] = idx
+                    end
                 end
             end
         end
@@ -5044,9 +5060,13 @@ local function UpdateDispelContainerVisibility(button)
     local wrapper = d.dispelContainer
     if not wrapper then return end
 
-    -- Our custom overlay is active = we handle this debuff, suppress container
+    -- Our custom visuals are active = we handle this debuff, suppress container.
+    -- Must include the dispel-type ICON: with an icon-only setup (border 0,
+    -- overlay "none") the border/overlay checks alone read false and Blizzard's
+    -- container un-suppresses, drawing a second dispel indicator next to ours.
     local ourShowing = (d.dispelFrame and d.dispelFrame:IsShown())
         or (d.dispelOLTex and d.dispelOLTex:IsShown())
+        or (d.dispelIcon and d.dispelIcon:IsShown())
     if ourShowing then
         wrapper:SetAlpha(0)
         return
@@ -5062,6 +5082,7 @@ local function UpdateDispelContainerVisibility(button)
         if not d2 then return end
         local stillOurs = (d2.dispelFrame and d2.dispelFrame:IsShown())
             or (d2.dispelOLTex and d2.dispelOLTex:IsShown())
+            or (d2.dispelIcon and d2.dispelIcon:IsShown())
         if not stillOurs then
             wrapper:SetAlpha(1)
         end

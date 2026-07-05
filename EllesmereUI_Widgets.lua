@@ -2041,6 +2041,7 @@ function WidgetFactory:SectionHeader(parent, text, yOffset)
     local label = MakeFont(frame, 12, nil, TEXT_SECTION.r, TEXT_SECTION.g, TEXT_SECTION.b, TEXT_SECTION.a)
     PP.Point(label, "BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 8)
     label:SetText(EllesmereUI.L(text))
+    frame._label = label
 
     -- Separator spans full width when in split mode
     local sepParent = splitParent or frame
@@ -3517,18 +3518,40 @@ function WidgetFactory:DualRow(parent, yOffset, leftCfg, rightCfg)
             -- string; setValue receives the raw text and parses/validates it.
             -- Commits on Enter and on focus loss; Escape reverts. Used e.g. for
             -- Max Duration (numeric, blank = unset).
+            -- cfg.inputStyle == "popup" restyles it like the ShowInputPopup
+            -- field (near-black fill, subtle border, left-justified text) and
+            -- supports cfg.placeholder ghost text while empty.
+            local isPopupStyle = cfg.inputStyle == "popup"
             local boxW = cfg.inputWidth or 64
             local box = CreateFrame("EditBox", nil, region)
-            box:SetSize(boxW, 22)
+            box:SetSize(boxW, isPopupStyle and 28 or 22)
             PP.Point(box, "RIGHT", region, "RIGHT", -SIDE_PAD, 0)
             box:SetAutoFocus(false)
-            box:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 13, "")
             box:SetTextColor(1, 1, 1, 0.9)
-            box:SetJustifyH("CENTER")
-            box:SetTextInsets(4, 4, 0, 0)
             local boxBg = box:CreateTexture(nil, "BACKGROUND")
             boxBg:SetAllPoints()
-            boxBg:SetColorTexture(0.12, 0.12, 0.12, 0.85)
+            if isPopupStyle then
+                box:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, "")
+                box:SetJustifyH("LEFT")
+                box:SetTextInsets(10, 10, 0, 0)
+                boxBg:SetColorTexture(0, 0, 0, 0.5)
+                MakeBorder(box, 1, 1, 1, 0.2)
+                if cfg.placeholder then
+                    local ph = box:CreateFontString(nil, "ARTWORK")
+                    ph:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, "")
+                    ph:SetTextColor(0.7, 0.7, 0.7, 0.45)
+                    ph:SetPoint("LEFT", box, "LEFT", 10, 0)
+                    ph:SetText(EllesmereUI.L(cfg.placeholder))
+                    box:SetScript("OnTextChanged", function(self)
+                        ph:SetShown((self:GetText() or "") == "")
+                    end)
+                end
+            else
+                box:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 13, "")
+                box:SetJustifyH("CENTER")
+                box:SetTextInsets(4, 4, 0, 0)
+                boxBg:SetColorTexture(0.12, 0.12, 0.12, 0.85)
+            end
             local function RefreshInput()
                 if box:HasFocus() then return end
                 box:SetText((cfg.getValue and cfg.getValue()) or "")
@@ -7007,6 +7030,375 @@ function EllesmereUI.BuildVisOptsCBDropdown(parentFrame, ddW, fLevel, items, get
             for _, child in pairs({menu:GetChildren()}) do
                 if child._updateCheck then child._updateCheck() end
             end
+        end
+    end
+    return ddBtn, RefreshAll
+end
+
+-------------------------------------------------------------------------------
+--  BuildReorderCBDropdown
+--  Checkbox dropdown whose rows can also be drag-reordered vertically.
+--  Row visuals match BuildVisOptsCBDropdown; the drag behavior matches the
+--  Macro Factory per-macro menus (3px threshold, floating row, insertion
+--  line, contents shuffle on drop).
+--
+--  items: array in initial display order:
+--      { key = "...", label = "...", fixed = true|nil }
+--  fixed rows are checkbox-only and pinned below the movable rows.
+--  getFn(key) -> checked; setFn(key, checked) fires on row click.
+--  opts = {
+--      setOrder = function(orderedMovableKeys),  -- fired on every drop
+--      onClose  = function(orderChanged),        -- fired once per menu close
+--      hint     = "Drag to Reorder",             -- text above the rows
+--      hint2    = "...",                         -- optional second hint line
+--  }
+--  Returns ddBtn, RefreshAll (same contract as BuildVisOptsCBDropdown).
+-------------------------------------------------------------------------------
+function EllesmereUI.BuildReorderCBDropdown(parentFrame, ddW, fLevel, items, getFn, setFn, opts)
+    opts = opts or {}
+    local PP = EllesmereUI.PP or EllesmereUI.PanelPP
+    local EG = EllesmereUI.ELLESMERE_GREEN or { r = 0.05, g = 0.82, b = 0.62 }
+    local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("options") or "Fonts\\FRIZQT__.TTF"
+
+    -- Split movable / fixed, preserving the given order
+    local movable, fixedItems = {}, {}
+    for _, it in ipairs(items) do
+        if it.fixed then fixedItems[#fixedItems + 1] = it
+        else movable[#movable + 1] = it end
+    end
+
+    local ddBtn = CreateFrame("Button", nil, parentFrame)
+    PP.Size(ddBtn, ddW, 30)
+    ddBtn:SetFrameLevel(fLevel)
+    local ddBg = ddBtn:CreateTexture(nil, "BACKGROUND")
+    ddBg:SetAllPoints()
+    ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
+    local ddBrd = EllesmereUI.MakeBorder(ddBtn, 1, 1, 1, EllesmereUI.DD_BRD_A, PP)
+    local ddLbl = ddBtn:CreateFontString(nil, "OVERLAY")
+    ddLbl:SetFont(fontPath, 13, "")
+    ddLbl:SetTextColor(1, 1, 1, EllesmereUI.DD_TXT_A)
+    ddLbl:SetJustifyH("LEFT")
+    ddLbl:SetWordWrap(false)
+    ddLbl:SetMaxLines(1)
+    ddLbl:SetPoint("LEFT", ddBtn, "LEFT", 12, 0)
+    local arrow = EllesmereUI.MakeDropdownArrow(ddBtn, 12, PP)
+    ddLbl:SetPoint("RIGHT", arrow, "LEFT", -5, 0)
+
+    local function SummaryLabel()
+        local names = {}
+        local total = 0
+        local function collect(list)
+            for _, item in ipairs(list) do
+                total = total + 1
+                if getFn(item.key) then names[#names + 1] = EllesmereUI.L(item.label) end
+            end
+        end
+        collect(movable); collect(fixedItems)
+        if #names == 0 then return EllesmereUI.L("None") end
+        if #names == total then return EllesmereUI.L("All") end
+        return table.concat(names, ", ")
+    end
+    local function UpdateLabel()
+        ddLbl:SetText(SummaryLabel())
+    end
+    UpdateLabel()
+
+    local menu
+    local orderChanged = false
+    local allRows = {}
+
+    local ITEM_H = 28
+    local HINT_H = opts.hint2 and 32 or 18
+    local DIV_H = 7
+
+    local function EnsureMenu()
+        if menu then return end
+        local ROWS_BASE_Y = -4 - HINT_H
+        local menuH = 4 + HINT_H + #movable * ITEM_H
+            + ((#fixedItems > 0) and (DIV_H + #fixedItems * ITEM_H) or 0) + 4
+        menu = CreateFrame("Frame", nil, UIParent)
+        menu:SetFrameStrata("FULLSCREEN_DIALOG")
+        menu:SetFrameLevel(200)
+        menu:SetClampedToScreen(true)
+        menu:EnableMouse(true)
+        menu:SetSize(ddW, menuH)
+        menu:SetPoint("TOPLEFT", ddBtn, "BOTTOMLEFT", 0, -2)
+        menu:Hide()
+        local mBg = menu:CreateTexture(nil, "BACKGROUND")
+        mBg:SetAllPoints()
+        mBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA or 0.92)
+        EllesmereUI.MakeBorder(menu, 1, 1, 1, EllesmereUI.DD_BRD_A, PP)
+
+        -- Hint line(s) above the rows
+        local hint = menu:CreateFontString(nil, "OVERLAY")
+        hint:SetFont(fontPath, 10, "")
+        hint:SetTextColor(1, 1, 1, 0.25)
+        if opts.hint2 then
+            hint:SetPoint("TOP", menu, "TOP", 0, -6)
+            local hint2 = menu:CreateFontString(nil, "OVERLAY")
+            hint2:SetFont(fontPath, 9, "")
+            hint2:SetTextColor(1, 1, 1, 0.25)
+            hint2:SetPoint("TOP", hint, "BOTTOM", 0, -3)
+            hint2:SetText(EllesmereUI.L(opts.hint2))
+        else
+            hint:SetPoint("TOP", menu, "TOP", 0, -4 - (HINT_H - 10) / 2)
+        end
+        hint:SetText(EllesmereUI.L(opts.hint or "Drag to Reorder"))
+
+        local isDragging = false
+        local insLine = menu:CreateTexture(nil, "OVERLAY", nil, 7)
+        insLine:SetHeight(2)
+        insLine:SetColorTexture(EG.r, EG.g, EG.b, 0.9)
+        insLine:Hide()
+
+        local function SlotY(i) return ROWS_BASE_Y - (i - 1) * ITEM_H end
+
+        local function BuildRow(item, slotY, draggable)
+            local row = CreateFrame("Button", nil, menu)
+            row:SetHeight(ITEM_H)
+            row:SetPoint("TOPLEFT", menu, "TOPLEFT", 1, slotY)
+            row:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -1, slotY)
+            row:SetFrameLevel(menu:GetFrameLevel() + 2)
+            row._item = item
+            row._slotY = slotY
+            local box = CreateFrame("Frame", nil, row)
+            box:SetSize(16, 16)
+            box:SetPoint("LEFT", row, "LEFT", 10, 0)
+            local boxBg = box:CreateTexture(nil, "BACKGROUND")
+            boxBg:SetAllPoints()
+            boxBg:SetColorTexture(0.12, 0.12, 0.14, 1)
+            local boxBrd = EllesmereUI.MakeBorder(box, 0.4, 0.4, 0.4, 0.6, PP)
+            local chk = box:CreateTexture(nil, "ARTWORK")
+            PP.SetInside(chk, box, 2, 2)
+            chk:SetColorTexture(EG.r, EG.g, EG.b, 1)
+            chk:SetSnapToPixelGrid(false)
+            local lbl = row:CreateFontString(nil, "OVERLAY")
+            lbl:SetFont(fontPath, 13, "")
+            lbl:SetTextColor(0.75, 0.75, 0.75, 1)
+            lbl:SetPoint("LEFT", box, "RIGHT", 8, 0)
+            lbl:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+            lbl:SetJustifyH("LEFT")
+            lbl:SetWordWrap(false)
+            lbl:SetMaxLines(1)
+            lbl:SetText(EllesmereUI.L(item.label))
+            local hl = row:CreateTexture(nil, "ARTWORK")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0)
+            local function UpdateCheck()
+                if getFn(row._item.key) then
+                    chk:Show()
+                    boxBrd:SetColor(EG.r, EG.g, EG.b, 0.8)
+                else
+                    chk:Hide()
+                    boxBrd:SetColor(0.4, 0.4, 0.4, 0.6)
+                end
+            end
+            UpdateCheck()
+            row._updateCheck = UpdateCheck
+            row._lbl = lbl
+            row:SetScript("OnEnter", function()
+                if isDragging then return end
+                lbl:SetTextColor(1, 1, 1, 1)
+                hl:SetColorTexture(1, 1, 1, 0.04)
+            end)
+            row:SetScript("OnLeave", function()
+                if isDragging then return end
+                lbl:SetTextColor(0.75, 0.75, 0.75, 1)
+                hl:SetColorTexture(1, 1, 1, 0)
+            end)
+            row:SetScript("OnClick", function()
+                if isDragging then return end
+                setFn(row._item.key, not getFn(row._item.key))
+                UpdateLabel()
+                for _, r in ipairs(allRows) do
+                    if r._updateCheck then r._updateCheck() end
+                end
+            end)
+            allRows[#allRows + 1] = row
+            return row
+        end
+
+        -- Movable rows sit at fixed slots; drops shuffle row CONTENTS, not
+        -- frames, so slot geometry stays constant for the drag math.
+        local movableRows = {}
+        local function RefreshMovableRows()
+            for i = 1, #movableRows do
+                local rf = movableRows[i]
+                rf._item = movable[i]
+                rf._lbl:SetText(EllesmereUI.L(movable[i].label))
+                rf._updateCheck()
+            end
+        end
+
+        -- Gap index (1..#movable+1) the cursor points at: walk the slot
+        -- midpoints, skipping the dragged row's own slot -- the same logic
+        -- as the raid frames Sort By reorder menu, so the insertion line
+        -- and the drop target always agree.
+        local function TargetGap(cursorY, fromIdx)
+            local mT = menu:GetTop() or 0
+            local iI = #movable
+            for i = 1, #movable do
+                if i ~= fromIdx then
+                    local mid = mT + SlotY(i) - ITEM_H / 2
+                    if cursorY > mid then iI = i; break end
+                    iI = i + 1
+                end
+            end
+            return math.max(1, math.min(iI, #movable + 1))
+        end
+
+        for i = 1, #movable do
+            local row = BuildRow(movable[i], SlotY(i), true)
+            movableRows[i] = row
+
+            local dsY, dgO, dgFrom
+            row:SetScript("OnMouseDown", function(_, b)
+                if b ~= "LeftButton" then return end
+                local _, cy = GetCursorPosition()
+                dsY = cy
+            end)
+            row:SetScript("OnMouseUp", function(self, b)
+                if b ~= "LeftButton" then return end
+                dsY = nil
+                if not isDragging then return end
+                isDragging = false
+                insLine:Hide()
+                self:SetFrameLevel(menu:GetFrameLevel() + 2)
+                self:SetAlpha(1)
+                -- Snap the floated row back to its slot
+                self:ClearAllPoints()
+                self:SetPoint("TOPLEFT", menu, "TOPLEFT", 1, self._slotY)
+                self:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -1, self._slotY)
+                local _, cy = GetCursorPosition()
+                cy = cy / menu:GetEffectiveScale()
+                local from
+                for mi = 1, #movable do
+                    if movable[mi] == self._item then from = mi; break end
+                end
+                -- Gap -> insertion index: removing the row first shifts
+                -- everything after it up one, so downward moves adjust by -1
+                -- (same as the raid frames Sort By drop).
+                local iI = TargetGap(cy, from)
+                if from and from < iI then iI = iI - 1 end
+                local to = math.max(1, math.min(iI, #movable))
+                if from and from ~= to then
+                    local mv = table.remove(movable, from)
+                    table.insert(movable, to, mv)
+                    orderChanged = true
+                    if opts.setOrder then
+                        local keys = {}
+                        for mi = 1, #movable do keys[mi] = movable[mi].key end
+                        opts.setOrder(keys)
+                    end
+                    UpdateLabel()
+                end
+                RefreshMovableRows()
+            end)
+            row:SetScript("OnUpdate", function(self)
+                if not dsY then return end
+                local _, cy = GetCursorPosition()
+                if not isDragging then
+                    if math.abs(cy - dsY) < 3 then return end
+                    isDragging = true
+                    local sc = menu:GetEffectiveScale()
+                    dgO = (cy / sc) - (self:GetTop() or 0)
+                    dgFrom = nil
+                    for mi = 1, #movable do
+                        if movable[mi] == self._item then dgFrom = mi; break end
+                    end
+                    self:SetFrameLevel(menu:GetFrameLevel() + 10)
+                    self:SetAlpha(0.8)
+                    for _, rf in ipairs(movableRows) do
+                        if rf._lbl then rf._lbl:SetTextColor(0.75, 0.75, 0.75, 1) end
+                    end
+                end
+                local sc = menu:GetEffectiveScale()
+                local cY = cy / sc
+                local mT = menu:GetTop() or 0
+                local lY = cY - (dgO or 0) - mT
+                lY = math.max(ROWS_BASE_Y - (#movable - 1) * ITEM_H, math.min(lY, ROWS_BASE_Y))
+                self:ClearAllPoints()
+                self:SetPoint("TOPLEFT", menu, "TOPLEFT", 1, lY)
+                self:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -1, lY)
+                local lnY = SlotY(TargetGap(cY, dgFrom)) + 1
+                insLine:ClearAllPoints()
+                insLine:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, lnY)
+                insLine:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, lnY)
+                insLine:Show()
+            end)
+        end
+
+        -- Divider + fixed (non-draggable) rows below the movable group
+        if #fixedItems > 0 then
+            local divY = ROWS_BASE_Y - #movable * ITEM_H - 3
+            local dl = menu:CreateTexture(nil, "ARTWORK")
+            dl:SetHeight(1)
+            dl:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, divY)
+            dl:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -10, divY)
+            dl:SetColorTexture(1, 1, 1, 0.08)
+            for i = 1, #fixedItems do
+                BuildRow(fixedItems[i], ROWS_BASE_Y - #movable * ITEM_H - DIV_H - (i - 1) * ITEM_H, false)
+            end
+        end
+
+        -- Refresh check visuals whenever the menu opens
+        menu:HookScript("OnShow", function()
+            for _, r in ipairs(allRows) do
+                if r._updateCheck then r._updateCheck() end
+            end
+        end)
+
+        -- One close notification per open/close cycle (reload prompts hook this)
+        menu:HookScript("OnHide", function()
+            isDragging = false
+            insLine:Hide()
+            local changed = orderChanged
+            orderChanged = false
+            if opts.onClose then opts.onClose(changed) end
+        end)
+
+        ddBtn._ddMenu = menu
+    end
+
+    local function ApplyNormal()
+        ddLbl:SetTextColor(1, 1, 1, EllesmereUI.DD_TXT_A)
+        ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_A)
+        ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
+    end
+    local function ApplyHover()
+        ddLbl:SetTextColor(1, 1, 1, EllesmereUI.DD_TXT_HA)
+        ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_HA)
+        ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA)
+    end
+    ddBtn:SetScript("OnEnter", ApplyHover)
+    ddBtn:SetScript("OnLeave", function()
+        if not (menu and menu:IsShown()) then ApplyNormal() end
+    end)
+
+    local function ShowMenu()
+        EnsureMenu()
+        if menu:IsShown() then
+            menu:Hide()
+            return
+        end
+        local btnScale = ddBtn:GetEffectiveScale()
+        local uiScale = UIParent:GetEffectiveScale()
+        menu:SetScale(btnScale / uiScale)
+        ApplyHover()
+        menu:Show()
+        menu:SetScript("OnUpdate", function(self)
+            if not self:IsMouseOver() and not ddBtn:IsMouseOver() and IsMouseButtonDown("LeftButton") then
+                self:Hide()
+            end
+        end)
+    end
+    ddBtn:SetScript("OnClick", ShowMenu)
+    ddBtn:HookScript("OnHide", function() if menu then menu:Hide() end end)
+
+    local function RefreshAll()
+        UpdateLabel()
+        for _, r in ipairs(allRows) do
+            if r._updateCheck then r._updateCheck() end
         end
     end
     return ddBtn, RefreshAll

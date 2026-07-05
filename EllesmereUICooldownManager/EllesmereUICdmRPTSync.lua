@@ -197,40 +197,47 @@ function ns.HasRPTSync()
     return s ~= nil and next(s) ~= nil
 end
 
--- { [barKey] = { ids = {id,...}, settings = {[id]=copy}, durations = {[id]=dur} } }
--- of a spec's sync entries: RPT ids (racials/pots/trinkets) PLUS buff presets.
--- `durations` is populated ONLY for buff-preset ids (they need the stored duration
--- to render on the target spec); RPT ids never have a spellDurations entry.
+-- { [barKey] = { ids = {id,...}, durations = {[id]=dur} } } of a spec's sync
+-- entries: RPT ids (racials/pots/trinkets) PLUS buff presets. `durations` is
+-- populated ONLY for buff-preset ids (they need the stored duration to render
+-- on the target spec); RPT ids never have a spellDurations entry.
+-- Second return: the synced ids' per-spell settings from the spec's FAMILY
+-- stores ({ cd = {[id]=copy}, buff = {[id]=copy} }) -- settings are keyed by
+-- spell, not bar, in the tiered model.
 local function CollectRPT(specProf)
     local out = {}
     if type(specProf) ~= "table" or type(specProf.barSpells) ~= "table" then return out end
+    local stCD = specProf.spellSettingsCD
+    local stBuff = specProf.spellSettingsBuff
+    local settingsCD, settingsBuff
     for barKey, sd in pairs(specProf.barSpells) do
         if barKey ~= "__ghost_cd" and type(sd.assignedSpells) == "table" then
             local ids, durations
             for _, id in ipairs(sd.assignedSpells) do
                 if IsRPTId(id) then
                     ids = ids or {}; ids[#ids + 1] = id
+                    local s = stCD and stCD[id]
+                    if type(s) == "table" then
+                        settingsCD = settingsCD or {}
+                        settingsCD[id] = DeepCopy(s)
+                    end
                 elseif IsBuffSyncId(sd, id) then
                     ids = ids or {}; ids[#ids + 1] = id
                     durations = durations or {}
                     durations[id] = sd.spellDurations[id]
+                    local s = stBuff and stBuff[id]
+                    if type(s) == "table" then
+                        settingsBuff = settingsBuff or {}
+                        settingsBuff[id] = DeepCopy(s)
+                    end
                 end
             end
             if ids then
-                local settings
-                if type(sd.spellSettings) == "table" then
-                    for _, id in ipairs(ids) do
-                        if sd.spellSettings[id] then
-                            settings = settings or {}
-                            settings[id] = DeepCopy(sd.spellSettings[id])
-                        end
-                    end
-                end
-                out[barKey] = { ids = ids, settings = settings, durations = durations }
+                out[barKey] = { ids = ids, durations = durations }
             end
         end
     end
-    return out
+    return out, { cd = settingsCD, buff = settingsBuff }
 end
 
 -- Overwrite targetSpec's RPT (all bars) to match sourceSpec's. Regular spells kept.
@@ -250,7 +257,7 @@ local function ApplyRPT(specProfiles, sourceSpecKey, targetSpecKey)
         specProfiles[targetSpecKey] = tgtProf
     end
     if not tgtProf.barSpells then tgtProf.barSpells = {} end
-    local srcRPT = CollectRPT(srcProf)
+    local srcRPT, srcSettings = CollectRPT(srcProf)
 
     -- Which bar the source keeps each RPT id on. Bar MEMBERSHIP and per-icon
     -- settings are synced, but the SLOT POSITION (order within a bar) is NOT:
@@ -276,7 +283,8 @@ local function ApplyRPT(specProfiles, sourceSpecKey, targetSpecKey)
             for r = 1, #sd.assignedSpells do
                 local id = sd.assignedSpells[r]
                 if IsRPTId(id) and srcBarOf[id] and srcBarOf[id] ~= barKey then
-                    if sd.spellSettings then sd.spellSettings[id] = nil end
+                    -- Bar move only: per-spell settings live in the family
+                    -- stores now and travel with the id -- nothing to clear.
                 else
                     sd.assignedSpells[w] = id; w = w + 1
                 end
@@ -317,13 +325,24 @@ local function ApplyRPT(specProfiles, sourceSpecKey, targetSpecKey)
                 present[id] = true
             end
         end
-        if data.settings then
-            if not sd.spellSettings then sd.spellSettings = {} end
-            for id, s in pairs(data.settings) do
-                -- RPT settings sync (overwrite); buff-preset settings fill-only.
-                if IsRPTId(id) or sd.spellSettings[id] == nil then
-                    sd.spellSettings[id] = DeepCopy(s)
-                end
+    end
+
+    -- Per-spell settings live in the FAMILY stores (keyed by id, not bar).
+    -- RPT settings sync (overwrite); buff-preset settings fill-only so a
+    -- spec's own per-icon buff styling is never reset by re-propagation.
+    if srcSettings then
+        if srcSettings.cd then
+            local tgt = tgtProf.spellSettingsCD
+            if not tgt then tgt = {}; tgtProf.spellSettingsCD = tgt end
+            for id, s in pairs(srcSettings.cd) do
+                tgt[id] = DeepCopy(s)
+            end
+        end
+        if srcSettings.buff then
+            local tgt = tgtProf.spellSettingsBuff
+            if not tgt then tgt = {}; tgtProf.spellSettingsBuff = tgt end
+            for id, s in pairs(srcSettings.buff) do
+                if tgt[id] == nil then tgt[id] = DeepCopy(s) end
             end
         end
     end
@@ -341,7 +360,10 @@ function ns.PropagateRPTFrom(sourceSpecKey)
     -- -- so propagating it would only ever strip configured targets and create
     -- empty stamped profiles for never-played specs. Require at least one RPT id.
     local srcProf = b.specProfiles[sourceSpecKey]
-    if not srcProf or next(CollectRPT(srcProf)) == nil then return end
+    -- CollectRPT returns (bars, settings): capture the first only -- feeding
+    -- both into next() would pass the settings table as the iteration key.
+    local srcRPT = CollectRPT(srcProf)
+    if not srcProf or next(srcRPT) == nil then return end
     for specKey in pairs(b.rptSyncSpecs) do
         if specKey ~= sourceSpecKey then
             ApplyRPT(b.specProfiles, sourceSpecKey, specKey)

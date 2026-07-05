@@ -11,6 +11,249 @@ local PAGE_AUTOLOG  = "Keys, Logs & Brez"
 local PAGE_UPGCALC  = "Upgrade Calc"
 local PAGE_SHIFTER  = "Shifter"
 
+-------------------------------------------------------------------------------
+--  Hide Item Transforms picker popup
+--  Item checklist styled after the spec-assign popup: dimmed backdrop, one
+--  column per category, Check/Uncheck All links and a green Apply button.
+--  Edits are staged and only written on Apply; clicking outside or pressing
+--  Escape discards them. Item data comes from EllesmereUI.HideTransformsData
+--  (owned by the runtime in EllesmereUIQoL.lua).
+-------------------------------------------------------------------------------
+local transformsPopup
+local transformsStaged = {}
+
+local function ShowTransformsPopup()
+    local data = EllesmereUI.HideTransformsData
+    if not data then return end
+
+    if not transformsPopup then
+        local FONT = EllesmereUI._font or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.ttf"
+        local EG = EllesmereUI.ELLESMERE_GREEN or { r = 0.05, g = 0.82, b = 0.62 }
+        local PP = EllesmereUI.PanelPP
+        local COL_W, COL_GAP = 190, 12
+        local CONTENT_LEFT, CONTENT_RIGHT, CONTENT_TOP = 41, 36, 118
+        local HDR_H, ROW_H = 30, 26
+        local numCols = #data.order
+
+        -- Group items per category; the tallest column drives the popup height.
+        local catItems = {}
+        for _, item in ipairs(data.items) do
+            catItems[item.cat] = catItems[item.cat] or {}
+            catItems[item.cat][#catItems[item.cat] + 1] = item
+        end
+        local maxRows = 0
+        for _, cat in ipairs(data.order) do
+            local n = catItems[cat] and #catItems[cat] or 0
+            if n > maxRows then maxRows = n end
+        end
+
+        local POPUP_W = CONTENT_LEFT + CONTENT_RIGHT + numCols * COL_W + (numCols - 1) * COL_GAP
+        local POPUP_H = CONTENT_TOP + HDR_H + 4 + maxRows * ROW_H + 24 + 39 + 38
+        local ppScale = EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale() or 1
+
+        local dimmer = CreateFrame("Frame", nil, UIParent)
+        dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
+        dimmer:SetAllPoints(UIParent)
+        dimmer:EnableMouse(true)
+        dimmer:EnableMouseWheel(true)
+        dimmer:SetScript("OnMouseWheel", function() end)
+        dimmer:Hide()
+        dimmer:SetScale(ppScale)
+        local dimTex = dimmer:CreateTexture(nil, "BACKGROUND")
+        dimTex:SetAllPoints()
+        dimTex:SetColorTexture(0, 0, 0, 0.25)
+
+        local popup = CreateFrame("Frame", nil, dimmer)
+        popup:SetScale(ppScale)
+        popup:SetFrameStrata("FULLSCREEN_DIALOG")
+        popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
+        popup:SetSize(POPUP_W, POPUP_H)
+        popup:SetPoint("CENTER", EllesmereUI._mainFrame or UIParent, "CENTER", 0, 0)
+        popup:EnableMouse(true)
+        local pf = EllesmereUI._popupFrames
+        if pf then pf[#pf + 1] = { popup = popup, dimmer = dimmer } end
+
+        local bg = popup:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0.06, 0.08, 0.10, 1)
+        EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.15, PP)
+
+        local title = popup:CreateFontString(nil, "OVERLAY")
+        title:SetFont(FONT, 22, "")
+        title:SetTextColor(1, 1, 1, 1)
+        title:SetPoint("TOP", popup, "TOP", 0, -32)
+        title:SetText(EllesmereUI.L("Hide Item Transforms"))
+
+        local sub = popup:CreateFontString(nil, "OVERLAY")
+        sub:SetFont(FONT, 14, "")
+        sub:SetTextColor(1, 1, 1, 0.45)
+        sub:SetPoint("TOP", title, "BOTTOM", 0, -8)
+        sub:SetText(EllesmereUI.L("Checked transforms are removed automatically when applied to you."))
+
+        local rows = {}
+        local function RefreshRows()
+            for _, row in ipairs(rows) do
+                if transformsStaged[row._key] then
+                    row._check:Show()
+                    row._boxBorder:SetColor(EG.r, EG.g, EG.b, 0.8)
+                else
+                    row._check:Hide()
+                    row._boxBorder:SetColor(0.4, 0.4, 0.4, 0.6)
+                end
+            end
+        end
+        popup._refreshRows = RefreshRows
+
+        -- Check All / Uncheck All links
+        local function SetAll(v)
+            for _, item in ipairs(data.items) do transformsStaged[item.key] = v end
+            RefreshRows()
+        end
+        local checkAllBtn = CreateFrame("Button", nil, popup)
+        checkAllBtn:SetFrameLevel(popup:GetFrameLevel() + 2)
+        local checkAllLbl = checkAllBtn:CreateFontString(nil, "OVERLAY")
+        checkAllLbl:SetFont(FONT, 14, "")
+        checkAllLbl:SetText(EllesmereUI.L("Check All"))
+        checkAllLbl:SetTextColor(1, 1, 1, 0.45)
+        checkAllLbl:SetPoint("CENTER")
+        checkAllBtn:SetSize(checkAllLbl:GetStringWidth() + 4, 20)
+        checkAllBtn:SetPoint("TOPLEFT", popup, "TOPLEFT", CONTENT_LEFT, -(CONTENT_TOP - 22))
+        checkAllBtn:SetScript("OnEnter", function() checkAllLbl:SetTextColor(1, 1, 1, 0.80) end)
+        checkAllBtn:SetScript("OnLeave", function() checkAllLbl:SetTextColor(1, 1, 1, 0.45) end)
+        checkAllBtn:SetScript("OnClick", function() SetAll(true) end)
+
+        local linkDivider = popup:CreateTexture(nil, "OVERLAY", nil, 7)
+        linkDivider:SetColorTexture(1, 1, 1, 0.18)
+        if linkDivider.SetSnapToPixelGrid then linkDivider:SetSnapToPixelGrid(false); linkDivider:SetTexelSnappingBias(0) end
+        linkDivider:SetPoint("LEFT", checkAllBtn, "RIGHT", 10, 0)
+        linkDivider:SetWidth(1)
+        linkDivider:SetHeight(12)
+
+        local uncheckAllBtn = CreateFrame("Button", nil, popup)
+        uncheckAllBtn:SetFrameLevel(popup:GetFrameLevel() + 2)
+        local uncheckAllLbl = uncheckAllBtn:CreateFontString(nil, "OVERLAY")
+        uncheckAllLbl:SetFont(FONT, 14, "")
+        uncheckAllLbl:SetText(EllesmereUI.L("Uncheck All"))
+        uncheckAllLbl:SetTextColor(1, 1, 1, 0.45)
+        uncheckAllLbl:SetPoint("CENTER")
+        uncheckAllBtn:SetSize(uncheckAllLbl:GetStringWidth() + 4, 20)
+        uncheckAllBtn:SetPoint("LEFT", checkAllBtn, "RIGHT", 20, 0)
+        uncheckAllBtn:SetScript("OnEnter", function() uncheckAllLbl:SetTextColor(1, 1, 1, 0.80) end)
+        uncheckAllBtn:SetScript("OnLeave", function() uncheckAllLbl:SetTextColor(1, 1, 1, 0.45) end)
+        uncheckAllBtn:SetScript("OnClick", function() SetAll(false) end)
+
+        -- Category columns
+        for colIdx, cat in ipairs(data.order) do
+            local colX = CONTENT_LEFT + (colIdx - 1) * (COL_W + COL_GAP)
+            local hdr = popup:CreateFontString(nil, "OVERLAY")
+            hdr:SetFont(FONT, 17, "")
+            hdr:SetTextColor(1, 1, 1, 0.7)
+            hdr:SetPoint("TOPLEFT", popup, "TOPLEFT", colX + 4, -(CONTENT_TOP + 8))
+            hdr:SetText(EllesmereUI.L(data.labels[cat] or cat))
+
+            local items = catItems[cat] or {}
+            for i, item in ipairs(items) do
+                local row = CreateFrame("Button", nil, popup)
+                row:SetSize(COL_W, ROW_H)
+                row:SetPoint("TOPLEFT", popup, "TOPLEFT", colX, -(CONTENT_TOP + HDR_H + 4 + (i - 1) * ROW_H))
+                row._key = item.key
+
+                local box = CreateFrame("Frame", nil, row)
+                box:SetSize(18, 18)
+                box:SetPoint("LEFT", row, "LEFT", 4, 0)
+                box:SetFrameLevel(row:GetFrameLevel() + 1)
+                local boxBg = box:CreateTexture(nil, "BACKGROUND")
+                boxBg:SetAllPoints()
+                boxBg:SetColorTexture(0.12, 0.12, 0.14, 1)
+                row._boxBorder = EllesmereUI.MakeBorder(box, 0.4, 0.4, 0.4, 0.6, PP)
+                local check = box:CreateTexture(nil, "ARTWORK")
+                check:SetPoint("TOPLEFT", box, "TOPLEFT", 3, -3)
+                check:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -3, 3)
+                check:SetColorTexture(EG.r, EG.g, EG.b, 1)
+                row._check = check
+
+                local lbl = row:CreateFontString(nil, "OVERLAY")
+                lbl:SetFont(FONT, 13, "")
+                lbl:SetPoint("LEFT", box, "RIGHT", 8, 0)
+                lbl:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+                lbl:SetJustifyH("LEFT")
+                lbl:SetWordWrap(false)
+                lbl:SetTextColor(1, 1, 1, 0.65)
+                lbl:SetText(EllesmereUI.L(item.label))
+
+                row:SetScript("OnEnter", function() lbl:SetTextColor(1, 1, 1, 0.95) end)
+                row:SetScript("OnLeave", function() lbl:SetTextColor(1, 1, 1, 0.65) end)
+                row:SetScript("OnClick", function()
+                    transformsStaged[item.key] = not transformsStaged[item.key]
+                    RefreshRows()
+                end)
+                rows[#rows + 1] = row
+            end
+        end
+
+        -- Apply button (green, spec-popup style)
+        local applyBtn = CreateFrame("Button", nil, popup)
+        applyBtn:SetFrameLevel(popup:GetFrameLevel() + 2)
+        applyBtn:SetSize(200, 39)
+        applyBtn:SetPoint("BOTTOM", popup, "BOTTOM", 0, 38)
+        local applyBg = applyBtn:CreateTexture(nil, "BACKGROUND")
+        applyBg:SetAllPoints()
+        applyBg:SetColorTexture(0.06, 0.08, 0.10, 0.92)
+        local applyBrd = EllesmereUI.MakeBorder(applyBtn, EG.r, EG.g, EG.b, 0.9, PP)
+        local applyLbl = applyBtn:CreateFontString(nil, "OVERLAY")
+        applyLbl:SetFont(FONT, 16, "")
+        applyLbl:SetPoint("CENTER")
+        applyLbl:SetText(EllesmereUI.L("Apply"))
+        applyLbl:SetTextColor(EG.r, EG.g, EG.b, 0.9)
+        applyBtn:SetScript("OnEnter", function()
+            applyLbl:SetTextColor(EG.r, EG.g, EG.b, 1)
+            applyBrd:SetColor(EG.r, EG.g, EG.b, 1)
+        end)
+        applyBtn:SetScript("OnLeave", function()
+            applyLbl:SetTextColor(EG.r, EG.g, EG.b, 0.9)
+            applyBrd:SetColor(EG.r, EG.g, EG.b, 0.9)
+        end)
+        applyBtn:SetScript("OnClick", function()
+            if not EllesmereUIDB then EllesmereUIDB = {} end
+            EllesmereUIDB.hideTransformItems = EllesmereUIDB.hideTransformItems or {}
+            local t = EllesmereUIDB.hideTransformItems
+            for _, item in ipairs(data.items) do
+                if transformsStaged[item.key] then
+                    t[item.key] = nil       -- included is the default
+                else
+                    t[item.key] = false     -- stored exclusions only
+                end
+            end
+            if EllesmereUI._applyHideTransforms then EllesmereUI._applyHideTransforms() end
+            dimmer:Hide()
+        end)
+
+        -- Click outside or Escape discards staged edits
+        dimmer:SetScript("OnMouseDown", function(self)
+            if not popup:IsMouseOver() then self:Hide() end
+        end)
+        popup:EnableKeyboard(true)
+        popup:SetScript("OnKeyDown", function(self, key)
+            if key == "ESCAPE" then
+                self:SetPropagateKeyboardInput(false)
+                dimmer:Hide()
+            else
+                self:SetPropagateKeyboardInput(true)
+            end
+        end)
+
+        popup._dimmer = dimmer
+        transformsPopup = popup
+    end
+
+    -- Seed the staged state from the saved settings, then show
+    for _, item in ipairs(data.items) do
+        transformsStaged[item.key] = EllesmereUI.GetHideTransformItem(item.key) and true or false
+    end
+    transformsPopup._refreshRows()
+    transformsPopup._dimmer:Show()
+end
+
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:SetScript("OnEvent", function(self)
@@ -347,7 +590,8 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
-        -- Row 7: Announce Group Deaths (left, with Text Size cog)
+        -- Row 7: Announce Group Deaths (left, with Text Size cog) | Hide Item
+        -- Transforms (right, with picker cog)
         local deathRow
         deathRow, h = W:DualRow(parent, y,
             { type="toggle", text="Announce Group Deaths",
@@ -361,7 +605,19 @@ initFrame:SetScript("OnEvent", function(self)
                   if EllesmereUI._applyAnnounceGroupDeaths then EllesmereUI._applyAnnounceGroupDeaths() end
                   EllesmereUI:RefreshPage()
               end },
-            { type="label", text="" }
+            { type="toggle", text="Hide Item Transforms (ex: Chef's Hat)",
+              tooltip="Automatically removes cosmetic transforms when they are applied to you, such as profession gear, holiday costumes, toys and consumables. Use the cog to pick exactly which transforms are removed. Transforms applied during combat are removed when combat ends.",
+              getValue=function()
+                  return EllesmereUIDB and EllesmereUIDB.hideTransforms or false
+              end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.hideTransforms = v
+                  if EllesmereUI._applyHideTransforms then
+                      EllesmereUI._applyHideTransforms()
+                  end
+                  EllesmereUI:RefreshPage()  -- update the picker cog disabled state
+              end }
         );  y = y - h
 
         -- Inline cog (Text Size) on the Announce Group Deaths toggle
@@ -460,6 +716,41 @@ initFrame:SetScript("OnEvent", function(self)
             local deathInitOff = deathOff()
             deathCogBtn:SetAlpha(deathInitOff and 0.15 or 0.4)
             if deathInitOff then deathCogBlock:Show() else deathCogBlock:Hide() end
+        end
+
+        -- Inline picker cog on Hide Item Transforms (right slot of the death
+        -- row): opens the item checklist popup. Dimmed and inert while the
+        -- toggle is off, mirroring the resource-bar spec-picker button.
+        do
+            local rgn = deathRow._rightRegion
+            local function hitOff()
+                return not (EllesmereUIDB and EllesmereUIDB.hideTransforms)
+            end
+            local cogBtn = CreateFrame("Button", nil, rgn)
+            cogBtn:SetSize(26, 26)
+            cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -9, 0)
+            rgn._lastInline = cogBtn
+            cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            cogBtn:SetAlpha(hitOff() and 0.15 or 0.4)
+            local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
+            cogTex:SetAllPoints()
+            cogTex:SetTexture(EllesmereUI.COGS_ICON)
+            cogBtn:SetScript("OnEnter", function(self)
+                if hitOff() then return end
+                self:SetAlpha(0.7)
+                EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.L("Choose which transforms are removed"))
+            end)
+            cogBtn:SetScript("OnLeave", function(self)
+                self:SetAlpha(hitOff() and 0.15 or 0.4)
+                EllesmereUI.HideWidgetTooltip()
+            end)
+            cogBtn:SetScript("OnClick", function()
+                if hitOff() then return end
+                ShowTransformsPopup()
+            end)
+            EllesmereUI.RegisterWidgetRefresh(function()
+                cogBtn:SetAlpha(hitOff() and 0.15 or 0.4)
+            end)
         end
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
@@ -565,6 +856,14 @@ initFrame:SetScript("OnEvent", function(self)
                       end,
                       set=function(v)
                         EllesmereUI.QoLExtrasSet("fpsHideLabel", v)
+                        if EllesmereUI._applyFPSCounter then EllesmereUI._applyFPSCounter() end
+                      end },
+                    { type="slider", label="Update Interval", min=1, max=5, step=1,
+                      get=function()
+                        return EllesmereUI.QoLExtrasGet("fpsUpdateInterval") or 3
+                      end,
+                      set=function(v)
+                        EllesmereUI.QoLExtrasSet("fpsUpdateInterval", v)
                         if EllesmereUI._applyFPSCounter then EllesmereUI._applyFPSCounter() end
                       end },
                 },
@@ -1760,7 +2059,7 @@ initFrame:SetScript("OnEvent", function(self)
         title       = "Quality of Life",
         description = "Quality of life features and custom cursor.",
         pages       = { PAGE_QOL, PAGE_CURSOR, PAGE_AUTOLOG, PAGE_UPGCALC, PAGE_SHIFTER },
-        searchTerms = { "brez", "bres", "battle res", "combat res", "cursor", "macro", "fps", "logging", "combat log", "warcraft logs", "upgrade", "ilvl", "item level", "crest", "upgrade calculator", "shifter", "move", "drag", "position", "demodal", "drift" },
+        searchTerms = { "brez", "bres", "battle res", "combat res", "cursor", "macro", "fps", "logging", "combat log", "warcraft logs", "upgrade", "ilvl", "item level", "crest", "upgrade calculator", "shifter", "move", "drag", "position", "demodal", "drift", "transform", "transforms", "costume", "disguise", "chef's hat", "noggenfogger" },
         buildPage   = function(pageName, parent, yOffset)
             if pageName == PAGE_QOL then
                 return BuildQoLPage(pageName, parent, yOffset)
@@ -1811,6 +2110,8 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.groupDeathAlertPos = nil
                 EllesmereUIDB.groupDeathSound = nil      -- legacy boolean (pre-dropdown)
                 EllesmereUIDB.groupDeathSoundKey = nil
+                EllesmereUIDB.hideTransforms = false
+                EllesmereUIDB.hideTransformItems = nil
             end
             EllesmereUIDB.autoLogging = nil
             if _G._EUI_ResetUpgradeCalc then _G._EUI_ResetUpgradeCalc() end
@@ -1818,6 +2119,7 @@ initFrame:SetScript("OnEvent", function(self)
             if EllesmereUI._applyHideBlizzardPartyFrame then EllesmereUI._applyHideBlizzardPartyFrame() end
             if EllesmereUI._applyHideErrorMessages then EllesmereUI._applyHideErrorMessages() end
             if EllesmereUI._applyAnnounceGroupDeaths then EllesmereUI._applyAnnounceGroupDeaths() end
+            if EllesmereUI._applyHideTransforms then EllesmereUI._applyHideTransforms() end
             if EllesmereUI._applyQuickSignup then EllesmereUI._applyQuickSignup() end
             if EllesmereUI._applyPersistSignupNote then EllesmereUI._applyPersistSignupNote() end
             EllesmereUI:InvalidatePageCache()

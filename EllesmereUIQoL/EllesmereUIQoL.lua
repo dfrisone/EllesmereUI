@@ -167,6 +167,20 @@ qolFrame:SetScript("OnEvent", function(self)
         local function IsEnabled()
             return EllesmereUIDB and EllesmereUIDB.autoOpenContainers == true
         end
+        -- "Exclude Warbound Containers": true only when the option is on AND
+        -- the slot is confirmed warband-bank-eligible. Guarded like the bags
+        -- module (C_Bank / ItemLocation / DoesItemExist can all be absent or
+        -- invalid; a raw call would error mid-open). On any uncertainty it
+        -- returns false so the container opens normally rather than being
+        -- silently skipped.
+        local function IsWarboundExcluded(bag, slot)
+            if not (EllesmereUIDB and EllesmereUIDB.autoOpenContainersExcludeWarbound) then return false end
+            if not (C_Bank and C_Bank.IsItemAllowedInBankType and ItemLocation
+                and C_Item and C_Item.DoesItemExist) then return false end
+            local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
+            if not (loc and C_Item.DoesItemExist(loc)) then return false end
+            return C_Bank.IsItemAllowedInBankType(Enum.BankType.Account, loc) and true or false
+        end
         local SLOTS_PER_FRAME = 3  -- check 3 slots per OnUpdate tick
 
         local function IsOpenableByID(itemID, bag, slot)
@@ -213,13 +227,9 @@ qolFrame:SetScript("OnEvent", function(self)
                                 local item = _pendingOpens[idx]
                                 local info = C_Container.GetContainerItemInfo(item.bag, item.slot)
                                 if info and info.itemID then
-                                    if EllesmereUIDB and EllesmereUIDB.autoOpenContainersExcludeWarbound then
-                                        local loc = ItemLocation:CreateFromBagAndSlot(item.bag, item.slot)
-                                        local isWarbound = C_Bank.IsItemAllowedInBankType(Enum.BankType.Account, loc)
-                                        if isWarbound then
-                                            OpenNext(idx + 1)
-                                            return
-                                        end
+                                    if IsWarboundExcluded(item.bag, item.slot) then
+                                        OpenNext(idx + 1)
+                                        return
                                     end
                                     if _openableCache[info.itemID] and not _failedItems[info.itemID] then
                                         local prevID = info.itemID
@@ -294,13 +304,9 @@ qolFrame:SetScript("OnEvent", function(self)
                 local item = toOpen[idx]
                 local info2 = C_Container.GetContainerItemInfo(item.bag, item.slot)
                 if info2 and info2.itemID then
-                    if EllesmereUIDB and EllesmereUIDB.autoOpenContainersExcludeWarbound then
-                        local loc = ItemLocation:CreateFromBagAndSlot(item.bag, item.slot)
-                        local isWarbound = C_Bank.IsItemAllowedInBankType(Enum.BankType.Account, loc)
-                        if isWarbound then
-                            OpenNext(idx + 1)
-                            return
-                        end
+                    if IsWarboundExcluded(item.bag, item.slot) then
+                        OpenNext(idx + 1)
+                        return
                     end
                     if _openableCache[info2.itemID] and not _failedItems[info2.itemID] then
                         local prevID = info2.itemID
@@ -1350,7 +1356,7 @@ do
         local elapsed = 0
         fpsFrame:SetScript("OnUpdate", function(self, dt)
             elapsed = elapsed + dt
-            if elapsed < 1 then return end
+            if elapsed < (self._interval or 3) then return end
             elapsed = 0
             UpdateFPS(self)
         end)
@@ -1362,6 +1368,7 @@ do
         local shouldShow = EllesmereUI.QoLExtrasGet("showFPS")
         if shouldShow then
             CreateFPSCounter()
+            fpsFrame._interval = EllesmereUI.QoLExtrasGet("fpsUpdateInterval") or 3
             local sz = EllesmereUI.QoLExtrasGet("fpsTextSize") or 12
             local lblSz = sz - 2
             local fp = EllesmereUI.GetFontPath("extras")
@@ -1753,18 +1760,6 @@ do
     EllesmereUI.GetCrosshairValue = CrosshairGet
 
     -- Item-based range detection for all specs
-    local rangedSpecIDs = {
-        [102] = true, [105] = true, -- Druid: Balance, Resto
-        [1467] = true, [1468] = true, [1470] = true, -- Evoker: Devastation, Preservation, Augmentation
-        [253] = true, [254] = true, -- Hunter: Beast Mastery, Marksmanship
-        [62] = true, [63] = true, [64] = true, -- Mage: Arcane, Fire, Frost
-        [270] = true, -- Monk: Mistweaver
-        [65] = true, -- Paladin: Holy
-        [256] = true, [257] = true, [258] = true, -- Priest: Discipline, Holy, Shadow
-        [262] = true, [264] = true, -- Shaman: Elemental, Restoration
-        [265] = true, [266] = true, [267] = true, -- Warlock: Affliction, Demonology, Destruction
-    }
-
     local checkItems = {
         { range = 5,   id = 37727 }, -- Ruby Acorn
         { range = 8,   id = 34368 }, -- Attuned Crystal Cores
@@ -2740,6 +2735,197 @@ do
         if EllesmereUIDB and EllesmereUIDB.announceGroupDeaths then
             ApplyAnnounceGroupDeaths()
         end
+    end)
+end
+
+-------------------------------------------------------------------------------
+--  Hide Item Transforms
+--  Cancels cosmetic transform auras (profession gear, holiday costumes, toys,
+--  consumables) as soon as they land on the player. CancelUnitBuff is blocked
+--  during combat, so transforms gained mid-fight are swept on the next
+--  PLAYER_REGEN_ENABLED. The fishing outfit aura persists while the fishing
+--  channel runs, so it is cleared when the channel stops instead.
+--  Zero cost when idle: no events are registered unless the master toggle is
+--  on AND at least one transform is still included.
+-------------------------------------------------------------------------------
+do
+    local CATEGORY_ORDER = { "professions", "holiday", "toys", "items" }
+    local CATEGORY_LABEL = {
+        professions = "Profession Gear",
+        holiday     = "Holiday Costumes",
+        toys        = "Toys",
+        items       = "Consumables & Items",
+    }
+
+    -- Each entry: stable settings key, category, display label, aura spell IDs.
+    -- Fishing lists no aura IDs -- the channel-stop watcher below owns it.
+    local TRANSFORMS = {
+        -- Profession gear
+        { key = "blacksmithing",  cat = "professions", label = "Blacksmithing",  ids = { 388658 } },
+        { key = "jewelcrafting",  cat = "professions", label = "Jewelcrafting",  ids = { 394015 } },
+        { key = "tailoring",      cat = "professions", label = "Tailoring",      ids = { 391312 } },
+        { key = "engineering",    cat = "professions", label = "Engineering",    ids = { 394007 } },
+        { key = "enchanting",     cat = "professions", label = "Enchanting",     ids = { 394008 } },
+        { key = "alchemy",        cat = "professions", label = "Alchemy",        ids = { 394003 } },
+        { key = "inscription",    cat = "professions", label = "Inscription",    ids = { 394016 } },
+        { key = "leatherworking", cat = "professions", label = "Leatherworking", ids = { 394001 } },
+        { key = "herbalism",      cat = "professions", label = "Herbalism",      ids = { 394005 } },
+        { key = "mining",         cat = "professions", label = "Mining",         ids = { 394006 } },
+        { key = "skinning",       cat = "professions", label = "Skinning",       ids = { 394011 } },
+        { key = "cooking",        cat = "professions", label = "Cooking (Chef's Hat)", ids = { 391775 } },
+        { key = "fishing",        cat = "professions", label = "Fishing",        ids = {} },
+
+        -- Holiday costumes
+        { key = "lantern",    cat = "holiday", label = "Weighted Jack-o'-Lantern", ids = { 44212 } },
+        { key = "hallowed",   cat = "holiday", label = "Hallowed Wand", ids = {
+            172010, 218132, 191703, 24732, 191210, 172015, 24735, 24736, 191698, 191700,
+            172008, 24712, 24713, 191701, 191211, 24710, 24711, 191686, 191688, 24708,
+            24709, 173958, 173959, 191682, 191683, 24723, 191702, 172003, 172020, 191208, 24740,
+        } },
+        { key = "noblebunny", cat = "holiday", label = "Noblegarden Bunny", ids = { 61734, 61716 } },
+        { key = "turkey",     cat = "holiday", label = "Pilgrim's Turkey", ids = { 61781 } },
+
+        -- Toys
+        { key = "aqir",       cat = "toys", label = "Aqir Egg Cluster",          ids = { 318452 } },
+        { key = "atomic",     cat = "toys", label = "Atomically Recalibrator",   ids = { 399502 } },
+        { key = "atomgoblin", cat = "toys", label = "Atomically Regoblinator",   ids = { 1215363 } },
+        { key = "blight",     cat = "toys", label = "Detoxified Blight Grenade", ids = { 290224 } },
+        { key = "witch",      cat = "toys", label = "Lucille's Sewing Needle",   ids = { 279509 } },
+        { key = "spraybots",  cat = "toys", label = "Spraybots",                 ids = { 301892, 301893, 301894 } },
+
+        -- Consumables & items
+        { key = "pickaxe",      cat = "items", label = "Cursed Pickaxe",      ids = { 454405 } },
+        { key = "noggenfogger", cat = "items", label = "Noggenfogger Elixir", ids = { 16593, 1223630, 16595, 1223629, 1223631 } },
+        { key = "prism",        cat = "items", label = "Reflecting Prism",    ids = { 163267 } },
+    }
+
+    -- Runtime lookup: [spellID] = true for every included transform.
+    local cTable = {}
+
+    -- Transforms are included by default; the picker stores false to exclude.
+    local function ItemEnabled(key)
+        local t = EllesmereUIDB and EllesmereUIDB.hideTransformItems
+        if t and t[key] == false then return false end
+        return true
+    end
+
+    local function RebuildList()
+        wipe(cTable)
+        if not (EllesmereUIDB and EllesmereUIDB.hideTransforms) then return end
+        for _, item in ipairs(TRANSFORMS) do
+            if ItemEnabled(item.key) then
+                for _, id in ipairs(item.ids) do cTable[id] = true end
+            end
+        end
+    end
+
+    local auraFrame = CreateFrame("Frame")
+
+    -- Sweep current buffs, canceling any included transform. Descending so a
+    -- cancel (which shifts later buff indices down) cannot skip a match.
+    local function CancelMatching(force)
+        if not (C_UnitAuras and C_UnitAuras.GetBuffDataByIndex) then return end
+        if not force and UnitAffectingCombat("player") then return end
+        for i = 40, 1, -1 do
+            local data = C_UnitAuras.GetBuffDataByIndex("player", i)
+            if data then
+                local spellID = data.spellId
+                if spellID and not (issecretvalue and issecretvalue(spellID)) and cTable[spellID] then
+                    CancelUnitBuff("player", i)
+                end
+            end
+        end
+    end
+
+    auraFrame:SetScript("OnEvent", function(_, event, _, updateInfo)
+        if event == "PLAYER_REGEN_ENABLED" then
+            -- Combat just ended: clear anything that landed while locked.
+            CancelMatching(true)
+            return
+        end
+        -- UNIT_AURA (player only, via RegisterUnitEvent)
+        if not updateInfo then return end
+        if updateInfo.isFullUpdate then
+            CancelMatching(false)
+        elseif updateInfo.addedAuras then
+            for _, aura in ipairs(updateInfo.addedAuras) do
+                local spellID = aura.spellId
+                if spellID and not (issecretvalue and issecretvalue(spellID)) and cTable[spellID] then
+                    CancelMatching(false)
+                    break
+                end
+            end
+        end
+    end)
+
+    -- Fishing outfit: aura 394009 sticks while the fishing channel (131476)
+    -- runs, so it is cleared when the channel stops. Only registered while the
+    -- feature is on and the Fishing entry is included.
+    local fishFrame = CreateFrame("Frame")
+    fishFrame:SetScript("OnEvent", function(_, _, _, _, spellID)
+        if issecretvalue and issecretvalue(spellID) then return end
+        if spellID ~= 131476 then return end
+        if UnitAffectingCombat("player") then return end
+        if not (C_UnitAuras and C_UnitAuras.GetBuffDataByIndex) then return end
+        for i = 40, 1, -1 do
+            local data = C_UnitAuras.GetBuffDataByIndex("player", i)
+            if data then
+                local sid = data.spellId
+                if sid and not (issecretvalue and issecretvalue(sid)) and sid == 394009 then
+                    CancelUnitBuff("player", i)
+                end
+            end
+        end
+    end)
+
+    -- (Re)decide which events are hooked. Nothing is registered unless the
+    -- feature is on AND something is actually included, so a disabled feature
+    -- costs zero per-frame work -- the handlers are simply never installed.
+    local function ApplyHideTransforms()
+        RebuildList()
+        local on = EllesmereUIDB and EllesmereUIDB.hideTransforms
+
+        if on and next(cTable) ~= nil then
+            auraFrame:RegisterUnitEvent("UNIT_AURA", "player")
+            auraFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            CancelMatching(false)  -- immediate sweep of anything already active
+        else
+            auraFrame:UnregisterEvent("UNIT_AURA")
+            auraFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+        end
+
+        if on and ItemEnabled("fishing") then
+            fishFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+        else
+            fishFrame:UnregisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+        end
+    end
+    EllesmereUI._applyHideTransforms = ApplyHideTransforms
+
+    -- Shared with the options picker popup (EUI_QoL_Options.lua).
+    EllesmereUI.HideTransformsData = {
+        order  = CATEGORY_ORDER,
+        labels = CATEGORY_LABEL,
+        items  = TRANSFORMS,
+    }
+    EllesmereUI.GetHideTransformItem = ItemEnabled
+    EllesmereUI.SetHideTransformItem = function(key, enabled)
+        if not EllesmereUIDB then EllesmereUIDB = {} end
+        EllesmereUIDB.hideTransformItems = EllesmereUIDB.hideTransformItems or {}
+        -- Included is the default -- store only exclusions, keeping the table sparse.
+        if enabled then
+            EllesmereUIDB.hideTransformItems[key] = nil
+        else
+            EllesmereUIDB.hideTransformItems[key] = false
+        end
+        ApplyHideTransforms()
+    end
+
+    local boot = CreateFrame("Frame")
+    boot:RegisterEvent("PLAYER_LOGIN")
+    boot:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        ApplyHideTransforms()
     end)
 end
 

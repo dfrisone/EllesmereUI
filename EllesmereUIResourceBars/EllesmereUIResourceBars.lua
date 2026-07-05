@@ -373,6 +373,20 @@ local IP = {
     nextScan = 0,
 }
 
+-- Pooled scratch for the Ignore Pain overlay layer list. It is rebuilt on every
+-- absorb tick, so reuse one array + sub-tables instead of allocating fresh ones
+-- each time. UpdateSecondaryResource is not re-entrant, so a shared counter is
+-- safe. Stored on the IP table (not new locals) -- this file is at Lua's
+-- 200-local cap.
+IP.layers = {}
+IP.layerN = 0
+function IP.push(step, r, g, b, a)
+    IP.layerN = IP.layerN + 1
+    local t = IP.layers[IP.layerN]
+    if not t then t = {}; IP.layers[IP.layerN] = t end
+    t.step, t.r, t.g, t.b, t.a = step, r, g, b, a
+end
+
 local function GetIcicleCount()
     local _, classFile = UnitClass("player")
     local spec = GetSpecialization()
@@ -634,9 +648,48 @@ end
 -- Druid "form specific" power-bar threshold mode: entries are keyed by the
 -- form's power type (advanced mode only). Maps the resolved primary power type
 -- to the entry's formKey.
+-- Threshold resolution is wrapped in a do-block so its cache state and helpers
+-- free their main-chunk local slots (this file sits at Lua's 200-local cap).
+-- Only ResolveThresholdSpecEntry stays a main-chunk local; the invalidator and
+-- spec resolver are reached via ns.InvalidateThresholdCaches / _G._ERB_ResolveSpecIDCached.
+local ResolveThresholdSpecEntry
+do
 local FORM_THRESHOLD_KEY = { [PT.MANA] = "mana", [PT.RAGE] = "rage", [PT.ENERGY] = "energy" }
 
-local function ResolveThresholdSpecEntry(sp)
+-- Spec ID and talent-gate state only change on spec/talent events, but
+-- ResolveThresholdSpecEntry runs on hot paths (up to ~60fps via the Ironfur
+-- bar). Cache both so the frame-loop doesn't re-query GetSpecialization or
+-- IsPlayerSpell/IsSpellKnown every tick. Invalidated by InvalidateThresholdCaches
+-- on the spec/talent events (see the event handler). The entry list itself is
+-- still re-scanned live each call, so options edits are reflected immediately.
+local _thrSpecID              -- nil = unknown, false = resolved-to-none, number = specID
+local _talentGateCache = {}   -- gate spellID -> bool
+local function InvalidateThresholdCaches()
+    _thrSpecID = nil
+    wipe(_talentGateCache)
+end
+ns.InvalidateThresholdCaches = InvalidateThresholdCaches
+
+local function ResolveSpecIDCached()
+    if _thrSpecID ~= nil then return _thrSpecID or nil end
+    local idx = GetSpecialization and GetSpecialization()
+    local sid = idx and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(idx) or nil
+    _thrSpecID = sid or false
+    return sid
+end
+_G._ERB_ResolveSpecIDCached = ResolveSpecIDCached
+
+local function IsTalentGateActive(gate)
+    local v = _talentGateCache[gate]
+    if v == nil then
+        v = ((IsPlayerSpell and IsPlayerSpell(gate))
+            or (IsSpellKnown and IsSpellKnown(gate))) and true or false
+        _talentGateCache[gate] = v
+    end
+    return v
+end
+
+ResolveThresholdSpecEntry = function(sp)
     local entries = sp.thresholdSpecs
     if not entries or #entries == 0 then return nil end
 
@@ -650,12 +703,10 @@ local function ResolveThresholdSpecEntry(sp)
         return nil
     end
 
-    local specIdx = GetSpecialization()
-    if not specIdx then return nil end
-    local specID = specIdx and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(specIdx)
+    local specID = ResolveSpecIDCached()
     if not specID then return nil end
 
-    local specTalent, specPlain, allTalent, allPlain
+    local specPlain, allTalent, allPlain
     for _, entry in ipairs(entries) do
         if entry.specIDs then
             local matchSpec, matchAll = false, false
@@ -666,11 +717,11 @@ local function ResolveThresholdSpecEntry(sp)
             if matchSpec or matchAll then
                 local gate = entry.talentSpellID
                 if gate then
-                    local active = (IsPlayerSpell and IsPlayerSpell(gate))
-                        or (IsSpellKnown and IsSpellKnown(gate))
-                    if active then
-                        if matchSpec then specTalent = specTalent or entry
-                        else allTalent = allTalent or entry end
+                    if IsTalentGateActive(gate) then
+                        -- spec + active talent gate is the top tier: nothing can
+                        -- outrank it, so return as soon as it is found.
+                        if matchSpec then return entry end
+                        allTalent = allTalent or entry
                     end
                     -- gated but inactive: skip
                 else
@@ -681,8 +732,9 @@ local function ResolveThresholdSpecEntry(sp)
         end
     end
 
-    return specTalent or specPlain or allTalent or allPlain
+    return specPlain or allTalent or allPlain
 end
+end  -- do (threshold resolution)
 
 -- Expose for options panel
 _G._ERB_BAR_TYPE_SPECS = BAR_TYPE_SPECS
@@ -697,8 +749,7 @@ _G._ERB_ResolveHealthCfg = function(profile)
     if not p then return nil end
     local specs = p.advancedSpecs
     if specs and #specs > 0 then
-        local idx = GetSpecialization and GetSpecialization()
-        local cur = idx and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(idx)
+        local cur = _G._ERB_ResolveSpecIDCached()
         if cur then
             for i = 1, #specs do
                 local e = specs[i]
@@ -717,8 +768,7 @@ _G._ERB_ResolvePowerCfg = function(profile)
     if not p then return nil end
     local specs = p.advancedSpecs
     if specs and #specs > 0 then
-        local idx = GetSpecialization and GetSpecialization()
-        local cur = idx and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(idx)
+        local cur = _G._ERB_ResolveSpecIDCached()
         if cur then
             for i = 1, #specs do
                 local e = specs[i]
@@ -735,8 +785,7 @@ _G._ERB_ResolveSecondaryCfg = function(profile)
     if not p then return nil end
     local specs = p.advancedSpecs
     if specs and #specs > 0 then
-        local idx = GetSpecialization and GetSpecialization()
-        local cur = idx and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(idx)
+        local cur = _G._ERB_ResolveSpecIDCached()
         if cur then
             for i = 1, #specs do
                 local e = specs[i]
@@ -757,8 +806,7 @@ _G._ERB_CurSpecOverridesSection = function(sectionKey, profile)
     if not p then return false end
     local specs = p.advancedSpecs
     if not specs or #specs == 0 then return false end
-    local idx = GetSpecialization and GetSpecialization()
-    local cur = idx and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(idx)
+    local cur = _G._ERB_ResolveSpecIDCached()
     if not cur then return false end
     for i = 1, #specs do
         local e = specs[i]
@@ -855,25 +903,58 @@ end
 -- list of { frac=<0..1 upper boundary>, r, g, b, a }. Secret-safe: the curve is
 -- evaluated C-side by UnitPowerPercent/UnitHealthPercent against the (secret)
 -- current value, only the boundaries (derived from the clean max) live in Lua.
-local _barBandCurve = nil
-local _barBandCurveHash = nil
+-- Per-bar band-curve cache: cacheKey -> { hash, curve }. Keyed per bar so
+-- multiple multi-band bars (health + power, etc.) don't evict each other, and
+-- the change-signature is checked BEFORE building stops / the curve / its
+-- CreateColor points -- so on the common unchanged tick nothing heavy allocates.
+local _bandCurveCache = {}
 
--- baseR/G/B is the bar's normal fill color.
--- reverse=false (up to)
--- reverse=true (from)
-local function GetBarBandCurve(stops, baseR, baseG, baseB, reverse)
-    if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
-    if not stops or #stops == 0 then return nil end
-
-    local parts = {}
-    for i = 1, #stops do
-        local s = stops[i]
-        parts[i] = format("%.4f:%.3f,%.3f,%.3f,%.3f", s.frac or 0, s.r or 1, s.g or 1, s.b or 1, s.a or 1)
+-- Build the ordered `stops` (frac space) for a bar-type resource from `bands`.
+-- `mode` "percent" -> frac = to/100; "value" -> frac = to/max (max clean for player).
+-- Returns a stops array, or nil if no usable bands.
+local function BuildBandStops(bands, mode, maxVal)
+    if not bands or #bands == 0 then return nil end
+    local stops = {}
+    for i = 1, #bands do
+        local b = bands[i]
+        local frac
+        if mode == "value" then
+            if not maxVal or maxVal <= 0 then return nil end
+            frac = (b.to or 0) / maxVal
+        else
+            frac = (b.to or 0) / 100
+        end
+        stops[i] = { frac = frac, r = b.r or 1, g = b.g or 1, b = b.b or 1, a = b.a or 1 }
     end
-    parts[#parts + 1] = format("b%.3f,%.3f,%.3f", baseR or -1, baseG or -1, baseB or -1)
-    if reverse then parts[#parts + 1] = "rev" end
+    return stops
+end
+
+-- cacheKey is a stable per-bar id ("health"/"primary"/"secondary"/"healthpoll").
+-- baseR/G/B is the bar's normal fill color. reverse=false (up to) / true (from).
+local function GetBarBandCurve(cacheKey, bands, mode, maxVal, baseR, baseG, baseB, reverse)
+    if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+    if not bands or #bands == 0 then return nil end
+
+    -- Cheap change signature from the raw inputs, computed before any stops/curve
+    -- allocation. If unchanged since last build for this bar, return the cache.
+    local parts = {}
+    for i = 1, #bands do
+        local b = bands[i]
+        parts[i] = format("%.3f:%.3f,%.3f,%.3f,%.3f", b.to or 0, b.r or 1, b.g or 1, b.b or 1, b.a or 1)
+    end
+    parts[#parts + 1] = format("|%s|%.3f|%.3f,%.3f,%.3f|%s",
+        mode or "", maxVal or -1, baseR or -1, baseG or -1, baseB or -1, reverse and "r" or "")
     local hash = table.concat(parts, "|")
-    if _barBandCurveHash == hash then return _barBandCurve end
+
+    local slot = _bandCurveCache[cacheKey]
+    if slot and slot.hash == hash then return slot.curve end
+    if not slot then slot = {}; _bandCurveCache[cacheKey] = slot end
+
+    local stops = BuildBandStops(bands, mode, maxVal)
+    if not stops then
+        slot.hash, slot.curve = hash, nil
+        return nil
+    end
 
     local curve = C_CurveUtil.CreateColorCurve()
     local EPSILON = 0.0001
@@ -921,29 +1002,8 @@ local function GetBarBandCurve(stops, baseR, baseG, baseB, reverse)
         end
     end
 
-    _barBandCurve = curve
-    _barBandCurveHash = hash
+    slot.hash, slot.curve = hash, curve
     return curve
-end
-
--- Build the ordered `stops` (frac space) for a bar-type resource from `bands`.
--- `mode` "percent" -> frac = to/100; "value" -> frac = to/max (max clean for player).
--- Returns a stops array, or nil if no usable bands.
-local function BuildBandStops(bands, mode, maxVal)
-    if not bands or #bands == 0 then return nil end
-    local stops = {}
-    for i = 1, #bands do
-        local b = bands[i]
-        local frac
-        if mode == "value" then
-            if not maxVal or maxVal <= 0 then return nil end
-            frac = (b.to or 0) / maxVal
-        else
-            frac = (b.to or 0) / 100
-        end
-        stops[i] = { frac = frac, r = b.r or 1, g = b.g or 1, b = b.b or 1, a = b.a or 1 }
-    end
-    return stops
 end
 
 -- per-element scale, border, colors, text, alerts
@@ -3297,8 +3357,7 @@ local function UpdateHealthBar()
         end
         local _bandOn, _bands, _bandMode, _bandRev = _hpBandOn, _hpBands, _hpBandMode, _hpBandRev
         if _bandOn then
-            local stops = BuildBandStops(_bands, _bandMode, mx)
-            curve = stops and GetBarBandCurve(stops, baseR, baseG, baseB, _bandRev) or nil
+            curve = GetBarBandCurve("health", _bands, _bandMode, mx, baseR, baseG, baseB, _bandRev)
         else
             local tR = _hpTsEntry.thresholdR or hp.thresholdR or 1
             local tG = _hpTsEntry.thresholdG or hp.thresholdG or 0.2
@@ -3434,8 +3493,7 @@ local function UpdatePrimaryBar()
         end
         local _bandOn, _bands, _bandMode, _bandRev = _ppBandOn, _ppBands, _ppBandMode, _ppBandRev
         if _bandOn then
-            local stops = BuildBandStops(_bands, _bandMode, mx)
-            curve = stops and GetBarBandCurve(stops, baseR, baseG, baseB, _bandRev) or nil
+            curve = GetBarBandCurve("primary", _bands, _bandMode, mx, baseR, baseG, baseB, _bandRev)
         else
             local tR = _ppTsEntry.thresholdR or pp.thresholdR or 1
             local tG = _ppTsEntry.thresholdG or pp.thresholdG or 0.2
@@ -4227,8 +4285,7 @@ local function UpdateSecondaryResource()
                             _tsThreshPct = math.min(100, (_tsThreshCount or 30) / maxC * 100)
                         end
                         if _bandOn then
-                            local stops = BuildBandStops(_bands, _bandMode, maxC)
-                            curve = stops and GetBarBandCurve(stops, r, g, b, _bandRev) or nil
+                            curve = GetBarBandCurve("secondary", _bands, _bandMode, maxC, r, g, b, _bandRev)
                         elseif _tsReverse then
                             curve = GetBarThresholdCurve(
                                 r, g, b,                                -- fill color (above)
@@ -4266,63 +4323,69 @@ local function UpdateSecondaryResource()
                         local function _ipBound(to)
                             return (_tsBandMode == "value") and (to or 0) or (maxC * (to or 0) / 100)
                         end
-                        local layers = {}
+                        IP.layerN = 0
                         if _tsBandOn and _tsBands and #_tsBands > 0 then
                             if _tsBandReverse then
                                 -- "From"
-                                layers[1] = { step = 0, r = r, g = g, b = b, a = a }
+                                IP.push(0, r, g, b, a)
                                 for k = 1, #_tsBands do
                                     local bd = _tsBands[k]
-                                    layers[#layers + 1] = { step = _ipBound(bd.to), r = bd.r or 1, g = bd.g or 1, b = bd.b or 1, a = bd.a or a }
+                                    IP.push(_ipBound(bd.to), bd.r or 1, bd.g or 1, bd.b or 1, bd.a or a)
                                 end
                             else
                                 -- "Up to"
                                 local b1 = _tsBands[1]
-                                layers[1] = { step = 0, r = b1.r or 1, g = b1.g or 1, b = b1.b or 1, a = b1.a or a }
+                                IP.push(0, b1.r or 1, b1.g or 1, b1.b or 1, b1.a or a)
                                 for k = 1, #_tsBands - 1 do
                                     local nb = _tsBands[k + 1]
-                                    layers[#layers + 1] = { step = _ipBound(_tsBands[k].to), r = nb.r or 1, g = nb.g or 1, b = nb.b or 1, a = nb.a or a }
+                                    IP.push(_ipBound(_tsBands[k].to), nb.r or 1, nb.g or 1, nb.b or 1, nb.a or a)
                                 end
-                                layers[#layers + 1] = { step = _ipBound(_tsBands[#_tsBands].to), r = r, g = g, b = b, a = a }
+                                IP.push(_ipBound(_tsBands[#_tsBands].to), r, g, b, a)
                             end
                         elseif _tsEntry and _tsEntry.thresholdEnabled ~= false and _tsThreshCount then
                             local tv = (_tsEntry.thresholdMode == "value") and _tsThreshCount or (maxC * _tsThreshCount / 100)
                             if _tsReverse then
                                 -- threshold color below the value, base fill at/above.
-                                layers[1] = { step = 0, r = _tsR or 1, g = _tsG or 0.2, b = _tsB or 0.2, a = _tsA or 1 }
-                                layers[2] = { step = tv, r = r, g = g, b = b, a = a }
+                                IP.push(0, _tsR or 1, _tsG or 0.2, _tsB or 0.2, _tsA or 1)
+                                IP.push(tv, r, g, b, a)
                             else
                                 -- base fill below, threshold color at/above.
-                                layers[1] = { step = 0, r = r, g = g, b = b, a = a }
-                                layers[2] = { step = tv, r = _tsR or 1, g = _tsG or 0.2, b = _tsB or 0.2, a = _tsA or 1 }
+                                IP.push(0, r, g, b, a)
+                                IP.push(tv, _tsR or 1, _tsG or 0.2, _tsB or 0.2, _tsA or 1)
                             end
                         else
-                            layers[1] = { step = 0, r = r, g = g, b = b, a = a }
+                            IP.push(0, r, g, b, a)
                         end
                         -- Base layer paints the bar's own fill.
-                        ft:SetVertexColor(layers[1].r, layers[1].g, layers[1].b, layers[1].a)
+                        local _base = IP.layers[1]
+                        ft:SetVertexColor(_base.r, _base.g, _base.b, _base.a)
                         local bars = secondaryBar._ipBandBars
                         if not bars then bars = {}; secondaryBar._ipBandBars = bars end
                         local host = secondaryBar._sb or secondaryBar
                         local texKey = ERB.db and ERB.db.profile and ERB.db.profile.general and ERB.db.profile.general.barTexture or "none"
                         local texPath = EllesmereUI.ResolveTexturePath(_G._ERB_BarTextures, texKey, "Interface\\Buttons\\WHITE8x8")
                         local shown = 0
-                        for li = 2, #layers do
-                            local L = layers[li]
+                        for li = 2, IP.layerN do
+                            local L = IP.layers[li]
                             if L.step and L.step > 0 then
                                 shown = shown + 1
                                 local ob = bars[shown]
                                 if not ob then
                                     ob = CreateFrame("StatusBar", nil, host)
+                                    -- Anchors are constant to the fill texture; set once.
+                                    ob:SetPoint("TOPLEFT", ft, "TOPLEFT", 0, 0)
+                                    ob:SetPoint("BOTTOMRIGHT", ft, "BOTTOMRIGHT", 1, 0)
                                     bars[shown] = ob
                                 end
-                                ob:ClearAllPoints()
-                                ob:SetPoint("TOPLEFT", ft, "TOPLEFT", 0, 0)
-                                ob:SetPoint("BOTTOMRIGHT", ft, "BOTTOMRIGHT", 1, 0)
-                                ob:SetStatusBarTexture(texPath)
-                                local _obt = ob:GetStatusBarTexture()
-                                if _obt then _obt:SetSnapToPixelGrid(false); _obt:SetTexelSnappingBias(0) end
-                                ob:SetFrameLevel(host:GetFrameLevel() + shown)
+                                -- Texture/level change on config/rebuild, not per tick.
+                                if ob._texPath ~= texPath then
+                                    ob:SetStatusBarTexture(texPath)
+                                    local _obt = ob:GetStatusBarTexture()
+                                    if _obt then _obt:SetSnapToPixelGrid(false); _obt:SetTexelSnappingBias(0) end
+                                    ob._texPath = texPath
+                                end
+                                local _lvl = host:GetFrameLevel() + shown
+                                if ob._lvl ~= _lvl then ob:SetFrameLevel(_lvl); ob._lvl = _lvl end
                                 ob:SetMinMaxValues(L.step * 0.999, L.step)
                                 ob:SetValue(cur)
                                 ob:SetStatusBarColor(L.r, L.g, L.b, L.a)
@@ -4511,8 +4574,16 @@ local function UpdateSecondaryResource()
                                 bb:SetAllPoints(pip._fill)
                                 pip._bandBars[k] = bb
                             end
-                            bb:SetStatusBarTexture(texPath)
-                            bb:SetFrameLevel(pip:GetFrameLevel() + k)
+                            -- Texture/level only change on a config or rebuild, not
+                            -- per tick -- re-apply only when they actually differ so
+                            -- the hot loop doesn't fire pips x bands redundant calls.
+                            if bb._texPath ~= texPath then
+                                bb:SetStatusBarTexture(texPath); bb._texPath = texPath
+                            end
+                            local _lvl = pip:GetFrameLevel() + k
+                            if bb._lvl ~= _lvl then
+                                bb:SetFrameLevel(_lvl); bb._lvl = _lvl
+                            end
                             local lo = (i > _bandStarts[k]) and i or _bandStarts[k]
                             bb:SetMinMaxValues(lo - 1, lo)
                             bb:SetValue(cur)
@@ -4944,8 +5015,7 @@ local function OnUpdate(self, dt)
                     if _bandOn then
                         local maxHP = UnitHealthMax and UnitHealthMax("player") or nil
                         if maxHP and issecretvalue and issecretvalue(maxHP) then maxHP = nil end
-                        local stops = BuildBandStops(_bands, _bandMode, maxHP)
-                        curve = stops and GetBarBandCurve(stops, baseR, baseG, baseB, _bandRev) or nil
+                        curve = GetBarBandCurve("healthpoll", _bands, _bandMode, maxHP, baseR, baseG, baseB, _bandRev)
                     else
                         local tR = _hpPollEntry.thresholdR or hp.thresholdR or 1
                         local tG = _hpPollEntry.thresholdG or hp.thresholdG or 0.2
@@ -6877,6 +6947,30 @@ local function ScheduleRosterApply()
     end)
 end
 
+-- Talent/loadout changes fire TRAIT_CONFIG_UPDATED/PLAYER_TALENT_UPDATE in a
+-- burst (a loadout swap applies many nodes at once). Coalesce into a single
+-- out-of-combat rebuild instead of running the heavy BuildBars() per event.
+-- do-block + ns exposure so the pending flag/function use no main-chunk local
+-- slots (this file is at Lua's 200-local cap).
+do
+    local pending
+    function ns.ScheduleTalentApply()
+        if pending then return end
+        pending = true
+        C_Timer.After(0.1, function()
+            pending = false
+            if InCombatLockdown() then return end
+            ironfurBaseDur = IronfurBaseDuration()
+            cachedPrimary = GetPrimaryPowerType()
+            cachedSecondary = GetSecondaryResource()
+            BuildBars()
+            UpdatePrimaryBar()
+            UpdateSecondaryResource()
+            UpdateVisibility()
+        end)
+    end
+end
+
 
 -------------------------------------------------------------------------------
 --  Event handling
@@ -6970,6 +7064,7 @@ local function OnEvent(self, event, ...)
         ironfurGoEUntil = 0
         ironfurBaseDur = IronfurBaseDuration()
         IP.hashEndTime = 0
+        ns.InvalidateThresholdCaches()
         cachedPrimary = GetPrimaryPowerType()
         cachedSecondary = GetSecondaryResource()
         BuildBars()
@@ -6978,18 +7073,12 @@ local function OnEvent(self, event, ...)
         UpdateSecondaryResource()
         UpdateVisibility()
     elseif event == "TRAIT_CONFIG_UPDATED" or event == "PLAYER_TALENT_UPDATE" then
-        -- A single talent toggled (no spec/loadout change). Re-resolve any
-        -- talent-gated thresholds and redraw. Skip in combat and update
-		-- when safe
-        if not InCombatLockdown() then
-            ironfurBaseDur = IronfurBaseDuration()
-            cachedPrimary = GetPrimaryPowerType()
-            cachedSecondary = GetSecondaryResource()
-            BuildBars()
-            UpdatePrimaryBar()
-            UpdateSecondaryResource()
-            UpdateVisibility()
-        end
+        -- A talent toggled or a loadout applied. Invalidate the talent-gate
+        -- caches immediately (cheap; hot paths re-resolve next tick) and
+        -- coalesce the heavy rebuild via a debounce so a burst of node events
+        -- rebuilds once, not once per event.
+        ns.InvalidateThresholdCaches()
+        ns.ScheduleTalentApply()
     elseif event == "UPDATE_SHAPESHIFT_FORM" then
         cachedPrimary = GetPrimaryPowerType()
         cachedSecondary = GetSecondaryResource()

@@ -8685,6 +8685,14 @@ initFrame:SetScript("OnEvent", function(self)
             local emptySwatch = EllesmereUI.BuildColorSwatch(ccRgn, ccRgn:GetFrameLevel() + 5,
                 function()
                     local c = SGetSupported("classPowerEmptyColor")
+                    c = c or { r = 0.2, g = 0.2, b = 0.2, a = 1.0 }
+                    return c.r, c.g, c.b, c.a or 1
+                end,
+                function(r, g, b, a)
+                    UNIT_DB_MAP[selectedUnit]().classPowerEmptyColor = { r = r, g = g, b = b, a = a or 1 }
+                    if ns.frames and ns.frames._toggleClassPower then
+                        ns.frames._toggleClassPower()
+                    end
                     ReloadAndUpdate(); UpdatePreview()
                 end, true, 20)
             emptySwatch:SetPoint("RIGHT", ccRgn._lastInline or ccRgn._control, "LEFT", -6, 0)

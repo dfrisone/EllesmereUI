@@ -2243,6 +2243,26 @@ end
 EUI_Bags.RefreshTextSizes = RefreshTextSizes
 
 -------------------------------------------------------------------------------
+--  Bind type text (shared by bags and bank render paths)
+-------------------------------------------------------------------------------
+-- WuE items report bindType == OnEquip from GetItemInfo (no dedicated enum),
+-- so the WuE flag must be checked first.
+function EUI_Bags.SetBindTypeText(fs, isWuE, bindType, quality)
+    local c
+    if isWuE then
+        c = ITEM_QUALITY_COLORS[7] -- Heirloom color (no quality enum for WuE)
+        fs:SetText(EllesmereUI.L("WuE"))
+    elseif bindType == Enum.ItemBind.OnEquip then
+        c = ITEM_QUALITY_COLORS[quality]
+        fs:SetText(EllesmereUI.L("BoE"))
+    else
+        fs:SetText("")
+        return
+    end
+    if c then fs:SetTextColor(c.r, c.g, c.b) else fs:SetTextColor(1, 1, 1) end
+end
+
+-------------------------------------------------------------------------------
 --  RenderButton (simplified, no placeholder handling)
 -------------------------------------------------------------------------------
 local function RenderButton(btn, data, _, col, row, startX, currentY, _, interactiveEmpties)
@@ -2366,31 +2386,12 @@ local function RenderButton(btn, data, _, col, row, startX, currentY, _, interac
             end
         end
 
-        -- Bind Type : BoE / WuE bottom-left (gear only)
+        -- Bind Type : BoE / WuE bottom-left (gear only). Quest starters are
+        -- skipped -- the quest marker occupies the same corner.
         if btn.BindTypeText then
-            if data._isGear and not data.info.isBound then
-                local showBindType = BP().bagDisplayBindType ~= false
-                if showBindType then
-                    local r, g, b = 1, 1, 1
-
-                    if data._isWuE then
-                        local c = ITEM_QUALITY_COLORS[7] -- Heirloom color (no quality enum for WuE)
-                        if c then r, g, b = c.r, c.g, c.b end
-
-                        btn.BindTypeText:SetText(EllesmereUI.L("WuE"))
-                        btn.BindTypeText:SetTextColor(r, g, b)
-                    elseif data._giBindType == Enum.ItemBind.OnEquip then
-                        local c = ITEM_QUALITY_COLORS[quality]
-                        if c then r, g, b = c.r, c.g, c.b end
-
-                        btn.BindTypeText:SetText(EllesmereUI.L("BoE"))
-                        btn.BindTypeText:SetTextColor(r, g, b)
-                    else
-                        btn.BindTypeText:SetText("")
-                    end
-                else
-                    btn.BindTypeText:SetText("")
-                end
+            if data._isGear and not data.info.isBound and not data._isQuestStarter
+               and BP().bagDisplayBindType then
+                EUI_Bags.SetBindTypeText(btn.BindTypeText, data._isWuE, data._giBindType, quality)
             else
                 btn.BindTypeText:SetText("")
             end
@@ -4813,11 +4814,14 @@ function EUI_Bags:RefreshInventory()
                             d._giTrackColor = trackColor
                         end
                     end
-                    -- Warbound check (for warbank dim overlay)
-                    if C_Bank and C_Bank.IsItemAllowedInBankType then
-                        local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
-                        if loc and C_Item.DoesItemExist(loc) then
+                    -- Warbound check (for warbank dim overlay) + WuE bind check
+                    -- (gear only, and only when the bind-type text is enabled)
+                    local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
+                    if loc and C_Item.DoesItemExist(loc) then
+                        if C_Bank and C_Bank.IsItemAllowedInBankType then
                             d._isWarbound = C_Bank.IsItemAllowedInBankType(Enum.BankType.Account, loc)
+                        end
+                        if isGear and not info.isBound and BP().bagDisplayBindType then
                             d._isWuE = C_Item.IsBoundToAccountUntilEquip(loc)
                         end
                     end
@@ -5658,18 +5662,25 @@ function EUI_Bags:RefreshInventory()
                 if aCat then
                     local aIdx = itemCount + 1
                     slotIdx = slotIdx + 1
+                    -- GetOrCreateSlot returns nil when the pre-warmed pool is
+                    -- exhausted during combat lockdown (a slot born in combat is
+                    -- tainted). Skip the assign "+" button in that case, exactly
+                    -- like the pin "+" button above; PLAYER_REGEN_ENABLED replays
+                    -- a full refresh once combat ends so it appears then.
                     local aSlot = GetOrCreateSlot(slotIdx)
-                    aSlot:GetParent():SetParent(child)
-                    local col = (aIdx - 1) % columns
-                    local row = math.floor((aIdx - 1) / columns)
-                    RenderButton(aSlot, { bag = 0, slot = 0 }, slotIdx, col, row, startX, curY, columns)
-                    local aOv = GetOrCreateAssignOverlay()
-                    aOv._assignCatKey = aCat._defaultName
-                    aOv:SetParent(child)
-                    aOv:ClearAllPoints()
-                    aOv:SetAllPoints(aSlot)
-                    aOv:Show()
-                    itemCount = itemCount + 1
+                    if aSlot then
+                        aSlot:GetParent():SetParent(child)
+                        local col = (aIdx - 1) % columns
+                        local row = math.floor((aIdx - 1) / columns)
+                        RenderButton(aSlot, { bag = 0, slot = 0 }, slotIdx, col, row, startX, curY, columns)
+                        local aOv = GetOrCreateAssignOverlay()
+                        aOv._assignCatKey = aCat._defaultName
+                        aOv:SetParent(child)
+                        aOv:ClearAllPoints()
+                        aOv:SetAllPoints(aSlot)
+                        aOv:Show()
+                        itemCount = itemCount + 1
+                    end
                 end
             end
 

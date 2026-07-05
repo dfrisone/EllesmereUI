@@ -19,7 +19,7 @@ local PAGE_DISPLAY   = "Display"
 local PAGE_COLORS    = "Colors"
 
 local SECTION_FRIENDLY  = "OTHER NAMEPLATES"
-local SECTION_ENEMY_NP  = "ENEMY NAMEPLATE SPACING"
+local SECTION_ENEMY_NP  = "NAMEPLATE SPACING"
 local SECTION_MISC      = "EXTRAS"
 local SECTION_AURA      = "EXTRA AURA OPTIONS"
 
@@ -189,7 +189,6 @@ initFrame:SetScript("OnEvent", function(self)
     local activePreview
     local _displayHeaderBuilder   -- stored for page cache re-use
     local _colorPreviewRefreshAll -- refresh all color preview bars on cache restore
-    local _colorPreviewRandomizeAll -- randomize all color preview fills/icons on tab switch
     local RefreshCoreEyes          -- forward-declared; defined in BuildDisplayPage
     local _previewHintFS                 -- the hint FontString
     local _headerBaseH = 0               -- header height WITHOUT hint (for cache restore)
@@ -2702,14 +2701,12 @@ initFrame:SetScript("OnEvent", function(self)
         -----------------------------------------------------------------------
         _, h = W:SectionHeader(parent, SECTION_ENEMY_NP, y);  y = y - h
 
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Enable Stacking Nameplates",
-              getValue=function() return DBVal("stackingEnabled") ~= false end,
-              setValue=function(v)
-                DB().stackingEnabled = v
-                ns.RefreshStackingMotion()
-              end,
-              tooltip="When enabled, nameplates stack vertically instead of overlapping." },
+        local stackingRow
+        stackingRow, h = W:DualRow(parent, y,
+            { type="dropdown", text="Stacking Nameplates",
+              values={ __placeholder = "..." }, order={ "__placeholder" },
+              getValue=function() return "__placeholder" end,
+              setValue=function() end },
             { type="slider", text="Stacked Nameplate Spacing",
               trackWidth=130,
               min=50, max=200, step=5,
@@ -2719,6 +2716,40 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.RefreshStackingBounds()
               end,
               tooltip="Adjusts the vertical spacing between stacked nameplates. 100% = default, lower = tighter, higher = more spread." });  y = y - h
+
+        -- Replace the placeholder dropdown with a multi-select checkbox dropdown.
+        -- Enemy and Friendly stacking are independent toggles over the Midnight
+        -- stacking bitfield. Friendly is locked out while EUI is not managing
+        -- friendly player nameplates, since Blizzard owns that stacking bit then.
+        do
+            local leftRgn = stackingRow._leftRegion
+            if leftRgn._control then leftRgn._control:Hide() end
+            local stackItems = {
+                { key = "enemy",    label = "Enemy Nameplates" },
+                { key = "friendly", label = "Friendly Nameplates",
+                  lockedFn = function() return DBVal("showFriendlyPlayers") == false end },
+            }
+            local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+                leftRgn, 170, leftRgn:GetFrameLevel() + 2,
+                stackItems,
+                function(k)
+                    if k == "enemy" then return DBVal("stackingEnabled") ~= false end
+                    if k == "friendly" then return DBVal("stackingFriendly") == true end
+                    return false
+                end,
+                function(k, v)
+                    if k == "enemy" then DB().stackingEnabled = v
+                    elseif k == "friendly" then DB().stackingFriendly = v end
+                    ns.RefreshStackingMotion()
+                end)
+            PP.Point(cbDD, "RIGHT", leftRgn, "RIGHT", -20, 0)
+            leftRgn._control = cbDD
+            cbDD:HookScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cbDD, "Choose which nameplates stack vertically instead of overlapping.")
+            end)
+            cbDD:HookScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+        end
 
         local hitboxRow
         hitboxRow, h = W:DualRow(parent, y,
@@ -3593,7 +3624,6 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  Display page  (preview in content header + settings in scroll area)
     ---------------------------------------------------------------------------
-    local _updatePreviewHooked = false
     local LazyColorPreviewBar -- forward declaration; defined after MakeColorPreviewBar
 
     local function BuildDisplayPage(pageName, parent, yOffset)
@@ -3654,19 +3684,6 @@ initFrame:SetScript("OnEvent", function(self)
             return _headerBaseH + (hintShown and 29 or 0)
         end
         EllesmereUI:SetContentHeader(_displayHeaderBuilder)
-
-        -- Hook UpdatePreview so every widget setValue callback that calls it
-        -- automatically triggers drift detection (auto-creates "Custom" when editing a built-in).
-        -- Only hook once: the original UpdatePreview is a simple wrapper around activePreview:Update().
-        -- After hooking, subsequent BuildDisplayPage calls reuse the already-hooked version.
-        if not _updatePreviewHooked then
-            _updatePreviewHooked = true
-            local _origUpdatePreview = UpdatePreview
-            UpdatePreview = function()
-                _origUpdatePreview()
-                if onPresetSettingChanged then onPresetSettingChanged() end
-            end
-        end
 
         -- Enable per-row center divider for the dual-column layout
         parent._showRowDivider = true
@@ -8227,9 +8244,6 @@ initFrame:SetScript("OnEvent", function(self)
         -- No content header on Colors tab (presets are inline in scroll area)
         EllesmereUI:ClearContentHeader()
 
-        -- Clear display preset hook (only active on Display page)
-        onPresetSettingChanged = nil
-
         -- Enable per-row center divider for the dual-column layout (same as Display tab)
         parent._showRowDivider = true
 
@@ -9003,7 +9017,6 @@ initFrame:SetScript("OnEvent", function(self)
                 if prev.RefreshHealthText then prev.RefreshHealthText() end
             end
         end
-        _colorPreviewRandomizeAll = nil
         for _, prev in ipairs(_colorPagePreviews) do
             if prev.UpdateColor then
                 EllesmereUI.RegisterWidgetRefresh(prev.UpdateColor)
@@ -9056,8 +9069,6 @@ initFrame:SetScript("OnEvent", function(self)
         end,
         onPageCacheRestore = function(pageName)
             if pageName == PAGE_DISPLAY then
-                -- Restore display preset drift hook (cleared when Colors page builds)
-                onPresetSettingChanged = _displayPresetCheckDrift
                 -- Re-evaluate Set as Default button visibility (cache restore
                 -- blanket-shows all children, which can ghost the button)
                 local pState = EllesmereUI._presetState and EllesmereUI._presetState[""]
@@ -9081,8 +9092,6 @@ initFrame:SetScript("OnEvent", function(self)
                     EllesmereUI:SetContentHeaderHeightSilent(_headerBaseH + (dismissed and 0 or 29))
                 end
             elseif pageName == PAGE_COLORS then
-                -- Randomize preview fills/icons when switching TO this tab
-                if _colorPreviewRandomizeAll then _colorPreviewRandomizeAll() end
                 -- Refresh all color preview bars (colors from DB)
                 if _colorPreviewRefreshAll then _colorPreviewRefreshAll() end
             end

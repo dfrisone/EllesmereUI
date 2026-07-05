@@ -36,15 +36,21 @@ _G._EUI_BuildShifterPage = function(pageName, parent, yOffset)
         line2:SetPoint("TOP", line1, "BOTTOM", 0, -2)
         line2:SetJustifyH("CENTER")
         line2:SetText(EllesmereUI.L("Ctrl + Left-Click Drag for a temporary move that resets when the panel closes."))
-        y = y - 50
+        local line3 = infoFrame:CreateFontString(nil, "OVERLAY")
+        line3:SetFont(fontPath, 15, "")
+        line3:SetTextColor(1, 1, 1, 0.75)
+        line3:SetPoint("TOP", line2, "BOTTOM", 0, -2)
+        line3:SetJustifyH("CENTER")
+        line3:SetText(EllesmereUI.L("Shift + Scroll to permanently zoom a panel. Ctrl + Scroll for a temporary zoom."))
+        y = y - 70
     end
 
     -- Reset All button
-    _, h = W:WideButton(parent, "Reset All Positions", y,
+    _, h = W:WideButton(parent, "Reset All Positions & Zoom", y,
         function()
             EllesmereUI:ShowConfirmPopup({
-                title   = "Reset Shifter Positions",
-                message = "This will reset all saved panel positions and reload your UI.",
+                title   = "Reset Shifter Positions & Zoom",
+                message = "This will reset all saved panel positions and zoom levels and reload your UI.",
                 confirmText = "Reset",
                 cancelText  = "Cancel",
                 onConfirm = function()
@@ -64,15 +70,24 @@ _G._EUI_BuildShifterPage = function(pageName, parent, yOffset)
 
     parent._showRowDivider = true
 
-    -- Build dropdown values for Reset Specific Window
+    -- Build dropdown values for Reset Specific Window (any window with a
+    -- saved position OR a saved zoom)
     local ddValues = { [""] = "Choose Window..." }
     local ddOrder  = {}
-    local positions = EllesmereUIDB and EllesmereUIDB.shifterPositions
-    if positions then
-        for name in pairs(positions) do
-            ddValues[name] = PrettifyName(name)
-            ddOrder[#ddOrder + 1] = name
+    do
+        local seen = {}
+        local function collect(tbl)
+            if not tbl then return end
+            for name in pairs(tbl) do
+                if not seen[name] then
+                    seen[name] = true
+                    ddValues[name] = PrettifyName(name)
+                    ddOrder[#ddOrder + 1] = name
+                end
+            end
         end
+        collect(EllesmereUIDB and EllesmereUIDB.shifterPositions)
+        collect(EllesmereUIDB and EllesmereUIDB.shifterScales)
         table.sort(ddOrder, function(a, b)
             return ddValues[a] < ddValues[b]
         end)
@@ -99,13 +114,16 @@ _G._EUI_BuildShifterPage = function(pageName, parent, yOffset)
               if frameName == "" then return end
               local pretty = ddValues[frameName] or PrettifyName(frameName)
               EllesmereUI:ShowConfirmPopup({
-                  title   = "Reset Window Position",
-                  message = EllesmereUI.Lf("Reset %1$s to its default position and reload your UI?", pretty),
+                  title   = "Reset Window Position & Zoom",
+                  message = EllesmereUI.Lf("Reset %1$s to its default position and zoom and reload your UI?", pretty),
                   confirmText = "Reset",
                   cancelText  = "Cancel",
                   onConfirm = function()
                       if EllesmereUIDB and EllesmereUIDB.shifterPositions then
                           EllesmereUIDB.shifterPositions[frameName] = nil
+                      end
+                      if EllesmereUIDB and EllesmereUIDB.shifterScales then
+                          EllesmereUIDB.shifterScales[frameName] = nil
                       end
                       ReloadUI()
                   end,
@@ -125,6 +143,47 @@ _G._EUI_BuildShifterPage = function(pageName, parent, yOffset)
               EllesmereUIDB.shifterNoShift = v
           end },
         { type = "label", text = "" }
+    );  y = y - h
+
+    ---------------------------------------------------------------------------
+    --  LOOT WINDOWS
+    ---------------------------------------------------------------------------
+    _, h = W:SectionHeader(parent, "LOOT WINDOWS", y);  y = y - h
+
+    local function lootUnlockOff()
+        return not (EllesmereUIDB and EllesmereUIDB.shifterLootUnlock)
+    end
+
+    _, h = W:DualRow(parent, y,
+        { type = "toggle", text = "Move Loot Windows in Unlock Mode",
+          tooltip = "Adds Bonus Roll and Group Loot movers to Unlock Mode.",
+          getValue = function()
+              return EllesmereUIDB and EllesmereUIDB.shifterLootUnlock or false
+          end,
+          setValue = function(v)
+              if not EllesmereUIDB then EllesmereUIDB = {} end
+              EllesmereUIDB.shifterLootUnlock = v
+              if v then
+                  if EllesmereUI._InitShifterLootWindows then
+                      EllesmereUI._InitShifterLootWindows()
+                  end
+              else
+                  if EllesmereUI._DisableShifterLootWindows then
+                      EllesmereUI._DisableShifterLootWindows()
+                  end
+              end
+              EllesmereUI:RefreshPage()  -- update the overlay toggle disabled state
+          end },
+        { type = "toggle", text = "Hide Unlock Mode Overlays",
+          tooltip = "Hides the loot window movers in Unlock Mode while keeping their saved positions applied.",
+          disabled = lootUnlockOff, disabledTooltip = "Move Loot Windows in Unlock Mode",
+          getValue = function()
+              return EllesmereUIDB and EllesmereUIDB.shifterLootHideOverlays or false
+          end,
+          setValue = function(v)
+              if not EllesmereUIDB then EllesmereUIDB = {} end
+              EllesmereUIDB.shifterLootHideOverlays = v
+          end }
     );  y = y - h
 
     return math.abs(y)

@@ -363,13 +363,75 @@ function ns.RemoveSpellFromBar(barKey, spellID)
     return removed
 end
 
+-------------------------------------------------------------------------------
+--  EnumerateCDMSettingsCatalog
+--
+--  Arrangement-aware, talent-independent enumeration of the player's tracked
+--  CD/utility cooldowns, read from the Blizzard CDM settings panel's data
+--  provider. Unlike the live viewer pools, the catalog includes spells the
+--  player has NOT talented into (they never get a viewer frame); unlike the
+--  static category API, it respects the user's arrangement -- a spell the
+--  user moved to Not Displayed reads as a Hidden category and is skipped, and
+--  the returned order is the user's arranged order.
+--
+--  READ-ONLY: getter calls only, every step pcall-guarded. Returns nil when
+--  the provider or any expected method is missing so callers fall back to the
+--  live-pool behavior unchanged (hard zero-impact fallback).
+--
+--  Returns: array of { cdID, sid, category } in the user's arranged order,
+--  Essential and Utility categories only.
+-------------------------------------------------------------------------------
+function ns.EnumerateCDMSettingsCatalog()
+    local evc = Enum and Enum.CooldownViewerCategory
+    if not evc or evc.Essential == nil or evc.Utility == nil then return nil end
+    local settings = _G.CooldownViewerSettings
+    if not settings or type(settings.GetDataProvider) ~= "function" then return nil end
+    local okP, provider = pcall(settings.GetDataProvider, settings)
+    if not okP or type(provider) ~= "table" then return nil end
+    if type(provider.GetOrderedCooldownIDs) ~= "function"
+       or type(provider.GetCooldownInfoForID) ~= "function" then return nil end
+    local okO, ordered = pcall(provider.GetOrderedCooldownIDs, provider)
+    if not okO or type(ordered) ~= "table" then return nil end
+    local gci = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
+    if not gci then return nil end
+
+    local result = {}
+    for _, cdID in ipairs(ordered) do
+        local okI, pInfo = pcall(provider.GetCooldownInfoForID, provider, cdID)
+        local category
+        if okI and type(pInfo) == "table" then category = pInfo.category end
+        if category == evc.Essential or category == evc.Utility then
+            -- Resolve the spell id from the C_CooldownViewer info (the same
+            -- shape the migration and spell caches use). Prefer the override
+            -- form only when the player actually has it -- CDM info can
+            -- report a stale override after the talent providing it is gone.
+            local info = gci(cdID)
+            local sid
+            if info then
+                local ovr = info.overrideSpellID
+                if ovr and ovr > 0 and IsPlayerSpell and IsPlayerSpell(ovr) then
+                    sid = ovr
+                else
+                    sid = info.spellID
+                end
+            end
+            if _IsUsableSID(sid) then
+                result[#result + 1] = { cdID = cdID, sid = sid, category = category }
+            end
+        end
+    end
+    return result
+end
+
 --- Returns array of { cdID, spellID, name, icon, cdmCat, cdmCatGroup, onEUIBar, isKnown }
 --- Sorted by viewer order (Essential before Utility), then alpha.
 ---
 --- Walks Blizzard's CDM viewer pools (the live frames the user actually
 --- sees), NOT the static category API. This is the same source of truth
 --- the route map uses, so the picker contents always match what gets
---- routed to bars at reanchor time.
+--- routed to bars at reanchor time. For CD/utility bars, tracked spells
+--- with no live frame (untalented) are appended from the settings catalog
+--- so whole layouts can be arranged without swapping talents.
 function ns.GetCDMSpellsForBar(barKey)
     -- Pickers walk the buff icon viewer for buff bars, or the Essential +
     -- Utility viewers for CD/util bars. ns.* exports because IsBarBuffFamily
@@ -408,11 +470,53 @@ function ns.GetCDMSpellsForBar(barKey)
                 cdmCat      = e.viewerOrder,  -- preserve viewer grouping for sort
                 cdmCatGroup = isBuffType and "buff" or "cooldown",
                 onEUIBar    = isOnThisBar,
-                -- Picker only enumerates live viewer pool members, which are
-                -- always learned. Kept for downstream consumers that branch
-                -- on this field.
+                -- Live viewer pool members are always learned. Catalog
+                -- entries appended below may not be.
                 isKnown     = true,
             }
+        end
+    end
+
+    -- CD/utility bars: also list tracked spells that currently have NO live
+    -- viewer frame -- untalented spells, plus conditionally-pooled ones that
+    -- Blizzard hides based on combat/buff/target state. Sourced from the
+    -- settings catalog, which respects the user's arrangement (Not Displayed
+    -- spells never appear). When the provider is unavailable the catalog is
+    -- nil and nothing is appended (identical to the old behavior). Buff
+    -- pickers are untouched.
+    if not isBuffType and ns.EnumerateCDMSettingsCatalog then
+        local catalog = ns.EnumerateCDMSettingsCatalog()
+        if catalog then
+            local evc = Enum and Enum.CooldownViewerCategory
+            local seenCd, seenSid = {}, {}
+            for _, e in ipairs(entries) do
+                if e.cdID ~= nil then seenCd[e.cdID] = true end
+                StoreVariantValue(seenSid, e.sid, true, false)
+            end
+            for _, ce in ipairs(catalog) do
+                if not seenCd[ce.cdID]
+                   and not ResolveVariantValue(seenSid, ce.sid) then
+                    local name = C_Spell.GetSpellName(ce.sid)
+                    local tex  = C_Spell.GetSpellTexture(ce.sid)
+                    if name then
+                        local known = false
+                        if IsPlayerSpell and IsPlayerSpell(ce.sid) then known = true end
+                        spells[#spells + 1] = {
+                            cdID        = ce.cdID,
+                            spellID     = ce.sid,
+                            name        = name,
+                            icon        = tex,
+                            -- Match the live entries' viewer grouping values
+                            -- so catalog spells sort beside learned peers.
+                            cdmCat      = (evc and ce.category == evc.Utility) and 10000 or 0,
+                            cdmCatGroup = "cooldown",
+                            onEUIBar    = (ResolveVariantValue(ourPool, ce.sid) == true),
+                            isKnown     = known,
+                        }
+                        StoreVariantValue(seenSid, ce.sid, true, false)
+                    end
+                end
+            end
         end
     end
 

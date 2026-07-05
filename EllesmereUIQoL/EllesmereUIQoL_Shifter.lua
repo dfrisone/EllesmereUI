@@ -8,6 +8,12 @@ local GetFFD = EllesmereUI._GetFFD
 -- Temporary positions (per-frame, cleared on hide, not persisted)
 local tempPos = {}
 
+-- Temporary scales (per-frame, cleared on hide, not persisted)
+local tempScale = {}
+
+-- Every hooked frame, for the scroll-wheel overlay's mouseover targeting
+local hookedFrames = {}
+
 -- Frames that loaded during combat and need SetMovable/SetClampedToScreen deferred
 local deferredMovable = {}
 
@@ -27,7 +33,6 @@ local PRELOADED = {
     "GossipFrame",
     "MerchantFrame",
     "AddonList",
-    "BonusRollFrame",
     "ChatConfigFrame",
     "ItemTextFrame",
     "LFGDungeonReadyDialog",
@@ -118,6 +123,19 @@ local function SavePos(name, point, relPoint, x, y)
     end
 end
 
+local function GetSavedScale(name)
+    local db = EllesmereUIDB
+    return db and db.shifterScales and db.shifterScales[name]
+end
+
+local function SaveScale(name, scale)
+    if not EllesmereUIDB then EllesmereUIDB = {} end
+    if not EllesmereUIDB.shifterScales then
+        EllesmereUIDB.shifterScales = {}
+    end
+    EllesmereUIDB.shifterScales[name] = scale
+end
+
 -------------------------------------------------------------------------------
 --  Secure repositioning (for PROTECTED frames)
 --
@@ -161,6 +179,196 @@ local function ApplyPosition(frame, name)
     end
     ffd._shIgnoreSP = false
 end
+
+-------------------------------------------------------------------------------
+--  Scaling (Shift+Scroll = permanent, Ctrl+Scroll = temporary)
+--
+--  Same protection split as positioning: non-protected frames take a plain
+--  SetScale, protected frames are scaled inside the SecureHandler snippet so
+--  the write cannot taint by construction. Position offsets are stored in
+--  frame-local units, so on a scale change the active offsets are multiplied
+--  by oldScale/newScale and re-applied -- the frame stays visually put.
+-------------------------------------------------------------------------------
+local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.5, 2, 0.1
+
+local function SecureSetScale(frame, scale)
+    if InCombatLockdown() then return false end
+    securePositioner:SetFrameRef("f", frame)
+    securePositioner:SetAttribute("s", scale)
+    securePositioner:Execute([[
+        local f = self:GetFrameRef("f")
+        if f then f:SetScale(self:GetAttribute("s")) end
+    ]])
+    return true
+end
+
+local function SetShifterScale(frame, scale)
+    -- Guard the SetScale reentry hook (below) so our own re-scale never
+    -- recurses -- mirrors the _shIgnoreSP guard used for SetPoint.
+    local ffd = GetFFD(frame)
+    ffd._shIgnoreSS = true
+    local ok
+    if frame:IsProtected() then
+        ok = SecureSetScale(frame, scale)
+    else
+        frame:SetScale(scale)
+        ok = true
+    end
+    ffd._shIgnoreSS = false
+    return ok
+end
+
+-- OnShow / init restore: temp > saved > (original, if we scaled it earlier).
+local function ApplyScale(frame, name)
+    if InCombatLockdown() and frame:IsProtected() then return end
+    local ffd = GetFFD(frame)
+    local target = tempScale[frame] or GetSavedScale(name)
+    if target then
+        if ffd._shOrigScale == nil then ffd._shOrigScale = frame:GetScale() end
+        ffd._shScaled = true
+    else
+        if not (ffd._shScaled and ffd._shOrigScale) then return end
+        target = ffd._shOrigScale
+        ffd._shScaled = nil
+    end
+    if math.abs(frame:GetScale() - target) < 0.001 then return end
+    SetShifterScale(frame, target)
+end
+
+local function ApplyScaleStep(frame, name, delta, mode)
+    if InCombatLockdown() and frame:IsProtected() then return end
+    local ffd = GetFFD(frame)
+    if ffd._shOrigScale == nil then ffd._shOrigScale = frame:GetScale() end
+    local oldS = frame:GetScale()
+    local cur = tempScale[frame] or GetSavedScale(name) or oldS
+    local new = math.floor((cur + SCALE_STEP * delta) * 100 + 0.5) / 100
+    if new < SCALE_MIN then new = SCALE_MIN elseif new > SCALE_MAX then new = SCALE_MAX end
+    if new == cur and math.abs(oldS - new) < 0.005 then return end
+    if not SetShifterScale(frame, new) then return end
+    ffd._shScaled = true
+
+    -- Keep the frame visually in place: rescale whichever position table is
+    -- (or becomes) active, then re-apply it.
+    local ratio = oldS / new
+    -- With NO stored position, Blizzard's panel manager re-seats the scaled
+    -- window on its next layout pass (first tab switch) and it visibly
+    -- jumps. Zooming therefore claims the seat like dragging does: capture
+    -- the current visual spot (center-based, frame-local units at the NEW
+    -- scale) so the pin holds it.
+    local function CaptureCenter()
+        local fcx, fcy = frame:GetCenter()
+        local ucx, ucy = UIParent:GetCenter()
+        if not fcx or not ucx then return nil end
+        local es = frame:GetEffectiveScale()
+        local ues = UIParent:GetEffectiveScale()
+        return (fcx * es - ucx * ues) / es, (fcy * es - ucy * ues) / es
+    end
+    if mode == "save" then
+        SaveScale(name, new)
+        tempScale[frame] = nil
+        local saved = GetSavedPos(name)
+        if saved then
+            SavePos(name, saved.point, saved.relPoint, saved.x * ratio, saved.y * ratio)
+        elseif not tempPos[frame] then
+            local cx, cy = CaptureCenter()
+            if cx then SavePos(name, "CENTER", "CENTER", cx, cy) end
+        end
+        if tempPos[frame] then
+            tempPos[frame].x = tempPos[frame].x * ratio
+            tempPos[frame].y = tempPos[frame].y * ratio
+        end
+    else
+        tempScale[frame] = new
+        if tempPos[frame] then
+            tempPos[frame].x = tempPos[frame].x * ratio
+            tempPos[frame].y = tempPos[frame].y * ratio
+        else
+            local saved = GetSavedPos(name)
+            if saved then
+                tempPos[frame] = {
+                    point = saved.point, relPoint = saved.relPoint,
+                    x = saved.x * ratio, y = saved.y * ratio,
+                }
+            else
+                local cx, cy = CaptureCenter()
+                if cx then
+                    tempPos[frame] = {
+                        point = "CENTER", relPoint = "CENTER", x = cx, y = cy,
+                    }
+                end
+            end
+        end
+    end
+    ApplyPosition(frame, name)
+end
+
+-------------------------------------------------------------------------------
+--  Scroll-wheel capture overlay
+--
+--  No Blizzard frame ever gets EnableMouseWheel (input-state writes are the
+--  exact call class that tainted PVEFrame). Instead one overlay frame of our
+--  own sits over the hovered registered panel while Shift/Ctrl is held and
+--  takes the wheel. EnableMouse stays false so clicks (and the existing
+--  drag hooks) pass straight through; with no modifier held it is hidden and
+--  costs nothing.
+-------------------------------------------------------------------------------
+local wheelTarget, wheelTargetName
+local wheelOverlay = CreateFrame("Frame", nil, UIParent)
+wheelOverlay:Hide()
+wheelOverlay:EnableMouse(false)
+wheelOverlay:EnableMouseWheel(true)
+wheelOverlay:SetFrameStrata("TOOLTIP")
+
+local function FindWheelTarget()
+    for i = 1, #hookedFrames do
+        local e = hookedFrames[i]
+        if e.frame:IsVisible() and e.frame:IsMouseOver() then
+            return e.frame, e.name
+        end
+    end
+end
+
+local function UpdateWheelOverlay()
+    if not (IsEnabled() and (IsShiftKeyDown() or IsControlKeyDown())) then
+        wheelTarget, wheelTargetName = nil, nil
+        wheelOverlay:Hide()
+        return
+    end
+    local f, name = FindWheelTarget()
+    wheelTarget, wheelTargetName = f, name
+    wheelOverlay:ClearAllPoints()
+    if f then
+        wheelOverlay:SetAllPoints(f)
+        wheelOverlay:EnableMouseWheel(true)
+    else
+        -- Parked but shown: the OnUpdate keeps polling so hovering onto a
+        -- panel AFTER pressing the modifier still arms the wheel.
+        wheelOverlay:SetSize(1, 1)
+        wheelOverlay:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -20, -20)
+        wheelOverlay:EnableMouseWheel(false)
+    end
+    wheelOverlay:Show()
+end
+
+do
+    local acc = 0
+    wheelOverlay:SetScript("OnUpdate", function(_, elapsed)
+        acc = acc + elapsed
+        if acc < 0.1 then return end
+        acc = 0
+        UpdateWheelOverlay()
+    end)
+end
+
+wheelOverlay:SetScript("OnMouseWheel", function(_, delta)
+    local frame, name = wheelTarget, wheelTargetName
+    if not frame or not IsEnabled() then return end
+    if IsShiftKeyDown() then
+        ApplyScaleStep(frame, name, delta, "save")
+    elseif IsControlKeyDown() then
+        ApplyScaleStep(frame, name, delta, "temp")
+    end
+end)
 
 -------------------------------------------------------------------------------
 --  Cursor-delta drag (for PROTECTED frames)
@@ -232,6 +440,7 @@ local function HookFrame(frame, name)
     local ffd = GetFFD(frame)
     if ffd._shHooked then return end
     ffd._shHooked = true
+    hookedFrames[#hookedFrames + 1] = { frame = frame, name = name }
 
     -- Non-protected frames use the cheap native StartMoving path. Protected
     -- frames are NEVER made movable / SetMovable'd / StartMoving'd / SetPoint'd
@@ -295,12 +504,16 @@ local function HookFrame(frame, name)
 
     frame:HookScript("OnShow", function()
         if not IsEnabled() then return end
+        -- Scale first: stored position offsets are frame-local units, so the
+        -- pin only lands right once the final scale is in effect.
+        ApplyScale(frame, name)
         ApplyPosition(frame, name)
     end)
 
     frame:HookScript("OnHide", function()
         if secureDrag.frame == frame then StopSecureDrag() end
         tempPos[frame] = nil
+        tempScale[frame] = nil
     end)
 
     hooksecurefunc(frame, "SetPoint", function()
@@ -313,8 +526,24 @@ local function HookFrame(frame, name)
         end
     end)
 
-    -- If the frame is already visible, apply saved position now
+    -- Re-assert the user's scale whenever Blizzard (or anything) changes it in
+    -- place. Some windows rescale themselves on a state change with no
+    -- hide/show to fire the OnShow restore -- e.g. the crafting order window
+    -- resets its scale when you submit an order, so a scaled window snapped
+    -- back. Only re-assert for frames the user has actually scaled; guarded so
+    -- our own re-scale can't recurse.
+    hooksecurefunc(frame, "SetScale", function()
+        if not IsEnabled() then return end
+        if ffd._shIgnoreSS then return end
+        if InCombatLockdown() and frame:IsProtected() then return end
+        if tempScale[frame] or GetSavedScale(name) then
+            ApplyScale(frame, name)
+        end
+    end)
+
+    -- If the frame is already visible, apply saved scale + position now
     if frame:IsVisible() then
+        ApplyScale(frame, name)
         ApplyPosition(frame, name)
     end
 end
@@ -322,6 +551,189 @@ end
 local function TryHook(name)
     local frame = _G[name]
     if frame and frame.HookScript then HookFrame(frame, name) end
+end
+
+-------------------------------------------------------------------------------
+--  Loot windows via Unlock Mode movers
+--
+--  The Bonus Roll window and the group loot roll container cannot be made
+--  drag-movable: their top-level frames take no mouse input, and Blizzard
+--  re-anchors them on every show through the GroupLootContainer docking and
+--  the UIParent managed-frame-position system. Instead each gets a mover in
+--  Unlock Mode. The mover drags a proxy frame we own; the saved position is
+--  pushed onto the Blizzard window with plain ClearAllPoints/SetPoint (both
+--  windows are unprotected) and re-applied whenever Blizzard repositions
+--  them. ignoreFramePositionManager is the sanctioned per-frame opt-out from
+--  the managed position system. Protected or forbidden frames are skipped
+--  entirely, and no mouse state is ever touched.
+-------------------------------------------------------------------------------
+local LOOT_WINDOWS = {
+    { name = "BonusRollFrame",     key = "EUI_BonusRoll", label = "Bonus Roll", order = 640, defW = 330, defH = 120, defY = 240 },
+    { name = "GroupLootContainer", key = "EUI_GroupLoot", label = "Group Loot", order = 641, defW = 300, defH = 80,  defY = 340 },
+}
+
+local lootProxies = {}
+local lootHooked  = {}
+
+local function LootEnabled()
+    return EllesmereUIDB and EllesmereUIDB.shifterLootUnlock or false
+end
+
+local function GetLootPos(name)
+    local db = EllesmereUIDB
+    return db and db.shifterLootPositions and db.shifterLootPositions[name]
+end
+
+local function SaveLootPos(name, point, relPoint, x, y)
+    if not EllesmereUIDB then EllesmereUIDB = {} end
+    if not EllesmereUIDB.shifterLootPositions then
+        EllesmereUIDB.shifterLootPositions = {}
+    end
+    EllesmereUIDB.shifterLootPositions[name] = {
+        point = point, relPoint = relPoint, x = x, y = y,
+    }
+end
+
+-- Returns the live Blizzard frame only when it is safe to reposition.
+local function LootFrame(name)
+    local frame = _G[name]
+    if not frame or not frame.HookScript then return nil end
+    if frame.IsForbidden and frame:IsForbidden() then return nil end
+    if frame:IsProtected() then return nil end
+    return frame
+end
+
+local function ApplyLootPos(name)
+    if not LootEnabled() then return end
+    local pos = GetLootPos(name)
+    if not pos then return end
+    local frame = LootFrame(name)
+    if not frame then return end
+    local ffd = GetFFD(frame)
+    if ffd._shLootIgnoreSP then return end
+    ffd._shLootIgnoreSP = true
+    frame.ignoreFramePositionManager = true
+    frame:ClearAllPoints()
+    frame:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+    ffd._shLootIgnoreSP = false
+end
+
+local function HookLootWindow(name)
+    if lootHooked[name] then return end
+    local frame = LootFrame(name)
+    if not frame then return end
+    lootHooked[name] = true
+    hooksecurefunc(frame, "SetPoint", function()
+        if GetFFD(frame)._shLootIgnoreSP then return end
+        ApplyLootPos(name)
+    end)
+    frame:HookScript("OnShow", function()
+        ApplyLootPos(name)
+    end)
+end
+
+-- Hidden rect-only ghost the unlock mover attaches to; never visible.
+local function EnsureLootProxy(info)
+    local proxy = lootProxies[info.name]
+    if proxy then return proxy end
+    proxy = CreateFrame("Frame", nil, UIParent)
+    proxy:Hide()
+    proxy:SetSize(info.defW, info.defH)
+    local pos = GetLootPos(info.name)
+    if pos then
+        proxy:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+    else
+        proxy:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, info.defY)
+    end
+    lootProxies[info.name] = proxy
+    return proxy
+end
+
+local function InitLootWindows()
+    for i = 1, #LOOT_WINDOWS do
+        local name = LOOT_WINDOWS[i].name
+        HookLootWindow(name)
+        local frame = LootFrame(name)
+        if frame and frame:IsVisible() then
+            ApplyLootPos(name)
+        end
+    end
+end
+
+local function RegisterLootUnlockElements()
+    local MK = EllesmereUI.MakeUnlockElement
+    if not MK or not EllesmereUI.RegisterUnlockElements then return end
+    local elements = {}
+    for i = 1, #LOOT_WINDOWS do
+        local info = LOOT_WINDOWS[i]
+        elements[#elements + 1] = MK({
+            key   = info.key,
+            label = info.label,
+            group = "Quality of Life",
+            order = info.order,
+            noResize          = true,
+            noAnchorTarget    = true,
+            noAnchorTo        = true,
+            noSizeMatchTarget = true,
+            isHidden = function()
+                if not LootEnabled() or not _G[info.name] then return true end
+                -- "Hide Unlock Mode Overlays": the movers stay out of unlock
+                -- mode but saved positions keep applying (the SetPoint/OnShow
+                -- enforcement never depends on the movers existing).
+                return EllesmereUIDB and EllesmereUIDB.shifterLootHideOverlays or false
+            end,
+            getFrame = function()
+                return EnsureLootProxy(info)
+            end,
+            getSize = function()
+                local frame = _G[info.name]
+                local w = frame and frame.GetWidth and frame:GetWidth() or 0
+                local h = frame and frame.GetHeight and frame:GetHeight() or 0
+                if not w or w < 20 then w = info.defW end
+                if not h or h < 20 then h = info.defH end
+                return w, h
+            end,
+            savePos = function(_, point, relPoint, x, y)
+                SaveLootPos(info.name, point, relPoint, x, y)
+                local proxy = EnsureLootProxy(info)
+                proxy:ClearAllPoints()
+                proxy:SetPoint(point, UIParent, relPoint, x, y)
+                HookLootWindow(info.name)
+                ApplyLootPos(info.name)
+            end,
+            loadPos = function()
+                local pos = GetLootPos(info.name)
+                if pos then
+                    return { point = pos.point, relPoint = pos.relPoint, x = pos.x, y = pos.y }
+                end
+                return nil
+            end,
+            clearPos = function()
+                if EllesmereUIDB and EllesmereUIDB.shifterLootPositions then
+                    EllesmereUIDB.shifterLootPositions[info.name] = nil
+                end
+                local proxy = lootProxies[info.name]
+                if proxy then
+                    proxy:ClearAllPoints()
+                    proxy:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, info.defY)
+                end
+                local frame = LootFrame(info.name)
+                if frame then frame.ignoreFramePositionManager = nil end
+            end,
+            applyPos = function()
+                local pos = GetLootPos(info.name)
+                local proxy = EnsureLootProxy(info)
+                proxy:ClearAllPoints()
+                if pos then
+                    proxy:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+                else
+                    proxy:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, info.defY)
+                end
+                ApplyLootPos(info.name)
+            end,
+        })
+    end
+    EllesmereUI:RegisterUnlockElements(elements, "EllesmereUIQoL")
 end
 
 -------------------------------------------------------------------------------
@@ -344,6 +756,8 @@ local function InitShifter()
     if next(pendingAddons) then
         eventFrame:RegisterEvent("ADDON_LOADED")
     end
+    -- Scroll-wheel scaling: arm the capture overlay on modifier presses.
+    eventFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
 end
 
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -351,6 +765,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_LOGIN" then
         self:UnregisterEvent("PLAYER_LOGIN")
         if IsEnabled() then InitShifter() end
+        RegisterLootUnlockElements()
+        if LootEnabled() then InitLootWindows() end
     elseif event == "ADDON_LOADED" then
         local frames = pendingAddons[arg1]
         if frames then
@@ -360,6 +776,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                 self:UnregisterEvent("ADDON_LOADED")
             end
         end
+    elseif event == "MODIFIER_STATE_CHANGED" then
+        UpdateWheelOverlay()
     elseif event == "PLAYER_REGEN_ENABLED" then
         self:UnregisterEvent("PLAYER_REGEN_ENABLED")
         for i = 1, #deferredMovable do
@@ -376,10 +794,28 @@ function EllesmereUI._InitShifter()
     InitShifter()
 end
 
--- Exposed for the options reset button
+-- Exposed for the options reset button (positions AND zoom)
 function EllesmereUI._ResetShifterPositions()
     if EllesmereUIDB then
         EllesmereUIDB.shifterPositions = nil
+        EllesmereUIDB.shifterLootPositions = nil
+        EllesmereUIDB.shifterScales = nil
     end
     wipe(tempPos)
+    wipe(tempScale)
+end
+
+-- Exposed for the options toggle (mid-session enable without /reload)
+function EllesmereUI._InitShifterLootWindows()
+    InitLootWindows()
+end
+
+-- Exposed for the options toggle. Releases the loot windows back to
+-- Blizzard's position management; existing hooks go dormant via the
+-- LootEnabled gate.
+function EllesmereUI._DisableShifterLootWindows()
+    for i = 1, #LOOT_WINDOWS do
+        local frame = LootFrame(LOOT_WINDOWS[i].name)
+        if frame then frame.ignoreFramePositionManager = nil end
+    end
 end

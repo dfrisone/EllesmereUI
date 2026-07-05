@@ -990,6 +990,51 @@ function EllesmereUI.ApplyProfileData(profileData)
                     and profile.boss == nil and type(profile.miniboss) == "table" then
                     profile.boss = DeepCopy(profile.miniboss)
                 end
+                -- Pre-dropdown imports carry the legacy coordsBelow /
+                -- clockInside / zoneInside toggles but none of the new mode
+                -- keys. The minimap migrations are SKIPPED for imported
+                -- profiles (inherited migration flags), so forward-copy here
+                -- BEFORE DeepMergeDefaults fills the new defaults and masks
+                -- the legacy keys.
+                if entry.folder == "EllesmereUIMinimap"
+                    and type(profile.minimap) == "table" then
+                    local mm = profile.minimap
+                    if mm.coordsMode == nil then
+                        if mm.coordsBelow then
+                            mm.coordsMode = "always"
+                            mm.coordsPosition = "belowMap"
+                        else
+                            mm.coordsMode = "hover"
+                            mm.coordsPosition = "topLeft"
+                            -- The X/Y nudge only applied in below-map mode; clear
+                            -- leftovers so they don't shift the hover coordinates.
+                            mm.coordsBelowOffsetX = nil
+                            mm.coordsBelowOffsetY = nil
+                        end
+                    end
+                    -- Only pre-dropdown exports (no mode key) are mapped: a
+                    -- post-update export can carry a stale showClock/
+                    -- hideZoneText alongside a deliberately-set mode, which
+                    -- must win. Hidden via the removed Show Blizzard Elements
+                    -- Zone/Clock checkboxes maps to "none".
+                    if mm.clockMode == nil then
+                        if mm.showClock == false then
+                            mm.clockMode = "none"
+                        else
+                            mm.clockMode = (mm.clockInside == false) and "edge" or "inside"
+                        end
+                    end
+                    if mm.locationMode == nil then
+                        if mm.hideZoneText == true then
+                            mm.locationMode = "none"
+                        else
+                            mm.locationMode = mm.zoneInside and "inside" or "edge"
+                        end
+                    end
+                    if mm.omniumFolioMode == nil then
+                        mm.omniumFolioMode = (mm.showOmniumFolio == false) and "never" or "always"
+                    end
+                end
                 if db._profileDefaults then
                     EllesmereUI.Lite.DeepMergeDefaults(profile, db._profileDefaults)
                 end
@@ -1956,12 +2001,23 @@ function EllesmereUI.ImportProfile(importStr, profileName)
             local bucket = sa.profiles[profileName] or {}
             sa.profiles[profileName] = bucket
             bucket.specProfiles = DeepCopy(payload.data.cdmSpells)
+            local importedBarsCfg = payload.data.addons
+                and payload.data.addons["EllesmereUICooldownManager"]
+                and payload.data.addons["EllesmereUICooldownManager"].cdmBars
+                and payload.data.addons["EllesmereUICooldownManager"].cdmBars.bars
             for _, specProf in pairs(bucket.specProfiles) do
                 if type(specProf) == "table" then
                     if type(specProf.barSpells) == "table" then specProf.barSpells.__ghost_cd = nil end
                     specProf._barFilterModelV6 = nil    -- re-run the migration on activate
                     specProf._importGhostMode  = true   -- ghost tracked-but-unplaced spells
                     specProf._dormantMerged    = true   -- imported data is already current-model
+                    -- Old-format strings (pre tiered-settings) carry per-bar
+                    -- spellSettings; transform NOW so the live session reads the
+                    -- new shape (the registered migration also covers it on the
+                    -- next reload -- both idempotent, flag lives in the bucket).
+                    if EllesmereUI.MigrateCdmSpellSettingsShape then
+                        EllesmereUI.MigrateCdmSpellSettingsShape(specProf, importedBarsCfg)
+                    end
                 end
             end
         end

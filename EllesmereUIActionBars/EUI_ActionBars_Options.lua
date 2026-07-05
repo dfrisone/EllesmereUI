@@ -99,9 +99,9 @@ initFrame:SetScript("OnEvent", function(self)
     local barLabels = {}
     local barOrder  = {}
     for _, key in ipairs(BAR_DROPDOWN_ORDER) do
-        -- Skip MicroBar/BagBar and XPBar/RepBar — these live on the dedicated
-        -- "Menu, Bags & XP Bars" tab, not the Bar Display bar selector.
-        if key ~= "MicroBar" and key ~= "BagBar" and key ~= "XPBar" and key ~= "RepBar" then
+        -- Skip MicroBar/BagBar and XPBar/RepBar/FavorBar — these live on the
+        -- dedicated "Menu, Bags & XP Bars" tab, not the Bar Display bar selector.
+        if key ~= "MicroBar" and key ~= "BagBar" and key ~= "XPBar" and key ~= "RepBar" and key ~= "FavorBar" then
             barLabels[key] = BAR_DROPDOWN_VALUES[key]
             barOrder[#barOrder + 1] = key
         end
@@ -1106,6 +1106,7 @@ initFrame:SetScript("OnEvent", function(self)
         BagBar   = "Bags",
         XPBar    = "XP",
         RepBar   = "Rep",
+        FavorBar = "Favor",
     }
 
     -- Keep the legacy boolean flags and the newer visibility-mode dropdown in
@@ -1241,9 +1242,14 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   EAB.db.profile.useBlizzardDataBars = v
                   if v then
-                      for _, k in ipairs({"XPBar", "RepBar"}) do
+                      for _, k in ipairs({"XPBar", "RepBar", "FavorBar"}) do
                           local frame = ns.dataBarFrames and ns.dataBarFrames[k]
-                          if frame then frame:Hide() end
+                          if frame then
+                              frame:Hide()
+                              -- Runs the hidden path (Favor bar disarms its
+                              -- events immediately).
+                              if frame._updateFunc then frame._updateFunc() end
+                          end
                       end
                       if StatusTrackingBarManager then
                           StatusTrackingBarManager:Show()
@@ -1251,7 +1257,7 @@ initFrame:SetScript("OnEvent", function(self)
                       end
                   else
                       local anyMissing = false
-                      for _, k in ipairs({"XPBar", "RepBar"}) do
+                      for _, k in ipairs({"XPBar", "RepBar", "FavorBar"}) do
                           local frame = ns.dataBarFrames and ns.dataBarFrames[k]
                           if frame then
                               local s = EAB.db.profile.bars[k]
@@ -1280,7 +1286,7 @@ initFrame:SetScript("OnEvent", function(self)
                   return EAB.db.profile.bars["XPBar"] and EAB.db.profile.bars["XPBar"].orientation or "HORIZONTAL"
               end,
               setValue=function(v)
-                  for _, k in ipairs({"XPBar", "RepBar"}) do
+                  for _, k in ipairs({"XPBar", "RepBar", "FavorBar"}) do
                       if EAB.db.profile.bars[k] then
                           EAB.db.profile.bars[k].orientation = v
                           if ns.ApplyDataBarLayout then ns.ApplyDataBarLayout(k) end
@@ -1293,6 +1299,39 @@ initFrame:SetScript("OnEvent", function(self)
         -------------------------------------------------------------------
         --  EXPERIENCE BAR / REPUTATION BAR
         -------------------------------------------------------------------
+        -- Shared bar-texture dropdown tables (built-ins + SharedMedia, with
+        -- menu preview backgrounds -- same treatment as the nameplate Bar
+        -- Texture dropdown).
+        local dbTexValues, dbTexOrder = {}, {}
+        do
+            local names = ns.dataBarTextureNames or {}
+            local lookup = ns.dataBarTextures or {}
+            for _, key in ipairs(ns.dataBarTextureOrder or {}) do
+                if key ~= "---" then dbTexValues[key] = names[key] or key end
+                dbTexOrder[#dbTexOrder + 1] = key
+            end
+            dbTexValues._menuOpts = {
+                itemHeight = 28,
+                background = function(key)
+                    if not key or key == "---" or key == "none" then return nil end
+                    if EllesmereUI.ResolveTexturePath then
+                        return EllesmereUI.ResolveTexturePath(lookup, key, nil)
+                    end
+                    return lookup[key]
+                end,
+            }
+        end
+        -- Representative colors for the "Reactive (Default)" swatch.
+        local REACTIVE_PREVIEW = {
+            XPBar    = { 0.60, 0.40, 0.85 },
+            RepBar   = { 0.30, 0.70, 0.25 },
+            FavorBar = { 0.85, 0.64, 0.22 },
+        }
+        local function RefreshDataBar(bk)
+            local f = ns.dataBarFrames and ns.dataBarFrames[bk]
+            if f and f._updateFunc then f._updateFunc() end
+        end
+
         local function BuildDataBarSection(barKey, sectionTitle, visLabel)
             _, h = W:SectionHeader(parent, sectionTitle, y);  y = y - h
             BuildVisRow(barKey, visLabel, _blizzDis, BLIZZ_DIS_TIP)
@@ -1314,11 +1353,78 @@ initFrame:SetScript("OnEvent", function(self)
                       EAB.db.profile.bars[barKey].height = v
                       if ns.ApplyDataBarLayout then ns.ApplyDataBarLayout(barKey) end
                   end });  y = y - h
+
+            -- Color mode (custom | accent | reactive) + bar texture.
+            local rp = REACTIVE_PREVIEW[barKey] or { 1, 1, 1 }
+            local function S() return EAB.db.profile.bars[barKey] end
+            _, h = W:DualRow(parent, y,
+                { type="multiSwatch", text="Color",
+                  swatches = {
+                      { tooltip = "Custom Color",
+                        getValue = function()
+                            local c = S().customColor
+                            if c then return c.r or 1, c.g or 1, c.b or 1 end
+                            return 1, 1, 1
+                        end,
+                        setValue = function(r, g, b)
+                            S().customColor = { r = r, g = g, b = b }
+                            S().colorMode = "custom"
+                            RefreshDataBar(barKey)
+                        end,
+                        onClick = function(self)
+                            if S().colorMode ~= "custom" then
+                                S().colorMode = "custom"
+                                RefreshDataBar(barKey)
+                                EllesmereUI:RefreshPage()
+                                return
+                            end
+                            if self._eabOrigClick then self._eabOrigClick(self) end
+                        end,
+                        refreshAlpha = function()
+                            return S().colorMode == "custom" and 1 or 0.3
+                        end },
+                      { tooltip = "Accent Color",
+                        getValue = function()
+                            local EG = EllesmereUI.ELLESMERE_GREEN
+                            if EG then return EG.r or 0.047, EG.g or 0.824, EG.b or 0.616 end
+                            return 0.047, 0.824, 0.616
+                        end,
+                        setValue = function() end,
+                        onClick = function()
+                            S().colorMode = "accent"
+                            RefreshDataBar(barKey)
+                            EllesmereUI:RefreshPage()
+                        end,
+                        refreshAlpha = function()
+                            return S().colorMode == "accent" and 1 or 0.3
+                        end },
+                      { tooltip = "Reactive (Default)",
+                        getValue = function() return rp[1], rp[2], rp[3] end,
+                        setValue = function() end,
+                        onClick = function()
+                            S().colorMode = nil
+                            RefreshDataBar(barKey)
+                            EllesmereUI:RefreshPage()
+                        end,
+                        refreshAlpha = function()
+                            local m = S().colorMode
+                            return (m ~= "custom" and m ~= "accent") and 1 or 0.3
+                        end },
+                  } },
+                { type="dropdown", text="Bar Texture", values=dbTexValues, order=dbTexOrder,
+                  disabled=_blizzDis, disabledTooltip=BLIZZ_DIS_TIP, rawTooltip=true,
+                  getValue=function() return S().barTexture or "none" end,
+                  setValue=function(v)
+                      S().barTexture = v
+                      if ns.ApplyDataBarLayout then ns.ApplyDataBarLayout(barKey) end
+                  end });  y = y - h
         end
 
         BuildDataBarSection("XPBar",  "EXPERIENCE BAR", "XP Bar Visibility")
         _, h = W:Spacer(parent, y, 12);  y = y - h
         BuildDataBarSection("RepBar", "REPUTATION BAR", "Rep Bar Visibility")
+        _, h = W:Spacer(parent, y, 12);  y = y - h
+        BuildDataBarSection("FavorBar", "HOUSE FAVOR BAR", "Favor Bar Visibility")
 
         return math.abs(y)
     end
@@ -3181,11 +3287,11 @@ initFrame:SetScript("OnEvent", function(self)
                         elementLabels = SHORT_LABELS,
                         getCurrentKey = function() return SelectedKey() end,
                         onApply       = function(checkedKeys)
-                            local v = SB().clickThrough or false
+                            local v = SB().showRankIcon or false
                             for _, key in ipairs(checkedKeys) do
-                                EAB.db.profile.bars[key].clickThrough = v
-                                EAB:ApplyClickThroughForBar(key)
+                                EAB.db.profile.bars[key].showRankIcon = v
                             end
+                            if _G._EAB_Apply then _G._EAB_Apply() end
                             EllesmereUI:RefreshPage()
                         end,
                     },
@@ -4167,11 +4273,6 @@ initFrame:SetScript("OnEvent", function(self)
                     -- StanceBar share the same visOnly/dataBar flags, so the
                     -- old conditional missed transitions between them.
                     EllesmereUI:RefreshPage(true)
-                    -- MicroBar / BagBar have very little content; reset scroll
-                    -- so the page isn't stuck at a stale offset from a taller bar.
-                    if nowVisOnly then
-                        EllesmereUI.SmoothScrollTo(0)
-                    end
                     -- Show/hide edit overlay for the newly selected bar
                     ShowEditOverlay(v)
                 end,

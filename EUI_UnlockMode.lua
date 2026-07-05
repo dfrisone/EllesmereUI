@@ -269,6 +269,36 @@ do
     end)
 end
 
+-- Synchronous in-window position pass at PLAYER_LOGIN. On a combat reload,
+-- lockdown is NOT yet re-engaged during the PLAYER_LOGIN dispatch itself,
+-- but C_Timer callbacks scheduled there do not run until the loading screen
+-- ends -- by which time lockdown is back on (confirmed via anchor trace).
+-- So the pass must be a synchronous event handler, never a timer, and it
+-- must live HERE in the non-deferred header: the deferred body below only
+-- executes on EnsureLoaded(), which happens during this same PLAYER_LOGIN
+-- dispatch (CDM) or later (fallback above) -- a handler registered inside
+-- it misses the in-flight event entirely.
+--
+-- This frame is created after EllesmereUI_Lite's lifecycle frame, so the
+-- handler fires after every module's OnEnable has run synchronously: action
+-- bars are built and positioned, unit frames are spawned, and unlock
+-- elements are registered. Protected children (oUF frames) can therefore be
+-- anchored before lockdown re-engages. Elements that build later (CDM at
+-- PEW) fall through to the retry loop / regen park. EnsureLoaded here is
+-- work the session pays shortly after PEW anyway (CDM setup or the fallback
+-- above) -- doing it during the loading screen hides it entirely.
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        EllesmereUI:EnsureLoaded()
+        if EllesmereUI._applySavedPositions then
+            EllesmereUI._applySavedPositions()
+        end
+    end)
+end
+
 -- DEFERRED: heavy body (4900+ lines) runs on first EnsureLoaded() call.
 EllesmereUI._deferredInits[#EllesmereUI._deferredInits + 1] = function()
 local floor = math.floor
@@ -1170,6 +1200,69 @@ local function ScheduleAnchorBatch()
     end)
 end
 
+-------------------------------------------------------------------------------
+--  One-time follow-baseline migration ("bless the pin")
+--  Anchored grow-direction bars saved before the follow-baseline capture
+--  shipped have a savedEdge but no tgt* target baseline, so the follow
+--  delta stays 0 and they cannot track a target that resizes. The baseline
+--  cannot be reconstructed from ai.offsetX/Y -- those drift from layout
+--  maintenance and are explicitly non-authoritative for grow bars (that is
+--  WHY savedEdge is the authority; a reconstruction attempt moved a user's
+--  bar by the accumulated ~10px drift). Instead, once per bar (presence of
+--  tgt* is the flag), at a quiescent settle: pair the UNTOUCHED savedEdge
+--  with the target's live settled geometry. The bar does not move -- the
+--  delta is 0 at the blessing instant by construction -- and every future
+--  resize/login follows from the blessed pair. If the target's size at the
+--  blessing login differs from the original save, the bar keeps exactly
+--  the position it visibly has today (never worse than the status quo).
+--  Skipped in combat / unlock mode (retries at the next settle).
+-------------------------------------------------------------------------------
+do
+    local function MigrateOne(childKey, info)
+        local savedEdge
+        if childKey:sub(1, 4) == "CDM_" then
+            local t = EllesmereUI._cdmBarPositions
+            savedEdge = t and t[childKey:sub(5)]
+        elseif childKey == "StanceBar" then
+            local t = EllesmereUI._abBarPositions
+            savedEdge = t and t[childKey]
+        end
+        if not savedEdge then return end
+        -- Presence of a baseline is the migrated flag -- never touch again.
+        if savedEdge.tgtx ~= nil or savedEdge.tgty ~= nil then return end
+        local growDir = GetBarGrowDirActual(childKey)
+        if not growDir or growDir == "CENTER" then return end
+        local targetBar = GetBarFrame(info.target)
+        if not targetBar or not targetBar:GetLeft() then return end
+        -- UIParent-space target geometry, computed identically to
+        -- ApplyAnchorPosition's tL/tR/tT/tB so the stored baseline is
+        -- directly comparable to the runtime values.
+        local uiS = UIParent:GetEffectiveScale()
+        local tS = targetBar:GetEffectiveScale()
+        local tL = (targetBar:GetLeft() or 0) * tS / uiS
+        local tR = (targetBar:GetRight() or 0) * tS / uiS
+        local tT = (targetBar:GetTop() or 0) * tS / uiS
+        local tB = (targetBar:GetBottom() or 0) * tS / uiS
+        savedEdge.tgtx = (tL + tR) / 2
+        savedEdge.tgty = (tT + tB) / 2
+        savedEdge.tgtL = tL
+        savedEdge.tgtR = tR
+        savedEdge.tgtT = tT
+        savedEdge.tgtB = tB
+    end
+
+    function EllesmereUI._MigrateAnchorFollowBaselines()
+        if isUnlocked or InCombatLockdown() then return end
+        local adb = GetAnchorDB()
+        if not adb then return end
+        for childKey, info in pairs(adb) do
+            if info.target and (childKey:sub(1, 4) == "CDM_" or childKey == "StanceBar") then
+                pcall(MigrateOne, childKey, info)
+            end
+        end
+    end
+end
+
 -- Settle re-apply debounce: anchored CDM bars and their anchor targets resize
 -- several times on login (icon population + the 1/3/6s refresh ladder + trinket
 -- retries) with no single reliable "done" signal. Rather than guess a fixed
@@ -1195,6 +1288,12 @@ function EllesmereUI.ScheduleSettleReapply()
         -- follow-aware pass computes a ~0 delta on a same-spec login and the
         -- pin->follow handoff produces no visible jump.
         EllesmereUI._anchorFollowReady = true
+        -- One-shot follow-baseline migration for anchored grow bars saved
+        -- before baseline capture shipped. No-op once every candidate has
+        -- its tgt* baseline; skips (and retries next settle) in combat.
+        if EllesmereUI._MigrateAnchorFollowBaselines then
+            pcall(EllesmereUI._MigrateAnchorFollowBaselines)
+        end
         if EllesmereUI.ReapplyAllUnlockAnchorsForced then
             EllesmereUI._settleReapplyInProgress = true
             pcall(EllesmereUI.ReapplyAllUnlockAnchorsForced)
@@ -1688,6 +1787,81 @@ function RejectH.IsActionBar(barKey)
     return false
 end
 
+-------------------------------------------------------------------------------
+--  Combat-parked positioning
+--  Any anchor application (or guarded bar reposition) skipped because of
+--  combat lockdown is recorded here and reapplied once on
+--  PLAYER_REGEN_ENABLED. Without this, skips in the cascade paths
+--  (PropagateAnchorChain, ScheduleAnchorBatch, retry loops) are silent and
+--  the element stays misplaced until an unrelated full reapply happens.
+-------------------------------------------------------------------------------
+-- Namespace-scoped (not file-local): this file is at the Lua 5.1 200-local
+-- cap, so the park table lives on EllesmereUI and the helpers in a do-block.
+do
+    local AnchorPark = {}
+    EllesmereUI._AnchorPark = AnchorPark
+
+    local function AnchorPark_EnsureFrame()
+        local f = AnchorPark.frame
+        if not f then
+            f = CreateFrame("Frame")
+            AnchorPark.frame = f
+            f:SetScript("OnEvent", function()
+                f:UnregisterAllEvents()
+                local anchorKeys = AnchorPark.keys
+                local posKeys = AnchorPark.posKeys
+                AnchorPark.keys = nil
+                AnchorPark.posKeys = nil
+                -- Bar positions first: anchored children read target bounds,
+                -- so targets must be placed before the anchor pass.
+                if posKeys then
+                    local db = GetPositionDB()
+                    for key in pairs(posKeys) do
+                        local pos = db and db[key]
+                        if pos and pos.point then
+                            if not ApplyCenterPosition(key, pos) then
+                                local bar = GetBarFrame(key)
+                                if bar then
+                                    pcall(function()
+                                        bar:ClearAllPoints()
+                                        bar:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+                if anchorKeys then
+                    -- Full dependency-sorted pass instead of per-key applies:
+                    -- parked chains (child parked alongside its parent) must
+                    -- apply parents first, and the pass is idempotent for
+                    -- anchors that were never parked.
+                    if EllesmereUI.ReapplyAllUnlockAnchors then
+                        EllesmereUI.ReapplyAllUnlockAnchors()
+                    end
+                end
+            end)
+        end
+        f:RegisterEvent("PLAYER_REGEN_ENABLED")
+    end
+
+    -- Park an anchored child whose apply was blocked by combat lockdown.
+    function AnchorPark.Park(childKey)
+        local keys = AnchorPark.keys
+        if not keys then keys = {}; AnchorPark.keys = keys end
+        keys[childKey] = true
+        AnchorPark_EnsureFrame()
+    end
+
+    -- Park a bar whose saved-position reapply was blocked by combat lockdown.
+    function AnchorPark.ParkBarPos(barKey)
+        local keys = AnchorPark.posKeys
+        if not keys then keys = {}; AnchorPark.posKeys = keys end
+        keys[barKey] = true
+        AnchorPark_EnsureFrame()
+    end
+end
+
 -- Apply an anchor relationship: position the child element relative to the target
 -- side: "LEFT", "RIGHT", "TOP", "BOTTOM" -- child is placed on that side of the target
 -- offsetX/offsetY: if present, position child relative to the anchor edge
@@ -1698,7 +1872,11 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
     -- Skip protected child frames during combat (action bars). Reading
     -- target bounds is safe even if the target is protected (e.g. oUF
     -- unit frames) -- we only call SetPoint on the child, not the target.
-    if InCombatLockdown() and childBar:IsProtected() then return end
+    -- Park the key so the anchor is reapplied when combat drops.
+    if InCombatLockdown() and childBar:IsProtected() then
+        EllesmereUI._AnchorPark.Park(childKey)
+        return
+    end
     -- Addon owns this element's position (e.g. a grouped Tracking Bar member
     -- chained to its group anchor) -- never generically reposition it, so its
     -- relative SetPoint to the anchor is never clobbered (in or out of combat).
@@ -1913,12 +2091,55 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
                 -- unlock mode keep the pure absolute pin (delta 0).
                 local uw, uh = UIParent:GetSize()
                 local dTX, dTY = 0, 0
-                if isCDM and childKey ~= "StanceBar" and not shiftActive
+                -- StanceBar joins the follow-delta path: its "always pin, never
+                -- follow" design assumed a fixed anchor target (player frame),
+                -- but it can be anchored to a resizing CDM/AB bar. Its baseline
+                -- (savedEdge.tgt*) is captured only at unlock Save (EAB savePos);
+                -- until a re-save the fields are nil and every delta below stays
+                -- 0 -- the exact pin behavior it always had.
+                if (isCDM or childKey == "StanceBar") and not shiftActive
                    and not isUnlocked and EllesmereUI._anchorFollowReady and savedEdge then
                     -- Corner-follow is scoped to CDM bars anchored to ANOTHER CDM
                     -- bar (the only target that resizes by icon count). Any other
                     -- target keeps the original center-delta path untouched.
                     local targetIsCDM = targetKey and targetKey:sub(1, 4) == "CDM_"
+                    -- Resolve the follow baseline. The saved baseline (tgt*,
+                    -- captured by savePos at unlock Save & Exit) wins. When it is
+                    -- absent (anchor saved before baseline capture shipped), fall
+                    -- back to a SESSION baseline captured during a settle pass:
+                    -- the chain is quiescent and this child is provably at its
+                    -- pin, so pairing (savedEdge, live target geometry) is exact
+                    -- -- the delta is 0 at capture by construction. Runtime-only,
+                    -- never persisted; auto-invalidated when the saved edge or
+                    -- target changes (unlock re-save, profile/spec swap) -> pure
+                    -- pin until the next settle recaptures. This gives
+                    -- intra-session follow with no re-save required, while
+                    -- cross-session behavior without a saved baseline stays
+                    -- exactly as before (pin to the saved edge at login).
+                    local bTgtx, bTgty = savedEdge.tgtx, savedEdge.tgty
+                    local bTgtL, bTgtR = savedEdge.tgtL, savedEdge.tgtR
+                    local bTgtT, bTgtB = savedEdge.tgtT, savedEdge.tgtB
+                    if bTgtx == nil and bTgty == nil then
+                        local rt = EllesmereUI._anchorRtBaseline
+                        local b = rt and rt[childKey]
+                        if b and (b.sx ~= savedEdge.x or b.sy ~= savedEdge.y
+                                  or b.tgt ~= targetKey) then
+                            rt[childKey] = nil
+                            b = nil
+                        end
+                        if not b and EllesmereUI._settleReapplyInProgress then
+                            b = { sx = savedEdge.x, sy = savedEdge.y, tgt = targetKey,
+                                  tgtx = tCX, tgty = tCY,
+                                  tgtL = tL, tgtR = tR, tgtT = tT, tgtB = tB }
+                            if not rt then rt = {}; EllesmereUI._anchorRtBaseline = rt end
+                            rt[childKey] = b
+                        end
+                        if b then
+                            bTgtx, bTgty = b.tgtx, b.tgty
+                            bTgtL, bTgtR = b.tgtL, b.tgtR
+                            bTgtT, bTgtB = b.tgtT, b.tgtB
+                        end
+                    end
                     if ai and ai.offsetX ~= nil and savedEdge.x then
                         local childEdgeX = (uw / 2 + savedEdge.x) * ratio
                         if side == "RIGHT" and growDir == "RIGHT" then
@@ -1927,7 +2148,7 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
                             dTX = tL - (childEdgeX - ai.offsetX)
                         elseif targetIsCDM and (side == "TOP" or side == "BOTTOM")
                                and (growDir == "RIGHT" or growDir == "LEFT")
-                               and savedEdge.tgtL and savedEdge.tgtR and savedEdge.tgtx then
+                               and bTgtL and bTgtR and bTgtx then
                             -- Corner case: anchored to the target's TOP/BOTTOM edge
                             -- while growing horizontally. Hold the bar against the
                             -- target's NEAR horizontal edge (chosen by which side of
@@ -1936,16 +2157,26 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
                             -- for a center-anchored resize. Idempotent: reads only
                             -- saved data + the target's live edge, never the child's
                             -- own position, so it cannot drift.
-                            if childEdgeX < savedEdge.tgtx then
-                                dTX = tL - savedEdge.tgtL
+                            if childEdgeX < bTgtx then
+                                dTX = tL - bTgtL
                             else
-                                dTX = tR - savedEdge.tgtR
+                                dTX = tR - bTgtR
                             end
-                        elseif savedEdge.tgtx then
-                            dTX = tCX - savedEdge.tgtx
+                        elseif childKey == "StanceBar" and side == "LEFT" and bTgtL then
+                            -- Opposite-grow side anchor (snapped to the target's
+                            -- LEFT while growing RIGHT): the near-edge recovery
+                            -- above can't apply (the saved growth edge is the FAR
+                            -- edge), so track the target edge the bar is snapped
+                            -- to. Reads only saved data + the target's live edge,
+                            -- never the child's own position -- cannot drift.
+                            dTX = tL - bTgtL
+                        elseif childKey == "StanceBar" and side == "RIGHT" and bTgtR then
+                            dTX = tR - bTgtR
+                        elseif bTgtx then
+                            dTX = tCX - bTgtx
                         end
-                    elseif savedEdge.tgtx then
-                        dTX = tCX - savedEdge.tgtx
+                    elseif bTgtx then
+                        dTX = tCX - bTgtx
                     end
                     if ai and ai.offsetY ~= nil and savedEdge.y then
                         local childEdgeY = (uh / 2 + savedEdge.y) * ratio
@@ -1955,21 +2186,26 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
                             dTY = tB - (childEdgeY - ai.offsetY)
                         elseif targetIsCDM and (side == "LEFT" or side == "RIGHT")
                                and (growDir == "UP" or growDir == "DOWN")
-                               and savedEdge.tgtT and savedEdge.tgtB and savedEdge.tgty then
+                               and bTgtT and bTgtB and bTgty then
                             -- Corner case: anchored to the target's LEFT/RIGHT edge
                             -- while growing vertically. Hold the bar against the
                             -- target's NEAR vertical edge so it keeps its corner when
                             -- the target's HEIGHT changes. Same idempotent guarantee.
-                            if childEdgeY < savedEdge.tgty then
-                                dTY = tB - savedEdge.tgtB
+                            if childEdgeY < bTgty then
+                                dTY = tB - bTgtB
                             else
-                                dTY = tT - savedEdge.tgtT
+                                dTY = tT - bTgtT
                             end
-                        elseif savedEdge.tgty then
-                            dTY = tCY - savedEdge.tgty
+                        elseif childKey == "StanceBar" and side == "TOP" and bTgtT then
+                            -- Opposite-grow side anchor, vertical symmetric case.
+                            dTY = tT - bTgtT
+                        elseif childKey == "StanceBar" and side == "BOTTOM" and bTgtB then
+                            dTY = tB - bTgtB
+                        elseif bTgty then
+                            dTY = tCY - bTgty
                         end
-                    elseif savedEdge.tgty then
-                        dTY = tCY - savedEdge.tgty
+                    elseif bTgty then
+                        dTY = tCY - bTgty
                     end
                 end
                 if growDir == "RIGHT" then
@@ -2044,17 +2280,37 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
                 bEdgeX = centerX * acRatio
                 bEdgeY = (centerY - (cH / 2)) * acRatio
             end
-            -- Snap edge to physical pixel grid
+            -- Snap to the physical pixel grid. The GROWTH-axis coordinate is a
+            -- frame EDGE -> whole-pixel snap. The PERPENDICULAR coordinate is
+            -- the frame's CENTER on that axis -> parity-aware snap
+            -- (SnapCenterForDim): an odd-pixel child dimension needs its
+            -- center on a half pixel so both edges land on whole pixels.
+            -- Whole-pixel snapping it shifted odd-height/width anchored CDM
+            -- bars half a pixel (cooldown swipes bleeding past borders).
             local PPa = EllesmereUI and EllesmereUI.PP
             if PPa and PPa.SnapForES then
-                bEdgeX = PPa.SnapForES(bEdgeX, cS)
-                bEdgeY = PPa.SnapForES(bEdgeY, cS)
+                local childW2 = childBar:GetWidth() or 0
+                local childH2 = childBar:GetHeight() or 0
+                if cdmEdgeAnchor == "LEFT" or cdmEdgeAnchor == "RIGHT" then
+                    bEdgeX = PPa.SnapForES(bEdgeX, cS)
+                    bEdgeY = PPa.SnapCenterForDim and PPa.SnapCenterForDim(bEdgeY, childH2, cS)
+                        or PPa.SnapForES(bEdgeY, cS)
+                else
+                    bEdgeY = PPa.SnapForES(bEdgeY, cS)
+                    bEdgeX = PPa.SnapCenterForDim and PPa.SnapCenterForDim(bEdgeX, childW2, cS)
+                        or PPa.SnapForES(bEdgeX, cS)
+                end
             end
             local skip = false
             local okPt, point, relTo, relPoint, curX, curY = pcall(childBar.GetPoint, childBar, 1)
             if okPt and point == cdmEdgeAnchor and relPoint == "CENTER" and relTo == UIParent then
                 local onePx = ((PP and PP.perfect) or 1) / cS
-                local tol = onePx * 1.5
+                -- Sub-pixel tolerance only: identical recomputes differ by float
+                -- dust, never by real fractions. Must stay BELOW half a pixel or
+                -- the parity-aware perpendicular snap above (a legitimate 0.5px
+                -- correction when the bar's dimension parity changes) would be
+                -- skipped and the bar left with half-pixel edges.
+                local tol = onePx * 0.25
                 if curX and curY
                    and math.abs(curX - bEdgeX) <= tol
                    and math.abs(curY - bEdgeY) <= tol then
@@ -2213,12 +2469,33 @@ PropagateAnchorChain = function(parentKey, visited, changedAxis)
     if not anchorDB then return end
     for childKey, info in pairs(anchorDB) do
         if info.target == parentKey then
-            -- Axis isolation: skip children on the unaffected axis
+            -- Axis isolation: skip children on the unaffected axis. A resize
+            -- leaves a perpendicular-anchored child unaffected ONLY when the
+            -- target's center is invariant on the changed axis. That holds for
+            -- CENTER growth, but an edge-fixed growth direction moves the
+            -- center when the size changes (LEFT/RIGHT growth shifts center-X
+            -- on a width change; UP/DOWN shifts center-Y on a height change),
+            -- and a TOP/BOTTOM-side child's X is tied to that center (edgeX =
+            -- tCX in ApplyAnchorPosition) -- so it MUST reposition. Scoped to
+            -- CDM/AB bar targets (the only targets with growth directions that
+            -- resize at runtime); every other target keeps the original gate.
             local dominated = false
             if changedAxis == "width" then
                 dominated = (info.side == "TOP" or info.side == "BOTTOM")
+                if dominated
+                   and (parentKey:sub(1, 4) == "CDM_"
+                        or (EllesmereUI._abBarKeys and EllesmereUI._abBarKeys[parentKey])) then
+                    local tg = GetBarGrowDirActual(parentKey)
+                    if tg == "LEFT" or tg == "RIGHT" then dominated = false end
+                end
             elseif changedAxis == "height" then
                 dominated = (info.side == "LEFT" or info.side == "RIGHT")
+                if dominated
+                   and (parentKey:sub(1, 4) == "CDM_"
+                        or (EllesmereUI._abBarKeys and EllesmereUI._abBarKeys[parentKey])) then
+                    local tg = GetBarGrowDirActual(parentKey)
+                    if tg == "UP" or tg == "DOWN" then dominated = false end
+                end
             end
             if not dominated then
                 ApplyAnchorPosition(childKey, info.target, info.side, nil, nil, true)
@@ -2366,6 +2643,9 @@ EllesmereUI.ReapplyAllUnlockAnchorsForced = function()
             local childBar = GetBarFrame(childKey)
             local targetBar = GetBarFrame(info.target)
             local rcElem = registeredElements[childKey]
+            if childBar and inCombat and childBar:IsProtected() then
+                EllesmereUI._AnchorPark.Park(childKey)
+            end
             if childBar and targetBar
                and not (inCombat and childBar:IsProtected())
                and not (rcElem and rcElem.isAnchored and rcElem.isAnchored(childKey)) then
@@ -2412,16 +2692,16 @@ function EllesmereUI.GetAnchorTargetCenterUI(childKey)
 end
 
 -- UIParent-space edges (left, right, top, bottom) of childKey's anchor target,
--- computed identically to ApplyAnchorPosition's tL/tR/tT/tB. Returned ONLY when
--- the target is ANOTHER CDM bar -- this baseline exists purely for the corner-
--- follow of CDM-anchored-to-CDM bars; nothing else reads it. CDM savePos stores
--- these as sp.tgtL/.tgtR/.tgtT/.tgtB. Returns nil if there is no CDM anchor
--- target or it has no screen bounds yet.
+-- computed identically to ApplyAnchorPosition's tL/tR/tT/tB. CDM/StanceBar
+-- savePos store these as sp.tgtL/.tgtR/.tgtT/.tgtB (follow baselines). The
+-- corner-follow consumer gates itself on the target being a CDM bar; the
+-- StanceBar side-follow uses them for any target type, so edges are captured
+-- unconditionally. Returns nil if there is no anchor target or it has no
+-- screen bounds yet.
 function EllesmereUI.GetAnchorTargetEdgesUI(childKey)
     local adb = GetAnchorDB()
     local info = adb and adb[childKey]
     if not info or not info.target then return nil end
-    if info.target:sub(1, 4) ~= "CDM_" then return nil end
     local targetBar = GetBarFrame(info.target)
     if not targetBar or not targetBar:GetLeft() then return nil end
     local uiS = UIParent:GetEffectiveScale()
@@ -2916,6 +3196,14 @@ local function ApplySavedPositions()
                 unresolved = still
                 if next(unresolved) and retries < 20 then
                     C_Timer.After(0.1, RetryAnchors)
+                elseif next(unresolved) and InCombatLockdown() then
+                    -- Combat reload: module builds are deferred to regen, so
+                    -- frames may not resolve within the retry window. Park
+                    -- the keys for a reapply when combat drops instead of
+                    -- silently dropping them.
+                    for childKey in pairs(unresolved) do
+                        EllesmereUI._AnchorPark.Park(childKey)
+                    end
                 end
             end
             C_Timer.After(0, RetryAnchors)
@@ -2976,7 +3264,11 @@ local function InstallAnchorGuard(bar, barKey)
         if db and db[barKey] and db[barKey].point then
             -- Defer so we don't taint the secure execution context
             C_Timer.After(0, function()
-                if InCombatLockdown() then return end
+                if InCombatLockdown() then
+                    -- Reapply once combat drops instead of losing the position
+                    EllesmereUI._AnchorPark.ParkBarPos(barKey)
+                    return
+                end
                 -- Use centralized apply for grow-direction-aware positioning
                 if not ApplyCenterPosition(barKey, db[barKey]) then
                     pcall(function()
@@ -3969,10 +4261,31 @@ local function NudgeMover(dx, dy, targetMover, skipCollapse)
             bar:ClearAllPoints()
             bar:SetPoint(pt, UIParent, relPt, offX + dx, offY + dy)
         end)
-        pendingPositions[m._barKey] = {
-            point = pt, relPoint = relPt,
-            x = offX + dx, y = offY + dy,
-        }
+        -- Keep the LOGICAL pending value exact for CENTER/CENTER elements:
+        -- previous pending/stored value + the exact delta, never a live
+        -- geometry read-back. Odd-pixel-dimension frames apply with their
+        -- physical center on a half pixel, so reading the frame back here
+        -- would bake that half pixel (and whichever way it rounds) into the
+        -- saved value -- the classic "nudged to -368, saves back as -369".
+        local prev = pendingPositions[m._barKey]
+        if type(prev) ~= "table" or prev._anchored or not prev.point then
+            local elemN = registeredElements[m._barKey]
+            prev = elemN and elemN.loadPosition and elemN.loadPosition(m._barKey) or nil
+            if not prev then prev = LoadBarPosition(m._barKey) end
+        end
+        if type(prev) == "table" and prev.point == "CENTER"
+           and (prev.relPoint or "CENTER") == "CENTER"
+           and prev.x and prev.y then
+            pendingPositions[m._barKey] = {
+                point = "CENTER", relPoint = "CENTER",
+                x = prev.x + dx, y = prev.y + dy,
+            }
+        else
+            pendingPositions[m._barKey] = {
+                point = pt, relPoint = relPt,
+                x = offX + dx, y = offY + dy,
+            }
+        end
     end
     hasChanges = true
 
@@ -4293,6 +4606,21 @@ local function CreateBlizzOwnedOverlay(def, parent)
         ApplyHover(0)
         ov._brd:SetColor(ar, ag, ab, 0.6)
     end
+    -- Shift+Right Click temporarily hides this overlay for the current unlock
+    -- session (matches the regular mover behavior). The _tempHidden flag is
+    -- cleared on the next unlock entry so the overlay reappears then. Purely a
+    -- visual toggle on the info overlay -- it never touches the Blizzard frame.
+    local function TempHide(_, button)
+        if button == "RightButton" and IsShiftKeyDown() then
+            ov._tempHidden = true
+            ov._forceCollapse()
+            ov:Hide()
+        end
+    end
+    ov:SetScript("OnMouseUp", TempHide)
+    -- The hover action strip (a child button) swallows mouse events over itself,
+    -- so wire the same handler there to catch a Shift+Right Click landing on it.
+    actionBtn:SetScript("OnMouseUp", TempHide)
     return ov
 end
 
@@ -5373,6 +5701,31 @@ local function CreateMover(barKey)
         local bk = self._barKey
         local PPi = EllesmereUI and EllesmereUI.PP
         local toPx = (PPi and PPi.ToPixels) or round
+        -- STORED value first for unanchored CENTER/CENTER elements when not
+        -- mid-drag: an odd-pixel-dimension frame's physical center legitimately
+        -- sits on a half pixel (whole-pixel edges force it), so a live-derived
+        -- readout can never echo the user's own typed value back (-368 reads
+        -- as -367/-369 depending on rounding). The stored value is what the
+        -- appliers round-trip, so it is the truth to display. Live geometry is
+        -- only authoritative while dragging (store not yet updated).
+        if not self._dragging then
+            local ai = GetAnchorInfo(bk)
+            if not (ai and ai.target) then
+                local pos = pendingPositions[bk]
+                if type(pos) ~= "table" or pos._anchored or not pos.point then
+                    local elem = registeredElements[bk]
+                    pos = elem and elem.loadPosition and elem.loadPosition(bk) or nil
+                    if not pos then pos = LoadBarPosition(bk) end
+                end
+                if type(pos) == "table" and pos.point == "CENTER"
+                   and (pos.relPoint or "CENTER") == "CENTER"
+                   and pos.x and pos.y then
+                    fs:SetText(format("%.0f, %.0f", toPx(pos.x), toPx(pos.y)))
+                    fs:Show()
+                    return
+                end
+            end
+        end
         -- Derive from the bar's LIVE geometry using the exact same formula and
         -- physical-pixel units as the cog X/Y boxes, so the overlay always agrees
         -- with the cog and updates immediately (no waiting for a commit).
@@ -5423,6 +5776,11 @@ local function CreateMover(barKey)
 
     -- Sync size/position to the real bar (or registered element)
     function mover:Sync()
+        -- Temporarily hidden for this unlock session (Shift+Right Click). Stay
+        -- hidden until unlock mode is re-entered, which clears the flag. Every
+        -- re-sync path (retry ticker, combat resume, open fade-in loops) must
+        -- honor this and keep the overlay hidden.
+        if self._tempHidden then self:Hide(); return end
         local bk = self._barKey
         local b = GetBarFrame(bk)
         local elem = registeredElements[bk]
@@ -6396,6 +6754,21 @@ local function CreateMover(barKey)
             end
         elseif button == "RightButton" then
             if selectElementPicker then return end
+            -- Shift+Right Click temporarily hides this element's overlay for the
+            -- current unlock session. The _tempHidden flag is cleared when unlock
+            -- mode is next entered, so the overlay reappears then. Purely a visual
+            -- toggle on the overlay -- it never touches the underlying element.
+            if IsShiftKeyDown() then
+                self._tempHidden = true
+                self._hoverPending = false
+                if selectedMover == self then DeselectMover() end
+                if hoveredMover == self then hoveredMover = nil end
+                if self._hideOverlayText then self._hideOverlayText() end
+                -- Hide the cog too; its OnHide closes any open cog menu.
+                if self._cogBtn then self._cogBtn:Hide() end
+                self:Hide()
+                return
+            end
             SelectMover(self)
             if self._openCogMenu then self._openCogMenu() end
         end
@@ -6944,7 +7317,8 @@ local function CreateMover(barKey)
             hintFS:SetWordWrap(true)
             hintFS:SetPoint("TOPLEFT", cogMenu, "TOPLEFT", 8, yOff - 4)
             hintFS:SetPoint("TOPRIGHT", cogMenu, "TOPRIGHT", -8, yOff - 4)
-            hintFS:SetText(EllesmereUI.L("Use arrow keys to move selected element 1px any direction"))
+            hintFS:SetText(EllesmereUI.L("Use arrow keys to move selected element 1px any direction")
+                .. ". " .. EllesmereUI.L("Shift+Right Click to temporarily hide overlay"))
             local hintH = hintFS:GetStringHeight()
             if not hintH or hintH < 1 then hintH = 28 end
             yOff = yOff - (hintH + 10)
@@ -7162,9 +7536,29 @@ local function CreateMover(barKey)
                 -- units) makes +1 in the box equal exactly one physical pixel, i.e.
                 -- one arrow-key nudge; PP.mult is only 1 at pixel-perfect UI scale.
                 local function AxisToPx(ax)
-                    local b = GetBarFrame(barKey)
                     local PPi = EllesmereUI and EllesmereUI.PP
-                    if not b or not PPi or not PPi.ToPixels then return nil end
+                    if not PPi or not PPi.ToPixels then return nil end
+                    -- STORED value first for unanchored CENTER/CENTER elements
+                    -- (same reasoning as UpdateCoordText): the box must echo the
+                    -- user's own typed value back; a live-derived center is off
+                    -- by half a pixel for odd-pixel-dimension frames.
+                    local aiX = GetAnchorInfo(barKey)
+                    if not (aiX and aiX.target) then
+                        local pos = pendingPositions[barKey]
+                        if type(pos) ~= "table" or pos._anchored or not pos.point then
+                            local elemX = registeredElements[barKey]
+                            pos = elemX and elemX.loadPosition and elemX.loadPosition(barKey) or nil
+                            if not pos then pos = LoadBarPosition(barKey) end
+                        end
+                        if type(pos) == "table" and pos.point == "CENTER"
+                           and (pos.relPoint or "CENTER") == "CENTER"
+                           and pos.x and pos.y then
+                            if ax == "X" then return PPi.ToPixels(pos.x) end
+                            return PPi.ToPixels(pos.y)
+                        end
+                    end
+                    local b = GetBarFrame(barKey)
+                    if not b then return nil end
                     local bL, bR = b:GetLeft(), b:GetRight()
                     local bT, bB = b:GetTop(), b:GetBottom()
                     if not (bL and bR and bT and bB) then return nil end
@@ -7351,56 +7745,46 @@ local function CreateMover(barKey)
         MakeActionItem("Center on Screen", function()
             if InCombatLockdown() then return end
             local bk = mover._barKey
-            local screenCX = UIParent:GetWidth() * 0.5
-            local mT = mover:GetTop()
-            local mB = mover:GetBottom()
-            if not mT or not mB then return end
-            -- Center mover horizontally, keep vertical position
-            local cx = screenCX
-            local cy = (mT + mB) * 0.5 - UIParent:GetHeight()
-            mover:ClearAllPoints()
-            mover:SetPoint("CENTER", UIParent, "TOPLEFT", cx, cy)
-            moverCX = cx
-            moverCY = cy
+            local PPc = EllesmereUI and EllesmereUI.PP
             local b = GetBarFrame(bk)
-            if b then
-                -- Use same formula as drag-stop: cx/cy are mover center coords.
-                -- cx is screen-space X. cy is UIParent-TOPLEFT Y (negative).
-                local uiS = UIParent:GetEffectiveScale()
-                local bS = b:GetEffectiveScale()
-                local ratio = uiS / bS
-                local barHW = (b:GetWidth() or 0) * 0.5
-                local barHH = (b:GetHeight() or 0) * 0.5
-                -- Strip centerYOff so Sync() doesn't double-apply it
-                local centerYOff = 0
-                local elem = registeredElements[bk]
-                if elem and elem.getSize then
-                    local _, _, gyOff = elem.getSize(bk)
-                    centerYOff = gyOff or 0
+            if not b or not PPc or not PPc.ToPixels or not PPc.FromPixels then return end
+            -- Drive the move through the SAME stored-first delta path the cog
+            -- X box uses when the user types 0: read the current X from the
+            -- pending/stored logical value for unanchored CENTER/CENTER
+            -- elements (a live-derived center is off by half a pixel for
+            -- odd-pixel-width frames and made the readout show X=1 after
+            -- centering), then NudgeMover accumulates prev + exact delta --
+            -- the stored X lands at exactly 0 and the readout echoes it.
+            -- The old path rewrote pendingPositions to a snapped TOPLEFT
+            -- position, which both baked the half pixel into the save and
+            -- knocked the readout off the stored-first convention.
+            local curPx
+            local aiC = GetAnchorInfo(bk)
+            if not (aiC and aiC.target) then
+                local pos = pendingPositions[bk]
+                if type(pos) ~= "table" or pos._anchored or not pos.point then
+                    local elemC = registeredElements[bk]
+                    pos = elemC and elemC.loadPosition and elemC.loadPosition(bk) or nil
+                    if not pos then pos = LoadBarPosition(bk) end
                 end
-                local barX = cx * ratio - barHW
-                local barY = (cy - centerYOff) * ratio + barHH
-                local PPc = EllesmereUI and EllesmereUI.PP
-                if PPc and PPc.SnapForES then
-                    barX = PPc.SnapForES(barX, bS)
-                    barY = PPc.SnapForES(barY, bS)
+                if type(pos) == "table" and pos.point == "CENTER"
+                   and (pos.relPoint or "CENTER") == "CENTER"
+                   and pos.x and pos.y then
+                    curPx = PPc.ToPixels(pos.x)
                 end
-                pcall(function()
-                    b:ClearAllPoints()
-                    b:SetPoint("TOPLEFT", UIParent, "TOPLEFT", barX, barY)
-                end)
-                pendingPositions[bk] = {
-                    point = "TOPLEFT", relPoint = "TOPLEFT",
-                    x = barX, y = barY,
-                }
-                hasChanges = true
             end
-            -- Update coordinate readout after centering
-            if mover.UpdateCoordText then mover:UpdateCoordText() end
-            -- Re-anchor mover to bar for pixel-perfect alignment
-            mover:ReanchorToBar()
-            -- Move anchored children with us
-            PropagateAnchorChain(bk)
+            if curPx == nil then
+                -- Anchored / edge-stored / legacy formats: live-derived center,
+                -- matching what the coordinate readout shows for these.
+                local bL, bR = b:GetLeft(), b:GetRight()
+                if not (bL and bR) then return end
+                local ratio = b:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                curPx = PPc.ToPixels(((bL + bR) * 0.5 * ratio) - UIParent:GetWidth() * 0.5)
+            end
+            if curPx and curPx ~= 0 then
+                EllesmereUI._unlockNudge(PPc.FromPixels(-curPx), 0, mover, true)
+            end
+            if mover.ReanchorToBar then mover:ReanchorToBar() end
             -- Collapse the mover if the mouse moved away during centering
             C_Timer.After(0.15, function()
                 if not mover:IsMouseOver() and not (mover._cogBtn and mover._cogBtn:IsMouseOver()) then
@@ -9125,6 +9509,11 @@ function ns.OpenUnlockMode()
     wipe(pendingPositions)
     hasChanges = false
     selectedMover = nil
+    -- Clear per-session temporary overlay hides (Shift+Right Click). Every unlock
+    -- session starts with all overlays visible again. Cleared before the fade-in
+    -- Sync / ShowBlizzOwnedOverlays calls so last session's hides don't persist.
+    for _, m in pairs(movers) do m._tempHidden = nil end
+    for _, ov in pairs(_blizzOwnedOverlays) do ov._tempHidden = nil end
     -- Strip any temporary anchor-target shift (e.g. ResourceBars "Shift Elements
     -- if No Resource") so movers snapshot TRUE saved positions. _unlockActive is
     -- already true above, so the shift provider returns 0 and this re-apply snaps

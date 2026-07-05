@@ -15,6 +15,66 @@ local function GetFFD(frame)
 end
 
 -------------------------------------------------------------------------------
+--  Per-window skin style ("eui" | "modern" | "off"). The per-window enable
+--  keys stay the on/off source of truth, so existing settings carry over
+--  unchanged: enable key false = "off". EllesmereUIDB.blizzWindowSkinStyles
+--  only records WHICH skin set an enabled window uses (nil = "eui").
+--  "modern" is reserved for the upcoming skin set and currently renders
+--  identically to "eui" -- skin files branch on this helper when it ships.
+-------------------------------------------------------------------------------
+local WINDOW_ENABLE_KEYS = {
+    charsheet       = "themedCharacterSheet",
+    inspect         = "themedInspectSheet",
+    lfg             = "reskinLFGMenu",
+    greatvault      = "reskinGreatVault",
+    collections     = "reskinCollections",
+    playerspells    = "reskinPlayerSpells",
+    adventureguide  = "reskinAdventureGuide",
+    professionsbook = "reskinProfessionsBook",
+    guild           = "reskinGuild",
+    calendar        = "reskinCalendar",
+    achievements    = "reskinAchievements",
+    mail            = "reskinMail",
+    catalyst        = "reskinCatalyst",
+    socket          = "reskinSocket",
+    micromenu       = "reskinMicroMenu",
+    housing         = "reskinHousing",
+    professions     = "reskinProfessions",
+    worldmap        = "reskinWorldMap",
+    dressup         = "reskinDressUp",
+    transmog        = "reskinTransmog",
+    merchant        = "reskinMerchant",
+    auctionhouse    = "reskinAuctionHouse",
+    macros          = "reskinMacros",
+    settings        = "reskinSettings",
+    addonlist       = "reskinAddonList",
+    craftorders     = "reskinCraftOrders",
+    trainer         = "reskinTrainer",
+    gossip          = "reskinGossip",
+    inspectrecipe   = "reskinInspectRecipe",
+    delves          = "reskinDelves",
+}
+function EllesmereUI.GetBlizzWindowStyle(winKey)
+    local ek = WINDOW_ENABLE_KEYS[winKey]
+    if ek and EllesmereUIDB and EllesmereUIDB[ek] == false then return "off" end
+    local styles = EllesmereUIDB and EllesmereUIDB.blizzWindowSkinStyles
+    if styles and styles[winKey] == "modern" then return "modern" end
+    return "eui"
+end
+
+-- Turn off every window reskin at once (used by the one-time feature-intro
+-- popup's "Disable" button). Writes an explicit false to each window's enable
+-- key so GetBlizzWindowStyle reports "off"; blizzWindowSkinStyles is left
+-- intact, so a later re-enable restores each window's chosen style. Reskins
+-- install at load, so the caller must reload for this to fully apply.
+function EllesmereUI.DisableAllBlizzWindowSkins()
+    if not EllesmereUIDB then EllesmereUIDB = {} end
+    for _, ek in pairs(WINDOW_ENABLE_KEYS) do
+        EllesmereUIDB[ek] = false
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Tooltip / Context Menu / Static Popup Skinning
 --  Restyles Blizzard's GameTooltip and related frames with EUI's dark style.
 --  Visual-only changes (alpha, backdrop color, font). No Hide/Show/SetParent
@@ -28,7 +88,6 @@ end
     local _GameTooltip = GameTooltip
     local _RAID_CC = RAID_CLASS_COLORS
     local _nameL1 = nil  -- cached ref to GameTooltipTextLeft1
-    local _guildL = nil -- cached ref to GameTooltipTextLeftX where X is the line for the guild name
 
     local function _enabled()
         return not EllesmereUIDB or EllesmereUIDB.customTooltips ~= false
@@ -116,6 +175,11 @@ end
     -- handler that feeds both tooltip ilvl cache and inspect sheet reskin.
     local _ilvlCache = {}       -- guid -> { ilvl = number, time = GetTime() }
     local _ilvlCacheTTL = 120
+    -- Mount-name cache. Short TTL: mount state changes often, but this only
+    -- needs to survive a single hover's refresh ticks so an unmounted player
+    -- is scanned once, not once per tick. name = false means "scanned, none".
+    local _mountCache = {}      -- guid -> { name = string|false, time = GetTime() }
+    local _mountCacheTTL = 3
     local _inspectPendingGUID = nil
     local _userInspectUntil = 0
     -- GUID the visible GameTooltip was last populated for (set by the Unit
@@ -351,25 +415,26 @@ end
                 GameTooltipStatusBar:SetStatusBarColor(cc.r, cc.g, cc.b)
             end
         end
-        -- Add guild rank next to guild name : Name-Realm [Rank]
-        if unit and db and db.tooltipShowGuildRank ~= false then
+        -- Add guild rank next to guild name : Name-Realm [Rank]. The guild
+        -- line is re-found on every call -- its index varies per unit (titles
+        -- shift it), so a cached line would decorate the wrong row on other
+        -- tooltips. Deduped like the M+ line below: refresh cycles re-run
+        -- this postprocessor on text that may already carry the rank.
+        if unit and db and db.tooltipShowGuildRank then
             local guildName, guildRankName = GetGuildInfo(unit)
-            if guildName and guildRankName and not (_isSecret and _isSecret(guildRankName)) then
-                -- Find the line once then cache it
-                if not _guildL then
-                    for i = 2, nLinesBefore do
-                        local line = _G["GameTooltipTextLeft" .. i]
-                        if line then
-                            local text = line:GetText()
-                            if text and string.find(text, guildName, 1, true) then
-                                _guildL = line
-                                break
-                            end
+            if guildName and guildRankName
+                and not (_isSecret and (_isSecret(guildName) or _isSecret(guildRankName))) then
+                local suffix = " [" .. guildRankName .. "]"
+                for i = 2, nLinesBefore do
+                    local line = _G["GameTooltipTextLeft" .. i]
+                    local text = line and line:GetText()
+                    if text and not (_isSecret and _isSecret(text))
+                        and string.find(text, guildName, 1, true) then
+                        if text:sub(-#suffix) ~= suffix then
+                            line:SetText(text .. suffix)
                         end
+                        break
                     end
-                end
-                if _guildL and _guildL:GetText() then
-                    _guildL:SetText(_guildL:GetText() .. " [" .. guildRankName .. "]")
                 end
             end
         end
@@ -388,8 +453,17 @@ end
             end
         end
         -- Mount name from the live helpful aura that MountJournal recognizes.
-        if unit and not _tipHasLine(tt, "Mount:") then
-            local mountName = _getMountedAuraName(unit)
+        -- Opt-in (default off). Per-GUID cached so refresh ticks on an
+        -- unmounted player never re-walk the whole aura list.
+        if unit and guid and db and db.tooltipShowMount and not _tipHasLine(tt, "Mount:") then
+            local mountName
+            local cached = _mountCache[guid]
+            if cached and (GetTime() - cached.time) < _mountCacheTTL then
+                mountName = cached.name
+            else
+                mountName = _getMountedAuraName(unit) or false
+                _mountCache[guid] = { name = mountName, time = GetTime() }
+            end
             if mountName then
                 tt:AddDoubleLine("Mount:", mountName, 1, 1, 1, 1, 1, 1)
             end
@@ -591,9 +665,16 @@ end
             end
         end
         GetFFD(popup).bg:Show()
-        -- Skin buttons
+        -- Skin buttons (1-4 plus the optional extra action button)
+        local popupBtns = {}
         for i = 1, 4 do
-            local btn = popup["button" .. i] or _G[popup:GetName() and (popup:GetName() .. "Button" .. i)]
+            popupBtns[#popupBtns + 1] = popup["button" .. i]
+                or _G[popup:GetName() and (popup:GetName() .. "Button" .. i)]
+        end
+        local popupName = popup.GetName and popup:GetName()
+        popupBtns[#popupBtns + 1] = popup.extraButton
+            or (popupName and _G[popupName .. "ExtraButton"])
+        for _, btn in ipairs(popupBtns) do
             if btn and not GetFFD(btn).skinned then
                 GetFFD(btn).skinned = true
                 for j = 1, select("#", btn:GetRegions()) do
@@ -619,6 +700,12 @@ end
                         _PP.CreateBorder(btn, 1, 1, 1, RS.BRD_ALPHA, 1, "OVERLAY", 7)
                     end
                 end
+                -- House hover: 10% white wash (HIGHLIGHT layer only renders
+                -- while the button is enabled and hovered).
+                local hov = btn:CreateTexture(nil, "HIGHLIGHT")
+                hov:SetColorTexture(1, 1, 1, 0.1)
+                hov:SetAllPoints()
+                GetFFD(hov).owned = true
 
                 -- Mirror Blizzard's enabled/disabled state so buttons visibly
                 -- dim when locked out (e.g. Release in boss combat).
@@ -678,10 +765,27 @@ end
                     if r.SetAtlas then r:SetAtlas("") end
                 end
             end
+            -- Midnight edit boxes carry their art on a NineSlice child.
+            if eb.NineSlice and eb.NineSlice.SetAlpha then
+                eb.NineSlice:SetAlpha(0)
+            end
+            -- 6px left padding: box edge extends, text stays put.
+            if EllesmereUI._WSkinPadInput then EllesmereUI._WSkinPadInput(eb) end
             local ebBg = eb:CreateTexture(nil, "BACKGROUND", nil, -6)
             ebBg:SetAllPoints()
             ebBg:SetColorTexture(0.05, 0.05, 0.05, 0.9)
             GetFFD(ebBg).owned = true
+            -- Border matching the popup buttons (accent or white).
+            local RS2 = EllesmereUI.RESKIN
+            local EG3 = EllesmereUI.ELLESMERE_GREEN
+            if not _PP then _PP = EllesmereUI and EllesmereUI.PP end
+            if _PP and _PP.CreateBorder then
+                if _accentEnabled() and EG3 then
+                    _PP.CreateBorder(eb, EG3.r, EG3.g, EG3.b, 0.5, 1, "OVERLAY", 7)
+                else
+                    _PP.CreateBorder(eb, 1, 1, 1, RS2.BRD_ALPHA, 1, "OVERLAY", 7)
+                end
+            end
         end
     end
 
@@ -728,7 +832,8 @@ end
         local TIMER_DURATION = 40
         local timerBar, timerText, timerEndTime
 
-        -- Independent toggle, default on (not tied to any master reskin setting).
+        -- Independent toggle, default on (not tied to any master reskin setting,
+        -- including the window-skins style: this is a popup, not a window).
         local function IsQueueReskinOn()
             return not EllesmereUIDB or EllesmereUIDB.reskinQueuePopup ~= false
         end
@@ -847,6 +952,12 @@ end
                                     _PP.CreateBorder(btn, 1, 1, 1, RS2.BRD_ALPHA, 1, "OVERLAY", 7)
                                 end
                             end
+                            -- House hover: 10% white wash (owned, so the
+                            -- every-show re-strip above leaves it alone).
+                            local hov = btn:CreateTexture(nil, "HIGHLIGHT")
+                            hov:SetColorTexture(1, 1, 1, 0.1)
+                            hov:SetAllPoints()
+                            GetFFD(hov).owned = true
                         end
                         -- Accent-color the button text (every show)
                         local EG = EllesmereUI.ELLESMERE_GREEN
@@ -1368,7 +1479,8 @@ do
     f:SetScript("OnEvent", function(self)
         self:UnregisterAllEvents()
         if not GameMenuFrame then return end
-        -- Independent toggle, default on (not tied to any master reskin setting).
+        -- Independent toggle, default on (not tied to any master reskin setting,
+        -- including the window-skins style: this is a popup menu, not a window).
         if EllesmereUIDB and EllesmereUIDB.reskinGameMenu == false then return end
 
         local RS = EllesmereUI.RESKIN
