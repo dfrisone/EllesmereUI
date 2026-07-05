@@ -603,10 +603,10 @@ initFrame:SetScript("OnEvent", function(self)
         y = y - h
 
         -- Bar Spacing | Icon Style
-        _, h = W:DualRow(parent, y,
+        local iconRow, h = W:DualRow(parent, y,
             { type="slider", text="Spacing", min = -1, max = 10, step = 1,
-              getValue = function() return Cfg("barSpacing") or 2 end,
-              setValue = function(v) Set("barSpacing", v); Refresh() end },
+            getValue = function() return Cfg("barSpacing") or 2 end,
+            setValue = function(v) Set("barSpacing", v); Refresh() end },
             { type="dropdown", text="Icon Style",
               values = _G._EDM_IconStyleValues or {},
               order  = _G._EDM_IconStyleOrder or {},
@@ -617,6 +617,30 @@ initFrame:SetScript("OnEvent", function(self)
                 Refresh()  
               end })
         y = y - h
+
+        -- Inline cog: Icon Zoom (rechte Region, neben "Icon Style")
+        do
+            local rgn = iconRow._rightRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Icon Zoom",
+                rows = {
+                    { type = "slider", label = "Zoom", min = 0, max = 0.20, step = 0.01,
+                    get = function() return Cfg("classIconZoom") or 0.08 end,
+                    set = function(v) Set("classIconZoom", v); Refresh() end },
+                },
+            })
+            local cogBtn = CreateFrame("Button", nil, rgn)
+            cogBtn:SetSize(26, 26)
+            cogBtn:SetPoint("RIGHT", rgn._control, "LEFT", -8, 0)
+            cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            cogBtn:SetAlpha(0.4)
+            local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
+            cogTex:SetAllPoints()
+            cogTex:SetTexture(EllesmereUI.COGS_ICON)
+            cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+            cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
+            cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
+        end
 
         -- Border Style (+ cog) | Border Size (+ inline swatch)
         -- Shadow (Glow rendered behind) needs Show Behind support, which DM lacks,
