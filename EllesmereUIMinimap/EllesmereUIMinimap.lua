@@ -1900,7 +1900,7 @@ local function CreateMinimapPortalFlyout()
             label:SetFont(fontPath, 8, "OUTLINE")
             label:SetPoint("BOTTOM", btn, "BOTTOM", 0, 2)
             label:SetTextColor(1, 1, 1, 0.9)
-            label:SetText(short)
+            label:SetText((EllesmereUI and EllesmereUI.L and EllesmereUI.L(short)) or short)
         end
 
         local hover = btn:CreateTexture(nil, "HIGHLIGHT")
