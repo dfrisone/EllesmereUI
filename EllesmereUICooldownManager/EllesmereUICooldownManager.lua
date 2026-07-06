@@ -1911,6 +1911,8 @@ local function PG_Write(dst, payload, indexFromName)
     dst.pandemicGlowLines     = payload.lines
     dst.pandemicGlowThickness = payload.thickness
     dst.pandemicGlowSpeed     = payload.speed
+    dst.pandemicGlowBackground = payload.background and true or nil
+    dst.pandemicGlowBackgroundColor = payload.backgroundColor and CopyTable(payload.backgroundColor) or nil
 end
 
 -- True when dst already displays what PG_Write(dst, payload) would store. When
@@ -1928,6 +1930,12 @@ local function PG_Matches(dst, payload, indexFromName, actualStyleFn)
     if (dst.pandemicGlowLines or 8) ~= (payload.lines or 8) then return false end
     if (dst.pandemicGlowThickness or 2) ~= (payload.thickness or 2) then return false end
     if (dst.pandemicGlowSpeed or 4) ~= (payload.speed or 4) then return false end
+    if (dst.pandemicGlowBackground == true) ~= (payload.background == true) then return false end
+    if payload.background then
+        local dc = dst.pandemicGlowBackgroundColor or {}
+        local pc = payload.backgroundColor or {}
+        if (dc.r or 0) ~= (pc.r or 0) or (dc.g or 0) ~= (pc.g or 0) or (dc.b or 0) ~= (pc.b or 0) then return false end
+    end
     return true
 end
 
@@ -1940,6 +1948,8 @@ function EllesmereUI.PandemicPayloadFromCdmBar(bd)
         lines     = bd.pandemicGlowLines,
         thickness = bd.pandemicGlowThickness,
         speed     = bd.pandemicGlowSpeed,
+        background = bd.pandemicGlowBackground == true,
+        backgroundColor = bd.pandemicGlowBackgroundColor,
     }
 end
 
@@ -1954,6 +1964,8 @@ function EllesmereUI.PandemicPayloadFromRectBar(bd)
         lines     = bd.pandemicGlowLines,
         thickness = bd.pandemicGlowThickness,
         speed     = bd.pandemicGlowSpeed,
+        background = bd.pandemicGlowBackground == true,
+        backgroundColor = bd.pandemicGlowBackgroundColor,
     }
 end
 
@@ -1966,6 +1978,8 @@ function EllesmereUI.PandemicPayloadFromNameplate(np)
         lines     = np.pandemicGlowLines,
         thickness = np.pandemicGlowThickness,
         speed     = np.pandemicGlowSpeed,
+        background = np.pandemicGlowBackground == true,
+        backgroundColor = np.pandemicGlowBackgroundColor,
     }
 end
 
@@ -2065,20 +2079,26 @@ StartNativeGlow = function(overlay, style, cr, cg, cb, opts)
         -- glows (active-state, CD-ready, bar glows) pass none, so resolve the
         -- owning CD/utility bar's Pixel Glow settings. Falls back to defaults for
         -- action-bar overlays and bars that never set the values.
-        local N, th, period
+        local N, th, period, bgR, bgG, bgB, bgA
         if opts then
             N = opts.N or 8; th = opts.th or 2; period = opts.period or 4
+            if opts.bg then
+                bgR, bgG, bgB, bgA = opts.bg.r or 0, opts.bg.g or 0, opts.bg.b or 0, opts.bg.a or 1
+            end
         else
             local pfc = _ecmeFC[parent]
             local pbd = pfc and pfc.barKey and ns.GetBarData and ns.GetBarData(pfc.barKey)
             N = (pbd and pbd.pixelGlowLines) or 8
             th = (pbd and pbd.pixelGlowThickness) or 2
             period = (pbd and pbd.pixelGlowSpeed) or 4
+            if pbd and pbd.pixelGlowBackground then
+                bgR, bgG, bgB, bgA = pbd.pixelGlowBackgroundR or 0, pbd.pixelGlowBackgroundG or 0, pbd.pixelGlowBackgroundB or 0, 1
+            end
         end
         local lineLen = math.floor((pW + pH) * (2 / N - 0.1))
         lineLen = math.min(lineLen, math.min(pW, pH))
         if lineLen < 1 then lineLen = 1 end
-        _G_Glows.StartProceduralAnts(overlay, N, th, period, lineLen, cr, cg, cb, pW, pH)
+        _G_Glows.StartProceduralAnts(overlay, N, th, period, lineLen, cr, cg, cb, pW, pH, bgR, bgG, bgB, bgA)
     elseif entry.buttonGlow then
         _G_Glows.StartButtonGlow(overlay, pW, cr, cg, cb, nil, pH)
     elseif entry.autocast then

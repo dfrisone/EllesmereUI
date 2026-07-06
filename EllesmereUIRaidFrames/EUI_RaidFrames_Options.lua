@@ -6027,7 +6027,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI.RegisterWidgetRefresh(function() updateGlowSwatch(); updateClassSwatch(); UpdateGlowState() end)
                 UpdateGlowState()
 
-                -- Pixel-glow cog (Lines / Thickness / Speed), enabled only for Pixel Glow.
+                -- Pixel-glow cog, enabled only for Pixel Glow.
                 local function pixelOff() return (SVal("debuffCCGlowType", 0) or 0) ~= 1 or glowOff() end
                 local _, pgCogShow = EllesmereUI.BuildCogPopup({
                     title = "Pixel Glow",
@@ -6042,6 +6042,19 @@ initFrame:SetScript("OnEvent", function(self)
                         { type="slider", label="Speed", min=1, max=8, step=1,
                           get=function() return 9 - (SVal("debuffCCGlowSpeed", 4)) end,
                           set=function(v) SSet("debuffCCGlowSpeed", 9 - v) end },
+                        { type="toggle", label="Background",
+                          get=function() return SVal("debuffCCGlowBackground", false) == true end,
+                          set=function(v) SSet("debuffCCGlowBackground", v and true or nil) end },
+                        { type="colorpicker", label="Background Color",
+                          get=function() return SVal("debuffCCGlowBackgroundR", 0), SVal("debuffCCGlowBackgroundG", 0), SVal("debuffCCGlowBackgroundB", 0) end,
+                          set=function(r, g, b)
+                              SWrite("debuffCCGlowBackgroundR", r)
+                              SWrite("debuffCCGlowBackgroundG", g)
+                              SWrite("debuffCCGlowBackgroundB", b)
+                              ReloadAndUpdate()
+                          end,
+                          disabled=function() return SVal("debuffCCGlowBackground", false) ~= true end,
+                          disabledTooltip=EllesmereUI.DisabledTooltip("Pixel Glow Background") },
                     },
                 })
                 local cogBtn = CreateFrame("Button", nil, leftRgn)

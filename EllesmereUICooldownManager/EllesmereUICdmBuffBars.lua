@@ -2352,6 +2352,11 @@ local function UpdatePandemic(bar, cfg)
             N      = cfg.pandemicGlowLines or 8,
             th     = cfg.pandemicGlowThickness or 2,
             period = cfg.pandemicGlowSpeed or 4,
+            bg     = cfg.pandemicGlowBackground and {
+                r = (cfg.pandemicGlowBackgroundColor and cfg.pandemicGlowBackgroundColor.r) or 0,
+                g = (cfg.pandemicGlowBackgroundColor and cfg.pandemicGlowBackgroundColor.g) or 0,
+                b = (cfg.pandemicGlowBackgroundColor and cfg.pandemicGlowBackgroundColor.b) or 0,
+            } or nil,
         } or nil
         StartGlow(glowTarget, style, c.r or 1, c.g or 1, c.b or 0, glowOpts)
         bar._pandemicGlowActive   = true

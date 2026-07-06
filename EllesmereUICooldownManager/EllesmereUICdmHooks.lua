@@ -5391,6 +5391,11 @@ function ns.SetupViewerHooks()
                                             N      = bd.buffGlowLines or 8,
                                             th     = bd.buffGlowThickness or 2,
                                             period = bd.buffGlowSpeed or 4,
+                                            bg     = bd.buffGlowBackground and {
+                                                r = bd.buffGlowBackgroundR or 0,
+                                                g = bd.buffGlowBackgroundG or 0,
+                                                b = bd.buffGlowBackgroundB or 0,
+                                            } or nil,
                                         })
                                         fd.buffGlowActive = true
                                     end
@@ -5425,6 +5430,11 @@ function ns.SetupViewerHooks()
                                                 N      = bd.pandemicGlowLines or 8,
                                                 th     = bd.pandemicGlowThickness or 2,
                                                 period = bd.pandemicGlowSpeed or 4,
+                                                bg     = bd.pandemicGlowBackground and {
+                                                    r = (bd.pandemicGlowBackgroundColor and bd.pandemicGlowBackgroundColor.r) or 0,
+                                                    g = (bd.pandemicGlowBackgroundColor and bd.pandemicGlowBackgroundColor.g) or 0,
+                                                    b = (bd.pandemicGlowBackgroundColor and bd.pandemicGlowBackgroundColor.b) or 0,
+                                                } or nil,
                                             } or nil
                                             fd.pandemicOverlay:SetAlpha(1)
                                             ns.StartNativeGlow(fd.pandemicOverlay, style, c.r or 1, c.g or 1, c.b or 0, glowOpts)

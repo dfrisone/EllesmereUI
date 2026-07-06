@@ -632,6 +632,8 @@ local defaults = {
         debuffCCGlowClassColor = false,
         debuffCCGlowR = 1.0, debuffCCGlowG = 0.776, debuffCCGlowB = 0.376,
         debuffCCGlowLines = 8, debuffCCGlowThickness = 2, debuffCCGlowSpeed = 4,
+        debuffCCGlowBackground = false,
+        debuffCCGlowBackgroundR = 0, debuffCCGlowBackgroundG = 0, debuffCCGlowBackgroundB = 0,
         -- Defensives & Externals
         showDefensives   = true,
         showExternals    = true,
@@ -4554,17 +4556,23 @@ function ns.ApplyDebuffCCGlow(icon, auraData, unit, s)
             if cc then cr, cg, cb = cc.r, cc.g, cc.b end
         end
         local sz = s.debuffSize or 18
-        local oN, oTh, oPer
+        local oN, oTh, oPer, oBgR, oBgG, oBgB
         if gType == 1 then  -- Pixel Glow uses the Lines/Thickness/Speed params
             oN, oTh, oPer = s.debuffCCGlowLines or 8, s.debuffCCGlowThickness or 2, s.debuffCCGlowSpeed or 4
+            if s.debuffCCGlowBackground then
+                oBgR, oBgG, oBgB = s.debuffCCGlowBackgroundR or 0, s.debuffCCGlowBackgroundG or 0, s.debuffCCGlowBackgroundB or 0
+            end
         end
         if (not gov._euiGlowActive) or gov._ccStyle ~= gType or gov._ccW ~= sz
            or gov._ccCR ~= cr or gov._ccCG ~= cg or gov._ccCB ~= cb
-           or gov._ccN ~= oN or gov._ccTh ~= oTh or gov._ccPer ~= oPer then
-            Glows.StartGlow(gov, gType, sz, cr, cg, cb, oN and { N = oN, th = oTh, period = oPer } or nil)
+           or gov._ccN ~= oN or gov._ccTh ~= oTh or gov._ccPer ~= oPer
+           or gov._ccBgR ~= oBgR or gov._ccBgG ~= oBgG or gov._ccBgB ~= oBgB then
+            Glows.StartGlow(gov, gType, sz, cr, cg, cb,
+                oN and { N = oN, th = oTh, period = oPer, bg = oBgR and { r = oBgR, g = oBgG, b = oBgB } or nil } or nil)
             gov._ccStyle, gov._ccW = gType, sz
             gov._ccCR, gov._ccCG, gov._ccCB = cr, cg, cb
             gov._ccN, gov._ccTh, gov._ccPer = oN, oTh, oPer
+            gov._ccBgR, gov._ccBgG, gov._ccBgB = oBgR, oBgG, oBgB
         end
     elseif icon._ccGlowOverlay and icon._ccGlowOverlay._euiGlowActive and Glows and Glows.StopGlow then
         Glows.StopGlow(icon._ccGlowOverlay)

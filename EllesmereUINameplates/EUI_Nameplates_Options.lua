@@ -2279,7 +2279,9 @@ initFrame:SetScript("OnEvent", function(self)
             local lineLen = math.floor((iconSize + iconSize) * (2 / N - 0.1))
             lineLen = math.min(lineLen, iconSize)
             if lineLen < 1 then lineLen = 1 end
-            ns.StartProceduralAnts(f, N, th, period, lineLen, cr, cg, cb, iconSize)
+            local bgc = DB().pandemicGlowBackgroundColor or defaults.pandemicGlowBackgroundColor or { r = 0, g = 0, b = 0 }
+            ns.StartProceduralAnts(f, N, th, period, lineLen, cr, cg, cb, iconSize, nil,
+                DBVal("pandemicGlowBackground") == true and (bgc.r or 0) or nil, bgc.g or 0, bgc.b or 0)
         elseif entry.buttonGlow then
             -- Action Button Glow preview
             ns.StartButtonGlow(f, iconSize, cr, cg, cb, entry.previewScale or 1.28)
@@ -3013,7 +3015,7 @@ initFrame:SetScript("OnEvent", function(self)
             return raw ~= 1
         end
 
-        -- Cog popup for Pixel Glow settings (Lines, Thickness, Speed)
+        -- Cog popup for Pixel Glow settings.
         do
             local pgPopup, pgPopupOwner
             local function ShowPixelGlowPopup(anchorBtn)
@@ -3022,6 +3024,8 @@ initFrame:SetScript("OnEvent", function(self)
                     local MakeBorder = EllesmereUI.MakeBorder
                     local MakeFont   = EllesmereUI.MakeFont
                     local BuildSliderCore = EllesmereUI.BuildSliderCore
+                    local BuildToggleControl = EllesmereUI.BuildToggleControl
+                    local BuildColorSwatch = EllesmereUI.BuildColorSwatch
                     local BORDER_COLOR   = EllesmereUI.BORDER_COLOR
                     local SL_INPUT_A     = EllesmereUI.SL_INPUT_A
 
@@ -3034,7 +3038,7 @@ initFrame:SetScript("OnEvent", function(self)
                     local MIN_POPUP_W = 180
 
                     local totalH = TOP_PAD + TITLE_H + TITLE_GAP + GAP
-                                 + ROW_H + GAP + ROW_H + GAP + ROW_H
+                                 + ROW_H + GAP + ROW_H + GAP + ROW_H + GAP + ROW_H + GAP + ROW_H
                                  + TOP_PAD
 
                     local pf = CreateFrame("Frame", nil, UIParent)
@@ -3059,7 +3063,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Measure label widths to compute layout BEFORE creating sliders
                     local tmpFS = pf:CreateFontString(nil, "OVERLAY")
                     tmpFS:SetFont(EllesmereUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, GetNPOptOutline())
-                    local labelTexts = {"Lines", "Thickness", "Speed"}
+                    local labelTexts = {"Lines", "Thickness", "Speed", "Background", "Background Color"}
                     local maxLblW = 0
                     for _, txt in ipairs(labelTexts) do
                         tmpFS:SetText(txt)
@@ -3110,6 +3114,51 @@ initFrame:SetScript("OnEvent", function(self)
                     t3:SetPoint("TOPLEFT", pf, "TOPLEFT", SLIDER_LEFT, r3Y - 2)
                     v3:ClearAllPoints(); v3:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -SIDE_PAD, r3Y)
 
+                    -- Row 4: Background
+                    local r4Y = r3Y - ROW_H - GAP
+                    local lbl4 = MakeFont(pf, 11, nil, 1, 1, 1); lbl4:SetAlpha(0.6)
+                    lbl4:SetText(EllesmereUI.L("Background")); lbl4:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r4Y)
+                    local bgToggle, _, bgSnap = BuildToggleControl(pf, pf:GetFrameLevel() + 2,
+                        function() return DBVal("pandemicGlowBackground") == true end,
+                        function(v)
+                            DB().pandemicGlowBackground = v and true or nil
+                            RefreshAllAuras(); RefreshPandemicPreview()
+                        end, { sizeRatio = 0.8, noAnim = true })
+                    bgToggle:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, r4Y - ROW_H / 2)
+
+                    -- Row 5: Background Color
+                    local r5Y = r4Y - ROW_H - GAP
+                    local lbl5 = MakeFont(pf, 11, nil, 1, 1, 1); lbl5:SetAlpha(0.6)
+                    lbl5:SetText(EllesmereUI.L("Background Color")); lbl5:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r5Y)
+                    local bgSwatch, bgUpdate = BuildColorSwatch(pf, pf:GetFrameLevel() + 2,
+                        function()
+                            local c = DB().pandemicGlowBackgroundColor or defaults.pandemicGlowBackgroundColor or { r = 0, g = 0, b = 0 }
+                            return c.r or 0, c.g or 0, c.b or 0
+                        end,
+                        function(r, g, b)
+                            DB().pandemicGlowBackgroundColor = { r = r, g = g, b = b }
+                            RefreshAllAuras(); RefreshPandemicPreview()
+                        end, false, 20)
+                    bgSwatch:ClearAllPoints()
+                    bgSwatch:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, r5Y - ROW_H / 2)
+                    local bgBlock = CreateFrame("Frame", nil, bgSwatch)
+                    bgBlock:SetAllPoints(); bgBlock:SetFrameLevel(bgSwatch:GetFrameLevel() + 10); bgBlock:EnableMouse(true)
+                    bgBlock:SetScript("OnEnter", function()
+                        EllesmereUI.ShowWidgetTooltip(bgSwatch, EllesmereUI.DisabledTooltip("Pixel Glow Background"))
+                    end)
+                    bgBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+                    local function RefreshBgControls()
+                        if bgSnap then bgSnap() end
+                        if bgUpdate then bgUpdate() end
+                        local on = DBVal("pandemicGlowBackground") == true
+                        bgSwatch:SetAlpha(on and 1 or 0.3)
+                        if on then bgBlock:Hide() else bgBlock:Show() end
+                    end
+                    bgToggle:HookScript("OnClick", RefreshBgControls)
+                    pf._refreshBgControls = RefreshBgControls
+                    RefreshBgControls()
+
                     -- Close on click outside
                     local wasDown = false
                     pf:SetScript("OnHide", function(self)
@@ -3141,6 +3190,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 pgPopupOwner = anchorBtn
 
+                if pgPopup._refreshBgControls then pgPopup._refreshBgControls() end
                 pgPopup:ClearAllPoints()
                 pgPopup:SetPoint("BOTTOM", anchorBtn, "TOP", 0, 6)
                 pgPopup:SetAlpha(0)
@@ -8616,7 +8666,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
             end
 
-            -- Cog popup for Pixel Glow settings (Lines, Thickness, Speed)
+            -- Cog popup for Pixel Glow settings.
             do
                 local _, ShowImpCastGlowPopup = EllesmereUI.BuildCogPopup({
                     title = "Pixel Glow Settings",
@@ -8630,6 +8680,17 @@ initFrame:SetScript("OnEvent", function(self)
                         { type = "slider", label = "Speed", min = 1, max = 8, step = 1,
                           get = function() local s = DB().importantCastGlowSpeed or defaults.importantCastGlowSpeed or 4; return 9 - s end,
                           set = function(v) DB().importantCastGlowSpeed = 9 - v; RefreshAllPlates() end },
+                        { type = "toggle", label = "Background",
+                          get = function() return DB().importantCastGlowBackground == true end,
+                          set = function(v) DB().importantCastGlowBackground = v and true or nil; RefreshAllPlates() end },
+                        { type = "colorpicker", label = "Background Color",
+                          get = function()
+                              local c = DB().importantCastGlowBackgroundColor or defaults.importantCastGlowBackgroundColor or { r = 0, g = 0, b = 0 }
+                              return c.r or 0, c.g or 0, c.b or 0
+                          end,
+                          set = function(r, g, b) DB().importantCastGlowBackgroundColor = { r = r, g = g, b = b }; RefreshAllPlates() end,
+                          disabled = function() return DB().importantCastGlowBackground ~= true end,
+                          disabledTooltip = EllesmereUI.DisabledTooltip("Pixel Glow Background") },
                     },
                 })
 

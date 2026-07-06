@@ -380,6 +380,8 @@ local defaults = {
     pandemicGlowLines = 8,
     pandemicGlowThickness = 1,
     pandemicGlowSpeed = 4,
+    pandemicGlowBackground = false,
+    pandemicGlowBackgroundColor = { r = 0, g = 0, b = 0 },
     dispelGlow = false,
     dispelGlowStyle = 2,
     dispelGlowColor = { r = 1.0, g = 1.0, b = 1.0 },
@@ -417,6 +419,8 @@ local defaults = {
     importantCastGlowLines = 8,
     importantCastGlowThickness = 2,
     importantCastGlowSpeed = 4,
+    importantCastGlowBackground = false,
+    importantCastGlowBackgroundColor = { r = 0, g = 0, b = 0 },
     -- Core Positions: slot-based size + XY offsets
     topSlotSize = 26,        topSlotXOffset = 0,      topSlotYOffset = 0,
     rightSlotSize = 24,      rightSlotXOffset = 0,    rightSlotYOffset = 0,
@@ -750,6 +754,13 @@ local function GetPandemicGlowSpeed()
     return (p and p.pandemicGlowSpeed) or defaults.pandemicGlowSpeed
 end
 ns.GetPandemicGlowSpeed = GetPandemicGlowSpeed
+local function GetPandemicGlowBackground()
+    return p and p.pandemicGlowBackground == true
+end
+local function GetPandemicGlowBackgroundColor()
+    local c = (p and p.pandemicGlowBackgroundColor) or defaults.pandemicGlowBackgroundColor
+    return c.r or 0, c.g or 0, c.b or 0
+end
 
 -- Dispellable buff glow: taint-safe detection via GetAuraDispelTypeColor
 do
@@ -1454,7 +1465,9 @@ local function StartPandemicGlow(slot, slotSize)
         local lineLen = math.floor((sz + sz) * (2 / N - 0.1))
         lineLen = min(lineLen, sz)
         if lineLen < 1 then lineLen = 1 end
-        StartProceduralAnts(pg.wrapper, N, th, period, lineLen, cr, cg, cb, sz)
+        local br, bg, bb = GetPandemicGlowBackgroundColor()
+        StartProceduralAnts(pg.wrapper, N, th, period, lineLen, cr, cg, cb, sz, nil,
+            GetPandemicGlowBackground() and br or nil, bg, bb)
     elseif entry.buttonGlow then
         -- Action Button Glow: animated ants texture
         pg.flipTex:Hide()
@@ -7081,9 +7094,22 @@ function NameplateFrame:UpdateImportantCastGlow(spellID)
     local style = cfg.importantCastGlowStyle or defaults.importantCastGlowStyle or 1
     if style ~= 1 and style ~= 4 then style = 1 end
     local c = cfg.importantCastGlowColor or defaults.importantCastGlowColor or { r = 1, g = 0.2, b = 0.2 }
+    local bgColor = cfg.importantCastGlowBackgroundColor or defaults.importantCastGlowBackgroundColor or { r = 0, g = 0, b = 0 }
+    local bgOn = cfg.importantCastGlowBackground == true
+    local impN, impTh, impPeriod
+    if style ~= 4 then
+        impN = cfg.importantCastGlowLines or defaults.importantCastGlowLines or 8
+        impTh = cfg.importantCastGlowThickness or defaults.importantCastGlowThickness or 2
+        impPeriod = cfg.importantCastGlowSpeed or defaults.importantCastGlowSpeed or 4
+    end
 
     -- Ensure glow animation is running (idempotent if already active)
-    if not self._importantGlowActive or self._importantGlowStyle ~= style then
+    if not self._importantGlowActive or self._importantGlowStyle ~= style
+       or self._importantGlowR ~= c.r or self._importantGlowG ~= c.g or self._importantGlowB ~= c.b
+       or self._importantGlowBgOn ~= bgOn or self._importantGlowBgR ~= bgColor.r
+       or self._importantGlowBgG ~= bgColor.g or self._importantGlowBgB ~= bgColor.b
+       or self._importantGlowN ~= impN or self._importantGlowTh ~= impTh
+       or self._importantGlowPeriod ~= impPeriod then
         Glows.StopAllGlows(self._importantCastOverlay)
         local pW, pH = self.cast:GetWidth(), self.cast:GetHeight()
         if pW < 5 then pW = 100 end
@@ -7091,16 +7117,18 @@ function NameplateFrame:UpdateImportantCastGlow(spellID)
         if style == 4 then
             (StartAutoCastShine or Glows.StartAutoCastShine)(self._importantCastOverlay, pW, c.r, c.g, c.b, 1.0, pH)
         else
-            local N = cfg.importantCastGlowLines or defaults.importantCastGlowLines or 8
-            local th = cfg.importantCastGlowThickness or defaults.importantCastGlowThickness or 2
-            local period = cfg.importantCastGlowSpeed or defaults.importantCastGlowSpeed or 4
-            local lineLen = math.floor((pW + pH) * (2 / N - 0.1))
+            local lineLen = math.floor((pW + pH) * (2 / impN - 0.1))
             lineLen = math.min(lineLen, math.min(pW, pH))
             if lineLen < 1 then lineLen = 1 end
-            (StartProceduralAnts or Glows.StartProceduralAnts)(self._importantCastOverlay, N, th, period, lineLen, c.r, c.g, c.b, pW, pH)
+            (StartProceduralAnts or Glows.StartProceduralAnts)(self._importantCastOverlay, impN, impTh, impPeriod, lineLen, c.r, c.g, c.b, pW, pH,
+                bgOn and (bgColor.r or 0) or nil, bgColor.g or 0, bgColor.b or 0)
         end
         self._importantGlowActive = true
         self._importantGlowStyle = style
+        self._importantGlowR, self._importantGlowG, self._importantGlowB = c.r, c.g, c.b
+        self._importantGlowBgOn = bgOn
+        self._importantGlowBgR, self._importantGlowBgG, self._importantGlowBgB = bgColor.r, bgColor.g, bgColor.b
+        self._importantGlowN, self._importantGlowTh, self._importantGlowPeriod = impN, impTh, impPeriod
     end
 
     -- SetAlphaFromBoolean handles the secret boolean taint-free.

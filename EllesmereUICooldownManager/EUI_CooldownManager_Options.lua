@@ -322,6 +322,11 @@ initFrame:SetScript("OnEvent", function(self)
                 N = bd.pandemicGlowLines or 8,
                 th = bd.pandemicGlowThickness or 2,
                 period = bd.pandemicGlowSpeed or 4,
+                bg = bd.pandemicGlowBackground and {
+                    r = (bd.pandemicGlowBackgroundColor and bd.pandemicGlowBackgroundColor.r) or 0,
+                    g = (bd.pandemicGlowBackgroundColor and bd.pandemicGlowBackgroundColor.g) or 0,
+                    b = (bd.pandemicGlowBackgroundColor and bd.pandemicGlowBackgroundColor.b) or 0,
+                } or nil,
             } or nil
             ns.StartNativeGlow(glowOvr, style, c.r or 1, c.g or 1, c.b or 0, glowOpts)
         end
@@ -345,7 +350,7 @@ initFrame:SetScript("OnEvent", function(self)
     local _sharedPgPopup, _sharedPgPopupOwner
     -- Default key set: pandemic glow. Other callers (e.g. Buff Glow) pass their
     -- own keys so the shared popup reads/writes that feature's Lines/Thickness/Speed.
-    local PG_DEFAULT_KEYS = { lines = "pandemicGlowLines", thickness = "pandemicGlowThickness", speed = "pandemicGlowSpeed" }
+    local PG_DEFAULT_KEYS = { lines = "pandemicGlowLines", thickness = "pandemicGlowThickness", speed = "pandemicGlowSpeed", background = "pandemicGlowBackground", backgroundColor = "pandemicGlowBackgroundColor" }
     local function ShowPandemicPixelGlowPopup(anchorBtn, getDataFn, refreshFn, keys)
         -- Bind data source before popup creation so slider getValue callbacks work
         if _sharedPgPopup then
@@ -358,6 +363,8 @@ initFrame:SetScript("OnEvent", function(self)
             local MakeBorder = EllesmereUI.MakeBorder
             local MakeFont   = EllesmereUI.MakeFont
             local BuildSliderCore = EllesmereUI.BuildSliderCore
+            local BuildToggleControl = EllesmereUI.BuildToggleControl
+            local BuildColorSwatch = EllesmereUI.BuildColorSwatch
             local BORDER_COLOR   = EllesmereUI.BORDER_COLOR
 
             local SIDE_PAD = 14; local TOP_PAD = 14
@@ -366,7 +373,7 @@ initFrame:SetScript("OnEvent", function(self)
             local INPUT_W = 34; local SLIDER_INPUT_GAP = 8; local LABEL_SLIDER_GAP = 12
             local MIN_POPUP_W = 180
 
-            local totalH = TOP_PAD + TITLE_H + TITLE_GAP + GAP + ROW_H + GAP + ROW_H + GAP + ROW_H + TOP_PAD
+            local totalH = TOP_PAD + TITLE_H + TITLE_GAP + (GAP * 5) + (ROW_H * 5) + TOP_PAD
 
             local pf = CreateFrame("Frame", nil, UIParent)
             pf:SetSize(260, totalH); pf:SetFrameStrata("DIALOG"); pf:SetFrameLevel(200)
@@ -391,7 +398,7 @@ initFrame:SetScript("OnEvent", function(self)
             local tmpFS = pf:CreateFontString(nil, "OVERLAY")
             tmpFS:SetFont(EllesmereUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, "")
             local maxLblW = 0
-            for _, txt in ipairs({"Lines", "Thickness", "Speed"}) do
+            for _, txt in ipairs({"Lines", "Thickness", "Speed", "Background", "Background Color"}) do
                 tmpFS:SetText(txt); local w = tmpFS:GetStringWidth(); if w > maxLblW then maxLblW = w end
             end
             tmpFS:Hide(); if maxLblW < 10 then maxLblW = 60 end
@@ -431,6 +438,58 @@ initFrame:SetScript("OnEvent", function(self)
             t3:SetPoint("TOPLEFT", pf, "TOPLEFT", SLIDER_LEFT, r3Y - 2)
             v3:ClearAllPoints(); v3:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -SIDE_PAD, r3Y)
 
+            local r4Y = r3Y - ROW_H - GAP
+            local lbl4 = MakeFont(pf, 11, nil, 1, 1, 1); lbl4:SetAlpha(0.6)
+            lbl4:SetText(EllesmereUI.L("Background")); lbl4:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r4Y)
+            local bgToggle, _, bgSnap = BuildToggleControl(pf, pf:GetFrameLevel() + 2,
+                function()
+                    local d = pf._getData(); local k = pf._keys.background
+                    return d and k and d[k] == true
+                end,
+                function(v)
+                    local d = pf._getData(); local k = pf._keys.background
+                    if d and k then d[k] = v and true or nil end
+                    if pf._refresh then pf._refresh() end
+                end, { sizeRatio = 0.8, noAnim = true })
+            bgToggle:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, r4Y - ROW_H / 2)
+
+            local r5Y = r4Y - ROW_H - GAP
+            local lbl5 = MakeFont(pf, 11, nil, 1, 1, 1); lbl5:SetAlpha(0.6)
+            lbl5:SetText(EllesmereUI.L("Background Color")); lbl5:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r5Y)
+            local bgSwatch, bgUpdate = BuildColorSwatch(pf, pf:GetFrameLevel() + 2,
+                function()
+                    local d = pf._getData(); local k = pf._keys.backgroundColor
+                    local c = d and k and d[k]
+                    if c then return c.r or 0, c.g or 0, c.b or 0 end
+                    return 0, 0, 0
+                end,
+                function(r, g, b)
+                    local d = pf._getData(); local k = pf._keys.backgroundColor
+                    if d and k then d[k] = { r = r, g = g, b = b } end
+                    if pf._refresh then pf._refresh() end
+                end, false, 20)
+            bgSwatch:ClearAllPoints()
+            bgSwatch:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, r5Y - ROW_H / 2)
+            local bgBlock = CreateFrame("Frame", nil, bgSwatch)
+            bgBlock:SetAllPoints(); bgBlock:SetFrameLevel(bgSwatch:GetFrameLevel() + 10); bgBlock:EnableMouse(true)
+            bgBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(bgSwatch, EllesmereUI.DisabledTooltip("Pixel Glow Background"))
+            end)
+            bgBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+            local function UpdateBgControls()
+                if bgSnap then bgSnap() end
+                if bgUpdate then bgUpdate() end
+                local d = pf._getData()
+                local k = pf._keys.background
+                local on = d and k and d[k] == true
+                bgSwatch:SetAlpha(on and 1 or 0.3)
+                if on then bgBlock:Hide() else bgBlock:Show() end
+            end
+            bgToggle:HookScript("OnClick", UpdateBgControls)
+            pf._refreshControls = UpdateBgControls
+            UpdateBgControls()
+
             local wasDown = false
             pf:SetScript("OnHide", function(self)
                 self:SetScript("OnUpdate", nil)
@@ -461,6 +520,7 @@ initFrame:SetScript("OnEvent", function(self)
         _sharedPgPopup._getData = getDataFn
         _sharedPgPopup._refresh = refreshFn
         _sharedPgPopup._keys = keys or PG_DEFAULT_KEYS
+        if _sharedPgPopup._refreshControls then _sharedPgPopup._refreshControls() end
         _sharedPgPopupOwner = anchorBtn
 
         _sharedPgPopup:ClearAllPoints()
@@ -15155,6 +15215,20 @@ initFrame:SetScript("OnEvent", function(self)
                               BD().pixelGlowSpeed = 9 - v
                               ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end
                           end },
+                        { type="toggle", label="Background",
+                          get=function() return BD().pixelGlowBackground == true end,
+                          set=function(v)
+                              BD().pixelGlowBackground = v and true or nil
+                              ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end
+                          end },
+                        { type="colorpicker", label="Background Color",
+                          get=function() return BD().pixelGlowBackgroundR or 0, BD().pixelGlowBackgroundG or 0, BD().pixelGlowBackgroundB or 0 end,
+                          set=function(r, g, b)
+                              BD().pixelGlowBackgroundR = r; BD().pixelGlowBackgroundG = g; BD().pixelGlowBackgroundB = b
+                              ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end
+                          end,
+                          disabled=function() return BD().pixelGlowBackground ~= true end,
+                          disabledTooltip=EllesmereUI.DisabledTooltip("Pixel Glow Background") },
                     },
                 })
                 MakeCogBtn(rightRgn, pgCogShow, nil, EllesmereUI.RESIZE_ICON)
@@ -15194,6 +15268,20 @@ initFrame:SetScript("OnEvent", function(self)
                               BD().buffGlowSpeed = 9 - v
                               ns.BuildAllCDMBars(); if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
                           end },
+                        { type="toggle", label="Background",
+                          get=function() return BD().buffGlowBackground == true end,
+                          set=function(v)
+                              BD().buffGlowBackground = v and true or nil
+                              ns.BuildAllCDMBars(); if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
+                          end },
+                        { type="colorpicker", label="Background Color",
+                          get=function() return BD().buffGlowBackgroundR or 0, BD().buffGlowBackgroundG or 0, BD().buffGlowBackgroundB or 0 end,
+                          set=function(r, g, b)
+                              BD().buffGlowBackgroundR = r; BD().buffGlowBackgroundG = g; BD().buffGlowBackgroundB = b
+                              ns.BuildAllCDMBars(); if ns.RefreshBuffGlows then ns.RefreshBuffGlows() end
+                          end,
+                          disabled=function() return BD().buffGlowBackground ~= true end,
+                          disabledTooltip=EllesmereUI.DisabledTooltip("Pixel Glow Background") },
                     },
                 })
                 MakeCogBtn(leftRgn, pgCogShow, nil, EllesmereUI.RESIZE_ICON)

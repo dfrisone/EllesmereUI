@@ -242,7 +242,7 @@ end
 
 -- lineLen is accepted for call-signature compatibility but unused: the dash
 -- length is the texture's duty cycle, not a runtime segment length.
-local function StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, szOrW, szH)
+local function StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, szOrW, szH, bgR, bgG, bgB, bgA)
     if not wrapper._euiScrollData then
         local function mk(p1, p1f, p2, p2f)
             local t = wrapper:CreateTexture(nil, "OVERLAY", nil, 7)
@@ -269,6 +269,29 @@ local function StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, 
     d.bottom:SetTexture(DASH_H, "REPEAT", "REPEAT"); d.bottom:SetHeight(th)
     d.left:SetTexture(DASH_V, "REPEAT", "REPEAT");   d.left:SetWidth(th)
     d.right:SetTexture(DASH_V, "REPEAT", "REPEAT");  d.right:SetWidth(th)
+    if bgR then
+        if not d.bgTop then
+            local function mkBg(p1, p1f, p2, p2f)
+                local t = wrapper:CreateTexture(nil, "OVERLAY", nil, 6)
+                t:SetPoint(p1, wrapper, p1f)
+                t:SetPoint(p2, wrapper, p2f)
+                return t
+            end
+            d.bgTop    = mkBg("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT")
+            d.bgBottom = mkBg("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT")
+            d.bgLeft   = mkBg("TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT")
+            d.bgRight  = mkBg("TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT")
+        end
+        bgA = bgA or 1
+        d.bgTop:SetHeight(th); d.bgBottom:SetHeight(th)
+        d.bgLeft:SetWidth(th); d.bgRight:SetWidth(th)
+        d.bgTop:SetColorTexture(bgR, bgG or 0, bgB or 0, bgA);       d.bgTop:Show()
+        d.bgBottom:SetColorTexture(bgR, bgG or 0, bgB or 0, bgA);    d.bgBottom:Show()
+        d.bgLeft:SetColorTexture(bgR, bgG or 0, bgB or 0, bgA);      d.bgLeft:Show()
+        d.bgRight:SetColorTexture(bgR, bgG or 0, bgB or 0, bgA);     d.bgRight:Show()
+    elseif d.bgTop then
+        d.bgTop:Hide(); d.bgBottom:Hide(); d.bgLeft:Hide(); d.bgRight:Hide()
+    end
     d.top:SetVertexColor(cr, cg, cb, 1);    d.top:Show()
     d.bottom:SetVertexColor(cr, cg, cb, 1); d.bottom:Show()
     d.left:SetVertexColor(cr, cg, cb, 1);   d.left:Show()
@@ -281,6 +304,7 @@ local function StopProceduralAnts(wrapper)
     local d = wrapper._euiScrollData
     if d then
         d.top:Hide(); d.bottom:Hide(); d.left:Hide(); d.right:Hide()
+        if d.bgTop then d.bgTop:Hide(); d.bgBottom:Hide(); d.bgLeft:Hide(); d.bgRight:Hide() end
     end
 end
 
@@ -675,7 +699,7 @@ end
 --  cr,cg,cb : glow color (0-1)
 --  opts     : optional table with overrides:
 --    .scale       — override entry.scale
---    .N, .th, .period — pixel glow tuning
+    --    .N, .th, .period, .bg — pixel glow tuning/background
 --    .maskPath, .borderPath, .shapeMask — shape glow textures
 -------------------------------------------------------------------------------
 local function StartGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
@@ -698,7 +722,9 @@ local function StartGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
         local lineLen = floor((w + h) * (2 / N - 0.1))
         lineLen = min(lineLen, min(w, h))
         if lineLen < 1 then lineLen = 1 end
-        StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, w, h)
+        local bg = opts.bg
+        StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, w, h,
+            bg and (bg.r or 0) or nil, bg and (bg.g or 0) or nil, bg and (bg.b or 0) or nil, bg and (bg.a or 1) or nil)
 
     elseif entry.buttonGlow then
         StartButtonGlow(wrapper, w, cr, cg, cb, nil, h)
