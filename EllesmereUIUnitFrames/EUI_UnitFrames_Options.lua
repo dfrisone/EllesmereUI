@@ -11884,7 +11884,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- disabled) boss frames and renders broken, so it must not be activatable.
         local activateBtnFrame, activateBtnLbl, activateBtn
         local function PreviewLabel()
-            return ns._bossPreviewActive and "Deactivate Boss Preview" or "Activate Boss Preview"
+            return ns._bossPreviewActive and EllesmereUI.L("Deactivate Boss Preview") or EllesmereUI.L("Activate Boss Preview")
         end
         local function BossFramesDisabled()
             return db.profile.enabledFrames.boss == false

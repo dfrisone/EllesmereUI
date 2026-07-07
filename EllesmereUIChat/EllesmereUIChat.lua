@@ -1049,7 +1049,7 @@ local function CreatePortalFlyout()
             label:SetFont(GetFont(), 8, (EUI.SlugFlag and EUI.SlugFlag("OUTLINE, SLUG")) or "OUTLINE, SLUG")
             label:SetPoint("BOTTOM", btn, "BOTTOM", 0, 2)
             label:SetTextColor(1, 1, 1, 0.9)
-            label:SetText(short)
+            label:SetText((EllesmereUI and EllesmereUI.L and EllesmereUI.L(short)) or short)
         end
 
         -- Hover highlight (HIGHLIGHT layer auto-shows on mouseover)
