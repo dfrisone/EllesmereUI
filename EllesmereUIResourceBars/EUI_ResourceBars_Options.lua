@@ -186,6 +186,30 @@ initFrame:SetScript("OnEvent", function(self)
     local _previewPipCount = 3  -- randomized each page visit
     local _previewBarFillPct = 65 -- randomized each page visit (30-80)
 
+    -- Discrete pip count for the current spec's preview: use the real
+    -- resource max (Fury Whirlwind 4, Arms Sweeping Strikes 12/18, DK runes
+    -- 6, Maelstrom Weapon 5/10, ...) so the preview matches the live bar;
+    -- generic 5 as fallback when there is no discrete secondary.
+    local function PreviewPipCount()
+        local gsr = _G._ERB_GetSecondaryResource
+        local info = gsr and gsr()
+        if not info or info.type == "bar" then return 5 end
+        local m = info.max
+        -- Talent-dependent maxes come from the live trackers
+        if info.power == "SWEEPING_STRIKES" and EllesmereUI and EllesmereUI.GetSweepingStrikes then
+            local _, realMax = EllesmereUI.GetSweepingStrikes()
+            if realMax and realMax > 0 then m = realMax end
+        elseif info.power == "WHIRLWIND_STACKS" and EllesmereUI and EllesmereUI.GetWhirlwindStacks then
+            local _, realMax = EllesmereUI.GetWhirlwindStacks()
+            if realMax and realMax > 0 then m = realMax end
+        elseif info.power == "MAELSTROM_WEAPON" and EllesmereUI and EllesmereUI.GetMaelstromWeapon then
+            local _, realMax = EllesmereUI.GetMaelstromWeapon()
+            if realMax and realMax > 0 then m = realMax end
+        end
+        if type(m) == "number" and m >= 2 and m <= 20 then return m end
+        return 5
+    end
+
     local function UpdatePreviewHeader()
         local p = DB()
         if not p then return end
@@ -340,7 +364,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 local totalW = PipSnap(sp.pipWidth)
                 local snappedPipH = PipSnap(sp.pipHeight)
-                local numPips = 5
+                local numPips = PreviewPipCount()
                 local isVertical = false
                 local isReversed = false
 
@@ -385,14 +409,39 @@ initFrame:SetScript("OnEvent", function(self)
                     filledCount = _pvThreshCount
                 else
                     filledCount = _previewPipCount
+                    -- _previewPipCount is randomized against the generic
+                    -- 5-pip preview; rescale for specs with other pip counts
+                    -- (e.g. 12/18 Sweeping Strikes charges).
+                    if numPips ~= 5 then
+                        filledCount = math.max(1, math.min(numPips,
+                            math.floor(_previewPipCount / 5 * numPips + 0.5)))
+                    end
                 end
+                -- Expose to the count-text block below so the number always
+                -- matches the lit segments
+                pc._pvShownCount = filledCount
+                pc._pvShownMax = numPips
                 local useThresh = _pvTsEnabled
 				-- use current spec threshold color if configured
 				local tr = _pvTsEntry2 and _pvTsEntry2.thresholdR or sp.thresholdR
 				local tg = _pvTsEntry2 and _pvTsEntry2.thresholdG or sp.thresholdG
 				local tb = _pvTsEntry2 and _pvTsEntry2.thresholdB or sp.thresholdB
 
-                for i, pip in ipairs(_previewFrames.pips) do
+                -- Top up pip frames if this spec needs more than were built
+                -- (pip counts differ per spec: 3-18). Styling is applied in
+                -- the loop below, so bare bg+fill textures suffice here.
+                for i = #_previewFrames.pips + 1, numPips do
+                    local pip = CreateFrame("Frame", nil, pc)
+                    local bg = pip:CreateTexture(nil, "BACKGROUND")
+                    bg:SetAllPoints()
+                    pip._bg = bg
+                    local fill = pip:CreateTexture(nil, "ARTWORK")
+                    fill:SetAllPoints()
+                    pip._fill = fill
+                    _previewFrames.pips[i] = pip
+                end
+                for i = 1, math.min(numPips, #_previewFrames.pips) do
+                    local pip = _previewFrames.pips[i]
                     if isVertical then
                         pip:SetSize(snappedPipH, pipW[i])
                         pip:ClearAllPoints()
@@ -458,7 +507,7 @@ initFrame:SetScript("OnEvent", function(self)
                             sp.textXOffset or 0, sp.textYOffset or 0)
                         if not active then
                             -- Fake durations: higher numbers for pips further right
-                            local fakeDurations = { 2, 4, 7, 9, 10 }
+                            local fakeDurations = { 2, 4, 6, 7, 9, 10 }
                             pip._pvCdText:SetText(tostring(fakeDurations[i] or ""))
                             pip._pvCdText:Show()
                         else
@@ -550,10 +599,16 @@ initFrame:SetScript("OnEvent", function(self)
                     local percentSuffix = (sp.showPercent == false) and "" or "%"
                     pc._countText:SetText(tostring(_previewBarFillPct) .. percentSuffix)
                 else
-                    local _pvTsE3 = _G._ERB_ResolveThresholdSpecEntry and _G._ERB_ResolveThresholdSpecEntry(sp) or nil
-                    local _pvE3Enabled = _pvTsE3 and (_pvTsE3.thresholdEnabled ~= false) or false
-                    local filledCount = _pvE3Enabled and (_pvTsE3.thresholdCount or sp.thresholdCount) or _previewPipCount
-                    pc._countText:SetText(tostring(filledCount))
+                    -- Mirror the pip loop's filled count (threshold-resolved
+                    -- and rescaled to the spec's pip count) so the number
+                    -- always matches the lit segments; "cur / max" like the
+                    -- live bar unless Show Max Stacks is off.
+                    local shown = pc._pvShownCount or _previewPipCount
+                    if sp.showMaxStacks == false then
+                        pc._countText:SetText(tostring(shown))
+                    else
+                        pc._countText:SetText(shown .. " / " .. (pc._pvShownMax or shown))
+                    end
                 end
                 pc._countText:Show()
             elseif pc._countText then
@@ -651,7 +706,7 @@ initFrame:SetScript("OnEvent", function(self)
         else
             -- Pips preview: pipWidth is total bar width; divide evenly across pips.
             -- Any remainder pixels go into pip widths, not spacing.
-            local numPips = 5
+            local numPips = PreviewPipCount()
             local totalW = sp.pipWidth
             local pipSp = sp.pipSpacing
             local baseW = math.floor((totalW - (numPips - 1) * pipSp) / numPips)

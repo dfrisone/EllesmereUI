@@ -2946,6 +2946,7 @@ EllesmereUI.DEFAULT_CLASS_RESOURCE_COLORS = {
     MaelstromWeapon = { r = 0.0,    g = 0.4392, b = 0.8706 },
     TipOfTheSpear   = { r = 0.6667, g = 0.8275, b = 0.4471 },
     WhirlwindStacks = { r = 0.7765, g = 0.6078, b = 0.4275 },
+    SweepingStrikes = { r = 0.8510, g = 0.4157, b = 0.3373 },
 }
 
 -- Get a class-resource color (custom override or default), keyed by resource.
@@ -3963,6 +3964,35 @@ do
 
     local CRACKLING = 203201  -- Crackling Thunder: widens Thunder Clap / Thunder Blast
 
+    -- Cached IsSpellKnown flags. GetWhirlwindStacks is polled every 0.1 s by
+    -- the resource bar, unit frame and nameplate readouts, and
+    -- HandleWhirlwindStacks runs on every player cast for every class;
+    -- C_SpellBook.IsSpellKnown is a C call and talents cannot change in
+    -- combat, so resolve the flags once per login/spec/talent event instead
+    -- (same pattern as the Sweeping Strikes tracker below). Non-warriors
+    -- never register the watcher: the flags stay false and both entry
+    -- points early-out on a plain upvalue read.
+    local requiredKnown, crashingKnown, unhingedKnown, cracklingKnown = false, false, false, false
+    do
+        local _, cls = UnitClass("player")
+        if cls == "WARRIOR" then
+            local function RefreshKnown()
+                local sb = C_SpellBook
+                requiredKnown  = (sb and sb.IsSpellKnown(REQUIRED)) or false
+                crashingKnown  = (sb and sb.IsSpellKnown(CRASHING)) or false
+                unhingedKnown  = (sb and sb.IsSpellKnown(UNHINGED)) or false
+                cracklingKnown = (sb and sb.IsSpellKnown(CRACKLING)) or false
+            end
+            local watcher = CreateFrame("Frame")
+            watcher:RegisterEvent("PLAYER_LOGIN")
+            watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+            watcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+            watcher:RegisterEvent("TRAIT_CONFIG_UPDATED")
+            watcher:RegisterEvent("PLAYER_TALENT_UPDATE")
+            watcher:SetScript("OnEvent", RefreshKnown)
+        end
+    end
+
     -- Improved Whirlwind grants stacks only when the swing connects with an enemy,
     -- but UNIT_SPELLCAST_SUCCEEDED fires even when it hits nothing (swung at empty
     -- air, no target, out of combat). Gate the award on an attackable, living enemy
@@ -3972,17 +4002,19 @@ do
     -- Resolved synchronously at cast time, so a kill that ends combat is still
     -- counted (the victim is present the instant the cast succeeds).
     -- NOTE: when no hostile target is set this relies on enemy nameplates showing.
-    local function EnemyInStrikeRange(spellID)
-        local wide = (spellID == 6343 or spellID == 435222) and C_SpellBook.IsSpellKnown(CRACKLING)
-        local function InReach(u)
-            if not (UnitExists(u) and UnitCanAttack("player", u) and not UnitIsDead(u)) then
-                return false
-            end
-            return CheckInteractDistance(u, 2) or (wide and CheckInteractDistance(u, 1)) or false
+    -- InReach is block-scoped (wide passed as a parameter, no upvalues from
+    -- the call) so EnemyInStrikeRange allocates no closure per cast.
+    local function InReach(u, wide)
+        if not (UnitExists(u) and UnitCanAttack("player", u) and not UnitIsDead(u)) then
+            return false
         end
-        if InReach("target") then return true end
+        return CheckInteractDistance(u, 2) or (wide and CheckInteractDistance(u, 1)) or false
+    end
+    local function EnemyInStrikeRange(spellID)
+        local wide = (spellID == 6343 or spellID == 435222) and cracklingKnown
+        if InReach("target", wide) then return true end
         for i = 1, 40 do
-            if InReach("nameplate" .. i) then return true end
+            if InReach("nameplate" .. i, wide) then return true end
         end
         return false
     end
@@ -4002,7 +4034,7 @@ do
             return
         end
         if event ~= "UNIT_SPELLCAST_SUCCEEDED" or unit ~= "player" then return end
-        if not (C_SpellBook and C_SpellBook.IsSpellKnown(REQUIRED)) then return end
+        if not requiredKnown then return end
 
         if castGUID and seenGUID[castGUID] then return end
         if castGUID then
@@ -4020,8 +4052,7 @@ do
 
         if GENERATORS[spellID] then
             -- Thunder Clap / Thunder Blast only count with Crashing Thunder
-            if (spellID == 6343 or spellID == 435222)
-               and not C_SpellBook.IsSpellKnown(CRASHING) then
+            if (spellID == 6343 or spellID == 435222) and not crashingKnown then
                 return
             end
             -- Only award if the swing actually had an enemy to land on.
@@ -4030,8 +4061,7 @@ do
             expiresAt = GetTime() + DURATION
         elseif SPENDERS[spellID] and stacks > 0 then
             -- Unhinged: Bloodthirst/Bloodbath don't consume during Bladestorm
-            if UNHINGED_EXEMPT[spellID]
-               and C_SpellBook.IsSpellKnown(UNHINGED)
+            if UNHINGED_EXEMPT[spellID] and unhingedKnown
                and GetTime() < bladestormEndsAt then
                 return
             end
@@ -4041,13 +4071,190 @@ do
     end
 
     function EllesmereUI.GetWhirlwindStacks()
-        if not (C_SpellBook and C_SpellBook.IsSpellKnown(REQUIRED)) then
-            return 0, 0
-        end
+        if not requiredKnown then return 0, 0 end
         if expiresAt and GetTime() >= expiresAt then
             stacks, expiresAt = 0, nil
         end
         return stacks, MAX
+    end
+end
+
+-- Sweeping Strikes tracker (Arms Warrior, Midnight charge rework)
+-- Sweeping Strikes (260708) grants 12 charges (18 with Improved Sweeping
+-- Strikes 383155). Single-target damaging abilities consume charges to
+-- strike an additional enemy within ~8 yd; a charge is only consumed when a
+-- sweep partner is actually in range ("less waste" rework design).
+-- Broad Strokes (1261049): Colossus Smash / Warbreaker also activate
+-- Sweeping Strikes. Buff duration: 30 seconds, cooldown: 30 seconds.
+-- 12.1: charges from the ability and Broad Strokes stack; we track only up
+-- to the visual cap, so either source simply refreshes to max.
+-- Fervor of Battle (202316): Cleave/Whirlwind hitting 3+ targets also Slam
+-- the primary target -- that Slam sweeps and consumes a charge.
+do
+    local stacks, expiresAt = 0, nil
+    local BASE_MAX     = 12
+    local IMPROVED_MAX = 18
+    local DURATION = 30
+    local SWEEP    = 260708
+    local IMPROVED = 383155   -- Improved Sweeping Strikes: 12 -> 18 charges
+    local BROAD    = 1261049  -- Broad Strokes: Colossus Smash activates Sweep
+    local FERVOR   = 202316   -- Fervor of Battle: Cleave/WW on 3+ targets Slams
+
+    -- Cached IsSpellKnown flags. GetSweepingStrikes is polled every 0.1 s by
+    -- the resource bar, unit frame and nameplate readouts, and
+    -- HandleSweepingStrikes runs on every player cast for every class;
+    -- C_SpellBook.IsSpellKnown is a C call and talents cannot change in
+    -- combat, so resolve once per login/spec/talent event instead (same
+    -- rationale as the cached spec ID above GetSoulFragments). Non-warriors
+    -- never register the watcher: the flags stay false and both entry
+    -- points early-out on a plain upvalue read.
+    local sweepKnown, improvedKnown, broadKnown, fervorKnown = false, false, false, false
+    do
+        local _, cls = UnitClass("player")
+        if cls == "WARRIOR" then
+            local function RefreshKnown()
+                local sb = C_SpellBook
+                sweepKnown    = (sb and sb.IsSpellKnown(SWEEP)) or false
+                improvedKnown = (sb and sb.IsSpellKnown(IMPROVED)) or false
+                broadKnown    = (sb and sb.IsSpellKnown(BROAD)) or false
+                fervorKnown   = (sb and sb.IsSpellKnown(FERVOR)) or false
+            end
+            local watcher = CreateFrame("Frame")
+            watcher:RegisterEvent("PLAYER_LOGIN")
+            watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+            watcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+            watcher:RegisterEvent("TRAIT_CONFIG_UPDATED")
+            watcher:RegisterEvent("PLAYER_TALENT_UPDATE")
+            watcher:SetScript("OnEvent", RefreshKnown)
+        end
+    end
+
+    local function MaxStacks()
+        return improvedKnown and IMPROVED_MAX or BASE_MAX
+    end
+
+    -- Broad Strokes generators (only count with the talent known)
+    local CS_GENERATORS = {
+        [167105] = true,  -- Colossus Smash
+        [262161] = true,  -- Warbreaker (replaces Colossus Smash)
+    }
+
+    -- Single-target damaging cast IDs whose damage effects sit in the
+    -- Sweeping Strikes affected-spells list (wowhead spell=260708), mapped
+    -- to how many charges each cast consumes.
+    -- Rend and Storm Bolt do NOT sweep and are deliberately absent.
+    local SPENDERS = {
+        [12294]   = 1,  -- Mortal Strike
+        [7384]    = 1,  -- Overpower
+        [1464]    = 1,  -- Slam
+        [163201]  = 1,  -- Execute (Arms)
+        [5308]    = 1,  -- Execute (base)
+        [260643]  = 1,  -- Skullsplitter
+        [34428]   = 1,  -- Victory Rush
+        [202168]  = 1,  -- Impending Victory
+        [1715]    = 1,  -- Hamstring
+        [1269383] = 1,  -- Heroic Strike (replaces Slam via Master of Warfare)
+        [436358]  = 2,  -- Demolish: the channel sweeps twice (damage IDs
+                        -- 440884/440886) -- confirmed in-game, 2 per cast
+    }
+
+    -- Fervor of Battle: the triggered Slam happens on Cleave/Whirlwind casts
+    local FOB_TRIGGERS = {
+        [1680] = true,  -- Whirlwind (Arms)
+        [845]  = true,  -- Cleave
+    }
+    local fobWindow = 0  -- suppress a possibly-echoed Slam cast event
+
+    -- Deduplicate cast events via GUID
+    local seenGUID = {}
+    local guidCount = 0
+
+    -- A charge is only consumed when the strike can sweep onto a second
+    -- enemy (~8 yd). Count the hostile target plus enemy nameplates inside
+    -- the index-2 interact probe (~11 yd, slightly generous; same probe as
+    -- the Whirlwind tracker above). `need` = how many enemies must be in
+    -- reach (2 for a sweep partner, 3 for a Fervor of Battle trigger).
+    -- NOTE: relies on enemy nameplates showing for off-target enemies.
+    -- InReach is block-scoped (no upvalues from the call) so EnemiesInReach
+    -- allocates nothing -- it runs on every tracked spender cast in combat.
+    local function InReach(u)
+        if not (UnitExists(u) and UnitCanAttack("player", u) and not UnitIsDead(u)) then
+            return false
+        end
+        return CheckInteractDistance(u, 2) or false
+    end
+    local function EnemiesInReach(need)
+        local count, targetPlated = 0, false
+        for i = 1, 40 do
+            local u = "nameplate" .. i
+            if InReach(u) then
+                count = count + 1
+                if UnitIsUnit(u, "target") then targetPlated = true end
+                if count >= need then return true end
+            end
+        end
+        -- Target without a visible nameplate still counts as one body
+        if not targetPlated and InReach("target") then count = count + 1 end
+        return count >= need
+    end
+
+    function EllesmereUI.HandleSweepingStrikes(event, unit, castGUID, spellID)
+        if event == "PLAYER_DEAD" or event == "PLAYER_ALIVE" then
+            stacks, expiresAt = 0, nil
+            fobWindow = 0
+            wipe(seenGUID)
+            guidCount = 0
+            return
+        end
+        if event == "PLAYER_REGEN_ENABLED" then
+            -- Clean up GUID cache on combat end to prevent unbounded growth
+            wipe(seenGUID)
+            guidCount = 0
+            return
+        end
+        if event ~= "UNIT_SPELLCAST_SUCCEEDED" or unit ~= "player" then return end
+        if not sweepKnown then return end
+
+        if castGUID and seenGUID[castGUID] then return end
+        if castGUID then
+            seenGUID[castGUID] = true
+            guidCount = guidCount + 1
+            -- Safety: flush if table grows too large (shouldn't happen normally)
+            if guidCount > 200 then wipe(seenGUID); guidCount = 0 end
+        end
+
+        if spellID == SWEEP
+           or (CS_GENERATORS[spellID] and broadKnown) then
+            stacks = MaxStacks()
+            expiresAt = GetTime() + DURATION
+        elseif FOB_TRIGGERS[spellID] and stacks > 0 and fervorKnown then
+            -- Fervor of Battle: Cleave/Whirlwind hitting 3+ targets also
+            -- Slams the primary target; that Slam sweeps and consumes a
+            -- charge. The trigger itself is not a player cast event, so it
+            -- is counted here off the Cleave/WW cast, gated on 3 enemies in
+            -- reach (with 3+ up, a sweep partner necessarily exists).
+            if not EnemiesInReach(3) then return end
+            fobWindow = GetTime() + 0.3
+            stacks = max(0, stacks - 1)
+            if stacks == 0 then expiresAt = nil end
+        elseif SPENDERS[spellID] and stacks > 0 then
+            -- If the game echoes the Fervor-of-Battle Slam as a real cast
+            -- event, skip it -- the charge was already counted above. A
+            -- player-pressed Slam can't land inside the 0.3 s window (GCD).
+            if spellID == 1464 and GetTime() < fobWindow then return end
+            -- No sweep partner in range -> the game doesn't consume a charge
+            if not EnemiesInReach(2) then return end
+            stacks = max(0, stacks - SPENDERS[spellID])
+            if stacks == 0 then expiresAt = nil end
+        end
+    end
+
+    function EllesmereUI.GetSweepingStrikes()
+        if not sweepKnown then return 0, 0 end
+        if expiresAt and GetTime() >= expiresAt then
+            stacks, expiresAt = 0, nil
+        end
+        return stacks, MaxStacks()
     end
 end
 
