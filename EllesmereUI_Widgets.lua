@@ -4321,7 +4321,7 @@ local function BuildCogPopup(opts)
                 tmpFS:SetText(EllesmereUI.L(row.label))
                 local w = tmpFS:GetStringWidth()
                 if w > maxLblW then maxLblW = w end
-            elseif row.type == "dropdown" then
+            elseif row.type == "dropdown" or row.type == "segmented" then
                 tmpFS:SetText(EllesmereUI.L(row.label))
                 local w = tmpFS:GetStringWidth()
                 if w > maxDDLblW then maxDDLblW = w end
@@ -4332,8 +4332,10 @@ local function BuildCogPopup(opts)
 
         local COG_DD_W = 130
         local SLIDER_LEFT = SIDE_PAD + maxLblW + LABEL_SLIDER_GAP
-        local SLIDER_W = math.max(80, 260 - SLIDER_LEFT - SLIDER_INPUT_GAP - INPUT_W - SIDE_PAD)
-        local POPUP_W = math.max(MIN_POPUP_W, SLIDER_LEFT + SLIDER_W + SLIDER_INPUT_GAP + INPUT_W + SIDE_PAD)
+        -- opts.minWidth (per-popup) override
+        local TARGET_W = opts.minWidth or 260
+        local SLIDER_W = math.max(80, TARGET_W - SLIDER_LEFT - SLIDER_INPUT_GAP - INPUT_W - SIDE_PAD)
+        local POPUP_W = math.max(opts.minWidth or MIN_POPUP_W, SLIDER_LEFT + SLIDER_W + SLIDER_INPUT_GAP + INPUT_W + SIDE_PAD)
         -- Ensure popup is wide enough for dropdown rows (label + gap + dropdown + padding)
         local ddNeeded = SIDE_PAD + maxDDLblW + LABEL_SLIDER_GAP + COG_DD_W + SIDE_PAD
         if ddNeeded > POPUP_W then POPUP_W = ddNeeded end
@@ -4351,7 +4353,7 @@ local function BuildCogPopup(opts)
         local totalH = TOP_PAD + TITLE_H + TITLE_GAP
         for i, row in ipairs(opts.rows) do
             if i > 1 then totalH = totalH + GAP end
-            if row.type == "toggle" then
+            if row.type == "toggle" or row.type == "segmented" then
                 totalH = totalH + TOGGLE_ROW_H
             elseif row.type == "dropdown" or row.type == "reorder" then
                 totalH = totalH + DROPDOWN_ROW_H
@@ -4547,6 +4549,48 @@ local function BuildCogPopup(opts)
 
                 rowWidgets[#rowWidgets + 1] = { type = 'dropdown', btn = ddBtn, lbl = ddLbl, get = row.get, values = row.values, refresh = ddBtn._ddRefresh, disOverlay = ddDis, disCheck = row.disabled }
                 curY = curY - DROPDOWN_ROW_H
+            elseif row.type == 'segmented' then
+                local lbl = MakeFont(pf, 11, nil, 1, 1, 1); lbl:SetAlpha(0.6)
+                lbl:SetText(EllesmereUI.L(row.label))
+                lbl:SetPoint('LEFT', pf, 'TOPLEFT', SIDE_PAD, curY - TOGGLE_ROW_H / 2 - 1)
+
+                local seg, _seg2, segRefresh = EllesmereUI.BuildSegmentedControl({
+                    parent     = pf,
+                    keys       = row.keys,
+                    labels     = row.labels,
+                    autoWidth  = true,
+                    square     = true,
+                    height     = 22,
+                    getChecked = function(key) return row.get() == key end,
+                    onToggle   = function(key)
+                        row.set(key)
+                        if pf._refresh then pf._refresh() end
+                    end,
+                })
+                seg:ClearAllPoints()
+                seg:SetPoint('RIGHT', pf, 'TOPRIGHT', -SIDE_PAD, curY - TOGGLE_ROW_H / 2)
+
+                local segDis
+                if row.disabled then
+                    segDis = CreateFrame("Frame", nil, pf)
+                    segDis:SetPoint("TOPLEFT", pf, "TOPLEFT", 1, curY)
+                    segDis:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -1, curY)
+                    segDis:SetHeight(TOGGLE_ROW_H)
+                    segDis:SetFrameLevel(pf:GetFrameLevel() + 10)
+                    segDis:EnableMouse(true)
+                    local disTex = SolidTex(segDis, "OVERLAY", 0.06, 0.08, 0.10, 0.70)
+                    disTex:SetAllPoints()
+                    segDis:SetScript("OnEnter", function(self)
+                        local tip = ResolveDisabledTip(row)
+                        if tip and EllesmereUI.ShowWidgetTooltip then
+                            EllesmereUI.ShowWidgetTooltip(self, tip)
+                        end
+                    end)
+                    segDis:SetScript("OnLeave", function() if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip() end end)
+                end
+
+                rowWidgets[#rowWidgets + 1] = { type = 'segmented', seg = seg, refresh = segRefresh, disOverlay = segDis, disCheck = row.disabled }
+                curY = curY - TOGGLE_ROW_H
             elseif row.type == 'colorpicker' then
                 local lbl = MakeFont(pf, 11, nil, 1, 1, 1); lbl:SetAlpha(0.6)
                 lbl:SetText(EllesmereUI.L(row.label))
@@ -4781,7 +4825,7 @@ local function BuildCogPopup(opts)
                 local rowFrames = {}
                 local insLine = menu:CreateTexture(nil, "OVERLAY", nil, 7)
                 insLine:SetHeight(2)
-                local EG2 = EllesmereUI.ACCENT_COLOR or { r = 0.05, g = 0.82, b = 0.62 }
+                local EG2 = EllesmereUI.ELLESMERE_GREEN or { r = 0.05, g = 0.82, b = 0.62 }
                 insLine:SetColorTexture(EG2.r, EG2.g, EG2.b, 0.9)
                 insLine:Hide()
 
@@ -5023,6 +5067,13 @@ local function BuildCogPopup(opts)
                     if rw.saveBg then
                         rw.saveBg:SetColorTexture(ELLESMERE_GREEN.r, ELLESMERE_GREEN.g, ELLESMERE_GREEN.b, 0.85)
                     end
+                elseif rw.type == 'segmented' then
+                    if rw.disOverlay and rw.disCheck then
+                        local dis
+                        if type(rw.disCheck) == "function" then dis = rw.disCheck() else dis = rw.disCheck end
+                        if dis then rw.disOverlay:Show() else rw.disOverlay:Hide() end
+                    end
+                    if rw.refresh then rw.refresh() end
                 elseif rw.type == 'reorder' then
                     if rw.disOverlay and rw.disCheck then
                         local dis
