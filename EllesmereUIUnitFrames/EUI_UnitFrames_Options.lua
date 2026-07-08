@@ -12568,20 +12568,14 @@ initFrame:SetScript("OnEvent", function(self)
 
             _, hh = Ww:SectionHeader(pp, "Indicators", yy);  yy = yy - hh
 
-            -- Row 1: Out of Range Alpha | Spell Target
+            -- Row 1: Out of Range Alpha
             -- (Out of Range read live by the range ticker, so no reload needed.)
             _, hh = Ww:DualRow(pp, yy,
                 { type="slider", text="Out of Range Alpha", min=10, max=100, step=1,
                   tooltip="Fades boss frames when the boss is out of range of your spells. Set to 100% to disable the fade.",
                   getValue=function() return math.floor(((db.profile.boss.oorAlpha or 0.4) * 100) + 0.5) end,
                   setValue=function(v) db.profile.boss.oorAlpha = v / 100 end },
-                { type="toggle", text="Spell Target",
-                  tooltip = "Show the name of who the boss is casting on.",
-                  getValue=function() return db.profile.boss.showCastTarget == true end,
-                  setValue=function(v)
-                      db.profile.boss.showCastTarget = v
-                      ReloadAndUpdate()
-                  end });  yy = yy - hh
+                { type="spacer" });  yy = yy - hh
 
             -- Row 2: Show Raid Marker | Raid Marker Size (+ position cog)
             local function bossRmOff()
@@ -12654,7 +12648,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- cast bar is off, tracking the toggle live via the widget-refresh fast
             -- path. Mirrors AddDarkModeBlock. The Show Cast Bar toggle's own fill
             -- swatch is gated on its own so the toggle itself stays interactive.
-            local castFillSwatch
+            local castMidCastSwatch
             local function AddCastBlock(rgn)
                 if not rgn then return end
                 local block = CreateFrame("Frame", nil, rgn)
@@ -12686,32 +12680,69 @@ initFrame:SetScript("OnEvent", function(self)
                 { type="slider", text="Cast Bar Height", min=1, max=40, step=1,
                   getValue=function() return B.castbarHeight or 14 end,
                   setValue=function(v) B.castbarHeight = v; ReloadAndUpdate() end });  yy = yy - hh
-            -- Inline fill-color swatch on Show Cast Bar (left region).
+            -- Inline color swatches on Show Cast Bar (left region), mirroring
+            -- the Target/Focus cast bar pattern. Swatches anchor right-to-left;
+            -- add Mid-Cast first (rightmost), then CD, Uninterruptible, Interruptible.
+            -- The Mid-Cast swatch greys out unless its enable toggle in the cog is on.
             do
                 local rgn = castMainRow._leftRegion
-                local sw = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 5,
-                    function() local c = B.castbarFillColor or { r=0.863, g=0.820, b=0.639 }; return c.r, c.g, c.b end,
-                    function(r, g, b) B.castbarFillColor = { r=r, g=g, b=b }; ReloadAndUpdate() end, false, 20)
-                sw:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
-                sw:SetScript("OnEnter", function(self) EllesmereUI.ShowWidgetTooltip(self, "Fill Color") end)
-                sw:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-                rgn._lastInline = sw
-                castFillSwatch = sw
+                local function AddCastColorSwatch(tooltip, colorKey, fallback, disabledFn)
+                    local sw = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 5,
+                        function()
+                            local c = B[colorKey] or fallback
+                            return c.r, c.g, c.b, 1
+                        end,
+                        function(r, g, b)
+                            B[colorKey] = { r = r, g = g, b = b }
+                            ReloadAndUpdate()
+                        end, false, 20)
+                    sw:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+                    sw:SetScript("OnEnter", function(self) EllesmereUI.ShowWidgetTooltip(self, tooltip) end)
+                    sw:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+                    rgn._lastInline = sw
+                    if disabledFn then
+                        local function applySwState()
+                            local off = disabledFn()
+                            sw:SetAlpha(off and 0.3 or 1)
+                            sw:EnableMouse(not off)
+                        end
+                        applySwState()
+                        EllesmereUI.RegisterWidgetRefresh(applySwState)
+                    end
+                    return sw
+                end
+                castMidCastSwatch = AddCastColorSwatch("Interrupt Ready Mid-Cast", "castbarInterruptMidCastColor", { r = 0.318, g = 0.820, b = 0.357 },
+                    function() return not B.castbarInterruptMidCastEnabled end)
+                AddCastColorSwatch("Interrupt on CD", "castbarInterruptReadyColor", { r = 0.92, g = 0.35, b = 0.20 })
+                AddCastColorSwatch("Uninterruptible Cast", "castbarUninterruptibleColor", { r = 0.5, g = 0.5, b = 0.5 })
+                AddCastColorSwatch("Interruptible Cast", "castbarFillColor", { r = 0.863, g = 0.820, b = 0.639 })
             end
-            -- Inline cog on Show Cast Bar (left region): Offset X/Y nudge the whole
-            -- cast bar (positive = right/up). Updates the live frames + both
-            -- previews via ReloadAndUpdate + the boss preview refresh.
+            -- Inline cog on Show Cast Bar (left region): Cast Bar Position plus
+            -- kick-ready tick / mid-cast bar toggles (same as Target/Focus).
             do
+                local cogRows = {
+                    { type="slider", label="Offset X", min=-500, max=500, step=1,
+                      get=function() return B.castbarOffsetX or 0 end,
+                      set=function(v) B.castbarOffsetX = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end },
+                    { type="slider", label="Offset Y", min=-200, max=200, step=1,
+                      get=function() return B.castbarOffsetY or 0 end,
+                      set=function(v) B.castbarOffsetY = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end },
+                    { type="toggle", label="Show Kick Ready Mid-Cast Tick",
+                      tooltip="Shows a small white tick mark on the cast bar at the point where the cast will be when your interrupt comes off cooldown.",
+                      get=function() return B.castbarKickTickEnabled ~= false end,
+                      set=function(v) B.castbarKickTickEnabled = v; ReloadAndUpdate() end },
+                    { type="toggle", label="Show Kick Ready Mid-Cast Bar",
+                      tooltip="When your interrupt is on cooldown now but will be ready before the enemy cast finishes, color the part of the cast bar during which your interrupt will be available.",
+                      get=function() return B.castbarInterruptMidCastEnabled == true end,
+                      set=function(v)
+                          B.castbarInterruptMidCastEnabled = v
+                          ReloadAndUpdate()
+                          EllesmereUI:RefreshPage()
+                      end },
+                }
                 local _, offCogShow = EllesmereUI.BuildCogPopup({
-                    title = "Cast Bar Position",
-                    rows = {
-                        { type="slider", label="Offset X", min=-500, max=500, step=1,
-                          get=function() return B.castbarOffsetX or 0 end,
-                          set=function(v) B.castbarOffsetX = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end },
-                        { type="slider", label="Offset Y", min=-200, max=200, step=1,
-                          get=function() return B.castbarOffsetY or 0 end,
-                          set=function(v) B.castbarOffsetY = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end },
-                    },
+                    title = "Cast Bar",
+                    rows = cogRows,
                 })
                 AddCastBlock(CCogBtn(castMainRow._leftRegion, offCogShow, EllesmereUI.DIRECTIONS_ICON))
             end
@@ -12745,20 +12776,19 @@ initFrame:SetScript("OnEvent", function(self)
                 })
                 CCogBtn(growthRow._leftRegion, cogShow)
             end
-            -- Row 3: Reverse Fill | Bar Background (opacity slider + color swatch).
-            -- Bar Background sits right below the size sliders (mirrors the main
-            -- frames' cast bar section, where it follows the Height row).
-            local reverseRow
-            reverseRow, hh = Ww:DualRow(pp, yy,
-                { type="toggle", text="Reverse Fill",
-                  getValue=function() return B.castReverseFill == true end,
-                  setValue=function(v) B.castReverseFill = v; ReloadAndUpdate() end },
+            -- Row 3: Bar Background (opacity slider + color swatch).
+            -- Sits right below the size sliders (mirrors the main frames' cast bar
+            -- section, where it follows the Height row). Reverse Fill moves to the
+            -- Spell Target row below, matching Target's layout.
+            local bgRow
+            bgRow, hh = Ww:DualRow(pp, yy,
+                { type="spacer" },
                 { type="slider", text="Bar Background", min=0, max=100, step=1,
                   getValue=function() return math.floor((B.castBgAlpha or 0.5) * 100 + 0.5) end,
                   setValue=function(v) B.castBgAlpha = v / 100; ReloadAndUpdate() end });  yy = yy - hh
             -- Inline color swatch on Bar Background (right region).
             do
-                local rgn = reverseRow._rightRegion
+                local rgn = bgRow._rightRegion
                 local sw = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 5,
                     function()
                         local c = B.castBgColor
@@ -12854,17 +12884,78 @@ initFrame:SetScript("OnEvent", function(self)
                 CCogBtn(rgn, cogShow)
             end
 
+            -- Row 5: Spell Target (position dropdown + swatch + cog) | Reverse Fill
+            -- Mirror Target's layout: Spell Target on the left, Reverse Fill on
+            -- the right. Moved here from the Indicators section.
+            local castTargetRow
+            castTargetRow, hh = Ww:DualRow(pp, yy,
+                { type="dropdown", text="Spell Target",
+                  values={ none="None", left="Left", right="Right", center="Center" },
+                  order={ "none", "left", "right", "center" },
+                  getValue=function()
+                    if B.showCastTarget == false then return "none" end
+                    return B.castSpellTargetSide or "right"
+                  end,
+                  setValue=function(v)
+                    if v == "none" then
+                        B.showCastTarget = false
+                    else
+                        B.showCastTarget = true
+                        B.castSpellTargetSide = v
+                        -- Conflict rule: if name and target share a side,
+                        -- bump the name to "none".
+                        if (B.castSpellNameSide or "left") == v then
+                            B.castSpellNameSide = "none"
+                        end
+                    end
+                    ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                  end },
+                { type="toggle", text="Reverse Fill",
+                  getValue=function() return B.castReverseFill == true end,
+                  setValue=function(v) B.castReverseFill = v; ReloadAndUpdate() end });  yy = yy - hh
+            -- Inline color swatch on Spell Target (left region)
+            do
+                local rgn = castTargetRow._leftRegion
+                local sw = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 5,
+                    function() local c = B.castSpellTargetColor or { r=1, g=1, b=1 }; return c.r, c.g, c.b end,
+                    function(r, g, b) B.castSpellTargetColor = { r=r, g=g, b=b }; ReloadAndUpdate() end, false, 20)
+                sw:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -12, 0)
+                sw:SetScript("OnEnter", function(self) EllesmereUI.ShowWidgetTooltip(self, "Spell Target") end)
+                sw:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+                rgn._lastInline = sw
+            end
+            -- Inline cog on Spell Target (left region): Size/X/Y offsets
+            do
+                local rgn = castTargetRow._leftRegion
+                local _, cogShow = EllesmereUI.BuildCogPopup({
+                    title = "Spell Target",
+                    rows = {
+                        { type="slider", label="Size", min=6, max=20, step=1,
+                          get=function() return B.castSpellTargetSize or 11 end,
+                          set=function(v) B.castSpellTargetSize = v; ReloadAndUpdate() end },
+                        { type="slider", label="X Offset", min=-50, max=50, step=1,
+                          get=function() return B.castSpellTargetX or 0 end,
+                          set=function(v) B.castSpellTargetX = v; ReloadAndUpdate() end },
+                        { type="slider", label="Y Offset", min=-50, max=50, step=1,
+                          get=function() return B.castSpellTargetY or 0 end,
+                          set=function(v) B.castSpellTargetY = v; ReloadAndUpdate() end },
+                    },
+                })
+                CCogBtn(rgn, cogShow)
+            end
+
             -- Gate the whole section on the Show Cast Bar toggle: when off, grey +
             -- block the height slider, the icon row, the background row, the spell
-            -- name / duration row, reverse fill, and the inline fill swatch.
-            if castFillSwatch then AddCastBlock(castFillSwatch) end
+            -- name / duration row, reverse fill, spell target, and the inline swatches.
+            if castMidCastSwatch then AddCastBlock(castMidCastSwatch) end
             AddCastBlock(castMainRow._rightRegion)
             AddCastBlock(growthRow._leftRegion)
             AddCastBlock(growthRow._rightRegion)
             AddCastBlock(castTextRow._leftRegion)
             AddCastBlock(castTextRow._rightRegion)
-            AddCastBlock(reverseRow._leftRegion)
-            AddCastBlock(reverseRow._rightRegion)
+            AddCastBlock(castTargetRow._leftRegion)
+            AddCastBlock(castTargetRow._rightRegion)
+            AddCastBlock(bgRow._rightRegion)
             return yy
         end
 

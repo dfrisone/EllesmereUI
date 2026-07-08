@@ -405,6 +405,12 @@ EllesmereUI._WHATSNEW_PATCHES = {
                 desc   = "Resize boss cast bars and nudge them left or right",
                 nav    = { module = "EllesmereUIUnitFrames", page = "Boss Frames", section = "CAST BAR", highlight = "Cast Bar Width" },
             },
+            {
+                module = "Unit Frames",
+                title  = "Boss Cast Bar Kick Support",
+                desc   = "Boss cast bars now show interrupt-aware colors, kick-ready tick marks, and mid-cast fill so you can see at a glance whether your interrupt will be ready before the boss finishes casting.",
+                nav    = { module = "EllesmereUIUnitFrames", page = "Boss Frames", section = "CAST BAR", highlight = "Show Cast Bar" },
+            },
         },
         fixes = {
             { module = "Blizzard Skin", text = "Fixed the reskinned Reputation and Currency panel blanking currency column headers and blocking currency transfers between characters." },
