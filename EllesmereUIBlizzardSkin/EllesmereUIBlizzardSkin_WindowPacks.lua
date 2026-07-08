@@ -4880,18 +4880,75 @@ local function Skin_Mail()
         if a and not GetFFD(a).sock then
             local d = GetFFD(a)
             d.sock = true
-            local keep = {}
-            local icon = a.icon or (a.GetName and a:GetName() and _G[a:GetName() .. "IconTexture"])
-            if icon then keep[icon] = true end
-            WSkin.FadeRegions(a, keep)
             local nt = a.GetNormalTexture and a:GetNormalTexture()
+
+            -- Fade every direct texture on the button. The SendMailAttachment
+            -- button has a static placeholder texture (returned by the item API)
+            -- plus a separate dynamic icon texture that Blizzard creates/updates
+            -- when items are placed. Fading everything initially prevents the
+            -- placeholder from clipping through; the hook below re-shows the
+            -- actual icon when an item is dropped in.
+            WSkin.FadeRegions(a)
             if nt and nt.SetAlpha then nt:SetAlpha(0) end
-            local bg = a:CreateTexture(nil, "BACKGROUND", nil, -2)
+            if a.IconBorder then a.IconBorder:SetAlpha(0) end
+
+            -- Background at a very low sublevel so it cannot cover the icon.
+            local bg = a:CreateTexture(nil, "BACKGROUND", nil, -8)
             bg:SetColorTexture(Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA)
             bg:SetAllPoints(a)
             d.bg = bg
             WSkin.AddBorder(a)
-            if icon then WSkin.SquareIcon(icon) end
+
+            -- If the slot already contains an item when the frame is shown (e.g.
+            -- reopening the mailbox), the icon texture exists at ARTWORK/OVERLAY
+            -- with a real item texture. Re-show it here because the hook below
+            -- only fires on later SetItemButtonTexture calls.
+            local countFS = a.Count or (a.GetName and _G[a:GetName() .. "Count"])
+            local countText = countFS and countFS.GetText and countFS:GetText()
+            if countText and countText ~= "" and countText ~= "0" then
+                for j = 1, select("#", a:GetRegions()) do
+                    local r = select(j, a:GetRegions())
+                    if r and r:IsObjectType("Texture") and r.GetDrawLayer and r.GetTexture then
+                        local layer = ({r:GetDrawLayer()})[1]
+                        if (layer == "ARTWORK" or layer == "OVERLAY") and r:GetTexture() then
+                            r:SetAlpha(1)
+                            r:Show()
+                            if r.SetTexCoord then r:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+                        end
+                    end
+                end
+            end
+
+            -- Hook SetItemButtonTexture: when an item is placed, find the region
+            -- that actually received the item texture and show only that. When
+            -- the slot is cleared, hide all icon textures again.
+            if a.SetItemButtonTexture and not d.texHook then
+                d.texHook = true
+                hooksecurefunc(a, "SetItemButtonTexture", function(self, texture)
+                    if not texture then
+                        for j = 1, select("#", self:GetRegions()) do
+                            local r = select(j, self:GetRegions())
+                            if r and r:IsObjectType("Texture") then
+                                r:SetAlpha(0)
+                            end
+                        end
+                        return
+                    end
+                    for j = 1, select("#", self:GetRegions()) do
+                        local r = select(j, self:GetRegions())
+                        if r and r:IsObjectType("Texture") then
+                            local match = (r.GetTexture and r:GetTexture() == texture) or (r.GetAtlas and r:GetAtlas() == texture)
+                            if match then
+                                r:SetAlpha(1)
+                                r:Show()
+                                if r.SetTexCoord then r:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+                            else
+                                r:SetAlpha(0)
+                            end
+                        end
+                    end
+                end)
+            end
         end
     end
 
@@ -4918,19 +4975,6 @@ local function Skin_Mail()
                 SkinMailItemButton(_G.OpenMailLetterButton)
                 for i = 1, 16 do SkinMailItemButton(_G["OpenMailAttachmentButton" .. i]) end
                 WhitenMailText()
-            end))
-        end
-        if type(_G.SendMailFrame_Update) == "function" then
-            hooksecurefunc("SendMailFrame_Update", WSkin.Debounce(function()
-                for i = 1, 16 do
-                    local a = _G["SendMailAttachment" .. i]
-                    if a then
-                        local icon = a.icon or (a.GetName and a:GetName() and _G[a:GetName() .. "IconTexture"])
-                        if icon then WSkin.SquareIcon(icon) end
-                        local nt = a.GetNormalTexture and a:GetNormalTexture()
-                        if nt and nt.SetAlpha then nt:SetAlpha(0) end
-                    end
-                end
             end))
         end
     end
