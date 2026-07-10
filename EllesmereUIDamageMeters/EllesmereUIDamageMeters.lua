@@ -697,13 +697,39 @@ instanceFrame:SetScript("OnEvent", function(_, event)
         -- no-reset-on-pull). Force an immediate repaint reading the fresh session,
         -- and revive the live ticker if we are mid-fight. Cheap and rare (fires at
         -- combat-segment boundaries, not per damage event).
-        for _, w in ipairs(_windows) do
-            w._barCacheKey = nil
-            w._barSources = nil
-            w._cachedTargets = nil
-            w.Refresh()
+        if EllesmereUI and EllesmereUI.IS_121 then
+            -- 12.1: the event is no longer reliably rare -- it can fire
+            -- continuously during combat, and even a debounced full repaint
+            -- per burst multiplied by windows dwarfed the ticker's designed
+            -- refresh rate (each repaint pays the session-fetch C call).
+            -- In a live fight the caches just invalidate so the next tick
+            -- reads fresh data: the segment boundaries already force their
+            -- own immediate repaints (ENCOUNTER_START / REGEN_DISABLED),
+            -- and the ticker covers everything in between. Out of combat,
+            -- one debounced repaint keeps session rolls visually prompt.
+            for _, w in ipairs(_windows) do
+                w._barCacheKey = nil
+                w._barSources = nil
+                w._cachedTargets = nil
+            end
+            if _inCombat or _needsFinalRefresh then
+                if not _sharedTicker then StartSharedTicker() end
+            elseif not instanceFrame._curSessionPending then
+                instanceFrame._curSessionPending = true
+                C_Timer.After(0.1, function()
+                    instanceFrame._curSessionPending = nil
+                    for _, w in ipairs(_windows) do w.Refresh() end
+                end)
+            end
+        else
+            for _, w in ipairs(_windows) do
+                w._barCacheKey = nil
+                w._barSources = nil
+                w._cachedTargets = nil
+                w.Refresh()
+            end
+            if _inCombat and not _sharedTicker then StartSharedTicker() end
         end
-        if _inCombat and not _sharedTicker then StartSharedTicker() end
     elseif event == "DAMAGE_METER_RESET" then
         -- Blizzard cleared all session data (auto-reset CVar, manual reset, etc.)
         _combatEndTime = 0; _curViewFrozenDur = 0

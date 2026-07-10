@@ -52,10 +52,39 @@ local INDICATOR_TYPE_VALUES = {}
 local INDICATOR_TYPE_ORDER = {}
 for _, t in ipairs(INDICATOR_TYPES) do
     INDICATOR_TYPE_VALUES[t.key] = t.name
-    INDICATOR_TYPE_ORDER[#INDICATOR_TYPE_ORDER + 1] = t.key
+    -- 12.1 only: Frame Border indicators cannot be created there (no
+    -- aura-container equivalent); existing ones stay listed with a removal
+    -- notice. On 12.0 the type remains fully creatable.
+    if not (EllesmereUI.IS_121 and t.key == "border") then
+        INDICATOR_TYPE_ORDER[#INDICATOR_TYPE_ORDER + 1] = t.key
+    end
 end
 -- Insert divider after "bar"
 tinsert(INDICATOR_TYPE_ORDER, 4, "---")
+
+-- 12.1 PTR: gray blocking overlay with a red removal notice, for settings
+-- whose backing machinery has no aura-container equivalent (styled after
+-- the party-tab sync overlays). UI-only; the runtime side of these
+-- settings is inert elsewhere. Callers anchor the returned frame.
+local function BuildPTROverlay(parentFrame, label, fontSize)
+    local ov = CreateFrame("Frame", nil, parentFrame)
+    ov._searchIgnore = true -- inline search must never re-anchor/collapse it
+    ov:SetFrameLevel(parentFrame:GetFrameLevel() + 60)
+    ov:EnableMouse(true)
+    local bg = ov:CreateTexture(nil, "OVERLAY")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.10, 0.10, 0.12, 0.95)
+    local fs = ov:CreateFontString(nil, "OVERLAY")
+    local fp = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("raidFrames")) or "Fonts\\FRIZQT__.TTF"
+    fs:SetFont(fp, fontSize or 12, "")
+    fs:SetPoint("LEFT", ov, "LEFT", 8, 0)
+    fs:SetPoint("RIGHT", ov, "RIGHT", -8, 0)
+    fs:SetJustifyH("CENTER")
+    fs:SetTextColor(0.86, 0.24, 0.24, 0.95)
+    fs:SetText(EllesmereUI.Lf("%1$s Removed in 12.1 Unless API Changes", EllesmereUI.L(label)))
+    ov._msg = fs
+    return ov
+end
 
 -- 9-position grid
 local POSITION_VALUES = {
@@ -666,6 +695,22 @@ local function GetSpecIndicators(db, specKey)
         PopulateDefaults(db.profile.bmIndicators[specKey], specKey)
     end
     return db.profile.bmIndicators[specKey]
+end
+-- 12.1 aura containers read the indicator config to build slots.
+ns.BM_GetSpecIndicators = GetSpecIndicators
+ns.BM_PrimaryByAlt = PRIMARY_BY_ALT
+
+-- Borrow specs (Enh/Ele -> Resto, Prot/Ret -> Holy) only track the spells
+-- they can cast; the container slots apply the same restriction.
+function ns.BM_BorrowSpellFilter()
+    if activeBorrow_BM then return activeBorrow_BM.spells end
+    return nil
+end
+
+-- Simple Setup whitelist for the container grid (rebuilt by RebuildLookup;
+-- read-only for consumers -- the engine copies candidate tables on set).
+function ns.BM_SimpleTrackedSpellIDs()
+    return simpleTrackedSpellIDs
 end
 
 local function CountSpecIndicators(db, specKey)
@@ -1617,10 +1662,35 @@ function ns.BM_UpdateSimpleGrid(button, unit, db, updateInfo)
 end
 
 function ns.BM_UpdateIndicators(button, unit, db, updateInfo)
+    -- 12.1 migration scaffolding: skip silently while auras are secret so the
+    -- restriction error cannot abort shared handler chains. Removed when the
+    -- BuffManager migrates to container slots.
+    if ns.RFC_LegacyAuraGuard and ns.RFC_LegacyAuraGuard() then return end
     local GetFFD = ns.GetFFD
     if not GetFFD then return end
     local d = GetFFD(button)
     if not d.bmIconPool then return end
+
+    -- 12.1: BOTH display modes render via aura containers now (custom mode
+    -- as slots/chains, Simple Setup as a grid group). Hide any lingering
+    -- legacy visuals from either mode and hand off entirely.
+    if ns.RFC_OwnsBM then
+        for _, f in ipairs(d.bmIconPool) do f:Hide() end
+        if d.bmBarPool then for _, b in ipairs(d.bmBarPool) do ClearBarDrain(b); b:Hide() end end
+        if d.bmHCOverlay then d.bmHCOverlay:Hide() end
+        if d.bmEffectBorder then d.bmEffectBorder:Hide() end
+        d.bmActiveInstanceIDs = nil
+        button._bmSavedAlpha = nil
+        if d.rangeAlpha then button:SetAlpha(d.rangeAlpha) end
+        if d.bmSimpleIcons and d.bmSimpleActiveIDs then
+            for _, f in ipairs(d.bmSimpleIcons) do
+                if f._cooldown then f._cooldown:Hide() end
+                f:Hide()
+            end
+            d.bmSimpleActiveIDs = nil
+        end
+        return
+    end
 
     -- Simple Setup mode takes over entirely: hide every custom-indicator visual
     -- and render the isolated buff grid instead. The two systems never coexist.
@@ -3698,6 +3768,15 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
         sep:SetPoint("BOTTOMRIGHT", tile, "BOTTOMRIGHT", 0, 0)
         sep:SetColorTexture(1, 1, 1, 0.04)
 
+        -- 12.1: Frame Border indicators are removed; the notice covers the
+        -- tile body but leaves the right controls column usable so the
+        -- indicator can still be toggled off or deleted.
+        if EllesmereUI.IS_121 and ind.type == "border" then
+            local ov = BuildPTROverlay(tile, "Frame Border", 10)
+            ov:SetPoint("TOPLEFT", tile, "TOPLEFT", 0, 0)
+            ov:SetPoint("BOTTOMRIGHT", tile, "BOTTOMRIGHT", -52, 1)
+        end
+
         tileY = tileY - TILE_H
     end
 
@@ -4590,6 +4669,22 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
             return row
         end
 
+        -- 12.1 removal overlays (BuildPTROverlay): section variant spans a
+        -- y-range of leftFrame (header left visible, like the party sync
+        -- overlays); slot variant covers one DualRow region.
+        local function PTRSectionOverlay(label, startY, endY)
+            local ov = BuildPTROverlay(leftFrame, label, 12)
+            ov:SetPoint("TOPLEFT", leftFrame, "TOPLEFT", 0, startY)
+            ov:SetPoint("TOPRIGHT", leftFrame, "TOPRIGHT", 0, startY)
+            ov:SetHeight(math.abs(endY - startY))
+        end
+
+        local function PTRSlotOverlay(label, region)
+            if not region then return end
+            local ov = BuildPTROverlay(region, label, 11)
+            ov:SetAllPoints(region)
+        end
+
         -- Own Only checkbox dropdown (per-spell) builder
         local function BuildOwnOnlyRow()
             if not ind.spells or #ind.spells == 0 then return end
@@ -4659,6 +4754,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
         -- Frame Alpha (useAlpha) has no colour, so Row 2 is a single Alpha slider.
         local function BuildThresholdRow(useAlpha)
             _, h = W:SectionHeader(leftFrame, "THRESHOLD", sy); sy = sy - h
+            local thContentStart = sy -- overlay spans content below the header
 
             -- Sub-settings are interactive only while Enable Threshold is on.
             local thOff = function() return not ind.thresholdEnabled end
@@ -4784,6 +4880,13 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                     EllesmereUI.RegisterWidgetRefresh(function() updateGlowSwatch(); updateClassSwatch(); UpdateGlowState() end)
                     UpdateGlowState()
                 end
+            end
+
+            -- 12.1: no engine binding for threshold recolors/glows yet; the
+            -- whole section is inert there until the upstream APIs land.
+            -- Fully functional on 12.0.
+            if EllesmereUI.IS_121 then
+                PTRSectionOverlay("Threshold", thContentStart, sy)
             end
         end
 
@@ -5262,6 +5365,10 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                 setValue = function(v) ind.maxDurationEnabled = v end,
                 onToggle = function() ReloadAndUpdate() end,
             })
+            -- 12.1: no baseline/cap option on the engine duration bindings.
+            if EllesmereUI.IS_121 then
+                PTRSlotOverlay("Max Duration", mdRow._leftRegion)
+            end
 
             -- THRESHOLD section (Enable, seconds, color, opacity)
             BuildThresholdRow(false)
@@ -5466,6 +5573,10 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                     setValue = function(v) ind.maxDurationEnabled = v end,
                     onToggle = function() ReloadAndUpdate() end,
                 })
+                -- 12.1: no baseline/cap option on the engine duration bindings.
+                if EllesmereUI.IS_121 then
+                    PTRSlotOverlay("Max Duration", mdRow._leftRegion)
+                end
 
                 -- THRESHOLD section (Enable, seconds, color, opacity)
                 BuildThresholdRow(false)

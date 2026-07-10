@@ -10,6 +10,7 @@
 local BAGS_DEFAULTS = {
     profile = {
         bagScale              = 1,
+        bagItemIconZoom       = 0.08,
         bagColumns            = 12,
         bagAutoSize           = false,
         bagCatTitleSize       = 11,
@@ -155,7 +156,9 @@ initFrame:SetScript("OnEvent", function(self)
             ---------------------------------------------------------------------------
             _, h = W:SectionHeader(parent, "DISPLAY", y); y = y - h
 
-            -- Window Scale | Hide Categories with 0 Items
+            -- Window Scale | Icon Zoom (crops the item-icon border; applies to
+            -- bag AND bank item icons. Paired with Window Scale as both are
+            -- display-appearance sliders; no per-item size control exists.)
             _, h = W:DualRow(parent, y,
                 { type="slider", text="Window Scale", min=50, max=150, step=5,
                   tooltip="Scale of the bag and bank windows.",
@@ -168,17 +171,26 @@ initFrame:SetScript("OnEvent", function(self)
                       if _G.EUI_BagsWindow then _G.EUI_BagsWindow:SetScale(s) end
                       if _G.EUI_Bank and _G.EUI_Bank:IsVisible() then _G.EUI_Bank:SetScale(s) end
                   end },
+                { type="slider", text="Icon Zoom", min=0, max=0.20, step=0.01,
+                  tooltip="Crops the border of every item icon in bags and bank. 0 shows the full icon.",
+                  getValue=function() return db.profile.bagItemIconZoom or 0.08 end,
+                  setValue=function(v)
+                      db.profile.bagItemIconZoom = v
+                      if _G.EUI_Bags and _G.EUI_Bags.RefreshIconZoom then _G.EUI_Bags:RefreshIconZoom() end
+                      local bank = _G.EUI_BankFrame
+                      if bank and bank.RefreshIconZoom then bank:RefreshIconZoom() end
+                  end }
+            ); y = y - h
+
+            -- Hide Categories with 0 Items | Auto-Size to Fit
+            _, h = W:DualRow(parent, y,
                 { type="toggle", text="Hide Categories with 0 Items",
                   tooltip="Hide sidebar categories that have no items in them.",
                   getValue=function() return db.profile.bagHideEmptyCategories ~= false end,
                   setValue=function(v)
                       db.profile.bagHideEmptyCategories = v
                       if _G.EUI_Bags and _G.EUI_Bags.RefreshInventory then _G.EUI_Bags:RefreshInventory() end
-                  end }
-            ); y = y - h
-
-            -- Auto-Size to Fit | Default Bag Type
-            _, h = W:DualRow(parent, y,
+                  end },
                 { type="toggle", text="Auto-Size to Fit",
                   tooltip="Grow the bag window (more columns + taller, keeping its shape) so all of the active tab's slots are visible without scrolling. It only grows while open -- switching to a bigger tab enlarges it, smaller tabs keep the size -- and resets when you close the bags. Never smaller than your normal size.",
                   getValue=function() return db.profile.bagAutoSize == true end,
@@ -190,7 +202,11 @@ initFrame:SetScript("OnEvent", function(self)
                           _G.EUI_Bags._asMaxH = nil
                           if _G.EUI_Bags.RefreshInventory then _G.EUI_Bags:RefreshInventory() end
                       end
-                  end },
+                  end }
+            ); y = y - h
+
+            -- Default Bag Type
+            _, h = W:DualRow(parent, y,
                 { type="dropdown", text="Default Bag Type",
                   tooltip="Which view bags (and the bank) open to by default. The bank has no MultiBag view, so MultiBag opens the bank to OneBank.",
                   values = { all="All Items", onebag="OneBag", multibag="MultiBag" },
@@ -206,7 +222,8 @@ initFrame:SetScript("OnEvent", function(self)
                           _G.EUI_Bags:RefreshInventory()
                       end
                       EllesmereUI:RefreshPage()
-                  end }
+                  end },
+                { type="spacer" }
             ); y = y - h
 
             -- Category Title Size | Show Item Level (+ inline cog: Gear Track Rank)

@@ -909,7 +909,7 @@ local defaults = {
         bossSpacing = 80,
 
         -- Player dispel overlay (player frame only; keys mirror Raid Frames)
-        dispelOverlay        = "none",   -- "none", "fill", "full", "gradient"
+        dispelOverlay        = "none",   -- "none", "fill", "full", "gradient", "gradient_sharp"
         dispelOverlayOpacity = 100,
         dispelColorMagic   = { r = 0.349, g = 0.475, b = 1.0 },
         dispelColorCurse   = { r = 0.636, g = 0.0,   b = 0.64 },
@@ -1723,6 +1723,9 @@ function ns.RefreshAllUnitNames()
         if type(f) == "table" and f.UpdateTags then f:UpdateTags() end
     end
 end
+-- Name tags only re-render on name events or via the refresh above, so a raw
+-- db restore (Spec Overrides apply, profile swap) needs this exported.
+_G._EUF_RefreshUnitNames = ns.RefreshAllUnitNames
 
 -- Provider callbacks. NSRT (NSAPI) and Timeline Reminders (TR) may load after us,
 -- so registration retries on PLAYER_LOGIN / PLAYER_ENTERING_WORLD until it sticks.
@@ -3535,6 +3538,15 @@ local function CreateAbsorbBar(frame, unit, settings)
             -- hid. (Heal Absorb Style defaults to "clean", so it shows even
             -- when the shield Absorb Style is "none".)
             local s = GetSettingsForUnit(updUnit)
+            -- Boss frames have no absorb settings of their own: render with
+            -- the TARGET frame's absorb styling (donor convention, no
+            -- per-boss customization), behind the single "Show on Boss
+            -- Frames" toggle in the absorb cog (nil = enabled).
+            local bossAbsorbOff
+            if updUnit and updUnit:match("^boss") then
+                bossAbsorbOff = db.profile.boss and db.profile.boss.showAbsorbs == false
+                s = db.profile.target or s
+            end
             local ha = ab._healAbsorb
             local topBar = ab._topBar
             local healTopBar = ab._healTopBar
@@ -3544,7 +3556,7 @@ local function CreateAbsorbBar(frame, unit, settings)
             local healBarOn = healTopBar and healBarPos ~= "none"
             local shieldOff = s and (not s.showPlayerAbsorb or s.showPlayerAbsorb == "none")
             local healOff = (((s and s.healAbsorbStyle) or "clean") == "none")
-            if shieldOff and healOff and not barOn and not healBarOn then
+            if bossAbsorbOff or (shieldOff and healOff and not barOn and not healBarOn) then
                 ab:Hide()
                 if fw then fw:Hide() end
                 if ha then ha:Hide() end
@@ -5301,15 +5313,18 @@ end
 -- after the height is rounded to whole pixels.
 local AURA_CROP_HEIGHT = 0.80
 local AURA_ZOOM = 0.07
-local function SetAuraIconCrop(icon, cropped, w, h)
+-- zoom (optional) overrides the default AURA_ZOOM crop; per-unit/per-category
+-- Icon Zoom values flow in here, defaulting to AURA_ZOOM so unset = unchanged.
+local function SetAuraIconCrop(icon, cropped, w, h, zoom)
     if not icon then return end
+    local z = zoom or AURA_ZOOM
     if cropped and w and h and w > 0 then
-        local uSpan = 1 - 2 * AURA_ZOOM
+        local uSpan = 1 - 2 * z
         local vSpan = uSpan * (h / w)
         local v0 = 0.5 - vSpan / 2
-        icon:SetTexCoord(AURA_ZOOM, 1 - AURA_ZOOM, v0, 1 - v0)
+        icon:SetTexCoord(z, 1 - z, v0, 1 - v0)
     else
-        icon:SetTexCoord(AURA_ZOOM, 1 - AURA_ZOOM, AURA_ZOOM, 1 - AURA_ZOOM)
+        icon:SetTexCoord(z, 1 - z, z, 1 - z)
     end
 end
 -- Exposed so the options live preview can apply the exact same crop math
@@ -5339,7 +5354,7 @@ function ns.ApplyStackAnchor(fs, parent, pos, offX, offY)
     fs:SetPoint(point, parent, point, baseX + (offX or 0), offY or 0)
 end
 
-local function ApplyAuraCooldownText(container, showCD, cdSize, stackSize, cdOffX, cdOffY, stackOffX, stackOffY, auraSize, cropped, stackPos, cdTextColor, stackTextColor)
+local function ApplyAuraCooldownText(container, showCD, cdSize, stackSize, cdOffX, cdOffY, stackOffX, stackOffY, auraSize, cropped, stackPos, cdTextColor, stackTextColor, iconZoom)
     if not container then return end
     -- Cropped style: make the buttons rectangular (height = 80% of width). oUF
     -- sizes each button to element.width x element.height and uses them for the
@@ -5362,7 +5377,7 @@ local function ApplyAuraCooldownText(container, showCD, cdSize, stackSize, cdOff
     end
     for i = 1, (container.createdButtons or 0) do
         local btn = container[i]
-        if btn and btn.Icon then SetAuraIconCrop(btn.Icon, cropped, cropW, cropH) end
+        if btn and btn.Icon then SetAuraIconCrop(btn.Icon, cropped, cropW, cropH, iconZoom) end
         if btn and btn.Cooldown then
             btn.Cooldown:SetHideCountdownNumbers(not showCD)
             local cdText = btn.Cooldown:GetRegions()
@@ -5490,6 +5505,15 @@ function ns.ApplyEUIAuraFilter(element, base, settings)
 end
 
 local function CreateTargetAuras(frame, unit)
+    -- 12.1 aura containers: migrated units render through the container system
+    -- in EUI_UnitFrames_AuraContainers.lua. frame.Buffs/frame.Debuffs stay nil
+    -- for those units, which self-neutralizes every legacy element touchpoint
+    -- (all reload/startup/toggle sites are frame.Buffs-guarded).
+    if ns.UF_CreateAuraContainers and ns.UF_ContainerUnits and ns.UF_ContainerUnits[unit or "target"] then
+        ns.UF_GetSettings = GetSettingsForUnit -- always-fresh settings access for the container file
+        ns.UF_GetProfile = ns.UF_GetProfile or function() return db and db.profile end
+        return ns.UF_CreateAuraContainers(frame, unit or "target")
+    end
     local function SetupAuraIcon(container, button)
         if not button then return end
 
@@ -5499,11 +5523,11 @@ local function CreateTargetAuras(frame, unit)
         local s = GetSettingsForUnit(unit or "target")
         if button.Icon then
             -- Cropped icons trim the texture top/bottom to keep aspect ratio.
-            local cropped, aSize
-            if isBuff then cropped = s and s.buffCropIcons; aSize = (s and s.buffSize) or 22
-            else cropped = s and s.debuffCropIcons; aSize = (s and s.debuffSize) or 22 end
+            local cropped, aSize, zoom
+            if isBuff then cropped = s and s.buffCropIcons; aSize = (s and s.buffSize) or 22; zoom = s and s.buffIconZoom
+            else cropped = s and s.debuffCropIcons; aSize = (s and s.debuffSize) or 22; zoom = s and s.debuffIconZoom end
             local cH = cropped and math.floor(aSize * AURA_CROP_HEIGHT + 0.5) or aSize
-            SetAuraIconCrop(button.Icon, cropped, aSize, cH)
+            SetAuraIconCrop(button.Icon, cropped, aSize, cH, zoom)
         end
 
         if button.Cooldown then
@@ -7018,6 +7042,12 @@ local function StyleBossFrame(frame, unit)
     local healthRightInset = (showPortrait and pSide == "right") and bossBarHeight or 0
     frame.Health = CreateHealthBar(frame, unit, settings.healthHeight, portraitHeight, settings, healthRightInset)
     frame.Power = CreatePowerBar(frame, unit, settings)
+    -- Always create the absorb bar (visibility gated at render time). Boss
+    -- frames carry no absorb settings of their own: they render with the
+    -- TARGET frame's absorb styling (donor convention, like textures) behind
+    -- the "Show on Boss Frames" toggle in the absorb cog. Geometry (reverse
+    -- fill) still comes from the boss block via `settings`.
+    CreateAbsorbBar(frame, unit, settings)
     -- Always create portrait; hide backdrop when disabled
     frame.Portrait = CreatePortrait(frame, pSide, bossBarHeight, unit)
     EllesmereUI._ufPortraitSide[frame] = pSide
@@ -8546,9 +8576,20 @@ local function ReloadFrames()
                     -- keeps running in the background and the value stays
                     -- live whether the bar is visible or not.
                     if frame.HealthPrediction and frame.HealthPrediction.damageAbsorb then
+                        -- Boss frames style from the TARGET donor block,
+                        -- behind the "Show on Boss Frames" toggle (nil = on).
+                        local absSettings = settings
                         local absStyle = settings.showPlayerAbsorb
+                        if unit and unit:match("^boss") then
+                            if db.profile.boss and db.profile.boss.showAbsorbs == false then
+                                absStyle = nil
+                            else
+                                absSettings = db.profile.target or settings
+                                absStyle = absSettings.showPlayerAbsorb
+                            end
+                        end
                         if absStyle and absStyle ~= "none" then
-                            ApplyAbsorbStyle(frame.HealthPrediction.damageAbsorb, absStyle, settings)
+                            ApplyAbsorbStyle(frame.HealthPrediction.damageAbsorb, absStyle, absSettings)
                             frame.HealthPrediction.damageAbsorb:Show()
                             -- Force an immediate value update so the bar doesn't
                             -- show stale/uninitialized fill covering the full frame.
@@ -8608,7 +8649,7 @@ local function ReloadFrames()
                                     frame.Buffs:ForceUpdate()
                                 end
                             end
-                            ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition)
+                            ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition, nil, nil, settings.buffIconZoom or 0.07)
                         else
                             if frame:IsElementEnabled("Buffs") then
                                 frame:DisableElement("Buffs")
@@ -8658,7 +8699,7 @@ local function ReloadFrames()
                                     frame.Debuffs:ForceUpdate()
                                 end
                             end
-                            ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition)
+                            ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition, nil, nil, settings.debuffIconZoom or 0.07)
                         end
                     end
 
@@ -9036,7 +9077,7 @@ local function ReloadFrames()
                             frame.Buffs:Hide()
                             frame.Buffs.num = 0
                         end
-                        ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition)
+                        ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition, nil, nil, settings.buffIconZoom or 0.07)
                     end
 
                     -- Debuffs
@@ -9082,7 +9123,7 @@ local function ReloadFrames()
                                 end
                             end
                         end
-                        ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition)
+                        ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition, nil, nil, settings.debuffIconZoom or 0.07)
                     end
 
                     UpdateBordersForScale(frame, unit)
@@ -9399,7 +9440,7 @@ local function ReloadFrames()
                                 frame.Debuffs:ForceUpdate()
                             end
                         end
-                        ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition)
+                        ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition, nil, nil, settings.debuffIconZoom or 0.07)
                     end
                 end
 
@@ -9448,7 +9489,7 @@ local function ReloadFrames()
                         frame.Buffs:Hide()
                         frame.Buffs.num = 0
                     end
-                    ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition)
+                    ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition, nil, nil, settings.buffIconZoom or 0.07)
                 end
 
                 UpdateBordersForScale(frame, unit)
@@ -9779,9 +9820,9 @@ local function ReloadFrames()
                     -- Use simple debuff cooldown text settings when simple display
                     -- is active, regular debuff settings otherwise.
                     if simpleOn then
-                        ApplyAuraCooldownText(frame.Debuffs, settings.simpleDebuffShowCooldownText, settings.simpleDebuffCooldownTextSize or 14, settings.debuffStackTextSize, settings.simpleDebuffCooldownTextOffsetX, settings.simpleDebuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, nil, nil, settings.debuffStackTextPosition, settings.debuffCooldownTextColor, settings.debuffStackTextColor)
+                        ApplyAuraCooldownText(frame.Debuffs, settings.simpleDebuffShowCooldownText, settings.simpleDebuffCooldownTextSize or 14, settings.debuffStackTextSize, settings.simpleDebuffCooldownTextOffsetX, settings.simpleDebuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, nil, nil, settings.debuffStackTextPosition, settings.debuffCooldownTextColor, settings.debuffStackTextColor, settings.debuffIconZoom or 0.07)
                     else
-                        ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition, settings.debuffCooldownTextColor, settings.debuffStackTextColor)
+                        ApplyAuraCooldownText(frame.Debuffs, settings.debuffShowCooldownText, settings.debuffCooldownTextSize or 10, settings.debuffStackTextSize, settings.debuffCooldownTextOffsetX, settings.debuffCooldownTextOffsetY, settings.debuffStackTextOffsetX, settings.debuffStackTextOffsetY, settings.debuffSize or 22, settings.debuffCropIcons, settings.debuffStackTextPosition, settings.debuffCooldownTextColor, settings.debuffStackTextColor, settings.debuffIconZoom or 0.07)
                     end
                 end
 
@@ -9876,9 +9917,9 @@ local function ReloadFrames()
                     -- Cooldown/stack text: simple uses the simpleBuff* keys (sharing the
                     -- regular buff stack settings), regular buff keys otherwise.
                     if simpleBuffOn then
-                        ApplyAuraCooldownText(frame.Buffs, settings.simpleBuffShowCooldownText, settings.simpleBuffCooldownTextSize or 14, settings.buffStackTextSize, settings.simpleBuffCooldownTextOffsetX, settings.simpleBuffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, nil, nil, settings.buffStackTextPosition, settings.buffCooldownTextColor, settings.buffStackTextColor)
+                        ApplyAuraCooldownText(frame.Buffs, settings.simpleBuffShowCooldownText, settings.simpleBuffCooldownTextSize or 14, settings.buffStackTextSize, settings.simpleBuffCooldownTextOffsetX, settings.simpleBuffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, nil, nil, settings.buffStackTextPosition, settings.buffCooldownTextColor, settings.buffStackTextColor, settings.buffIconZoom or 0.07)
                     else
-                        ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition, settings.buffCooldownTextColor, settings.buffStackTextColor)
+                        ApplyAuraCooldownText(frame.Buffs, settings.buffShowCooldownText, settings.buffCooldownTextSize or 10, settings.buffStackTextSize, settings.buffCooldownTextOffsetX, settings.buffCooldownTextOffsetY, settings.buffStackTextOffsetX, settings.buffStackTextOffsetY, settings.buffSize or 22, settings.buffCropIcons, settings.buffStackTextPosition, settings.buffCooldownTextColor, settings.buffStackTextColor, settings.buffIconZoom or 0.07)
                     end
                 end
 
@@ -11121,6 +11162,35 @@ function InitializeFrames()
         end
     end
 
+    -- Boss frames: same absorb refresh, styled from the TARGET donor block
+    -- and gated by the "Show on Boss Frames" toggle (nil = enabled).
+    do
+        local bossOff = db.profile.boss and db.profile.boss.showAbsorbs == false
+        local donor = db.profile.target
+        for i = 1, 5 do
+            local f = frames["boss" .. i]
+            if f and f.HealthPrediction and f.HealthPrediction.damageAbsorb then
+                local absStyle
+                if not bossOff and donor then absStyle = donor.showPlayerAbsorb end
+                if absStyle and absStyle ~= "none" then
+                    ApplyAbsorbStyle(f.HealthPrediction.damageAbsorb, absStyle, donor)
+                    f.HealthPrediction.damageAbsorb:Show()
+                    if f.HealthPrediction.damageAbsorb._forward then
+                        f.HealthPrediction.damageAbsorb._forward:Show()
+                    end
+                else
+                    f.HealthPrediction.damageAbsorb:Hide()
+                    if f.HealthPrediction.damageAbsorb._forward then
+                        f.HealthPrediction.damageAbsorb._forward:Hide()
+                    end
+                end
+                if f.HealthPrediction.ForceUpdate then
+                    f.HealthPrediction:ForceUpdate()
+                end
+            end
+        end
+    end
+
     -- Player buffs: disable oUF element if not wanted (frame is always created)
     if frames.player and frames.player.Buffs then
         if not db.profile.player.showBuffs then
@@ -11563,6 +11633,10 @@ function SetupOptionsPanel()
         -- name. Re-assert the preview (red color + fake name) so a settings
         -- change doesn't revert it. Secret-safe: no health values are read.
         if ns._bossPreviewActive and ns.SetBossPreview then ns.SetBossPreview(true) end
+        -- 12.1 aura containers reload with every real pass (direct call --
+        -- ns.ReloadFrames is just the throttle-arming stub, so wrapping it
+        -- from the container file is timing-unreliable).
+        if ns.UF_ReloadAllAuraContainers then ns.UF_ReloadAllAuraContainers() end
     end)
     ns.ReloadFrames = function()
         if not reloadPending then
@@ -11596,6 +11670,7 @@ function SetupOptionsPanel()
             frame.Debuffs:Hide()
             frame.Debuffs.num = 0
         end
+        if ns.UF_HideAuraContainers then ns.UF_HideAuraContainers(frame) end
         local settings = db.profile.boss or {}
         local simpleMode = ns.GetBossSimpleDebuffMode(settings)
         local simple = simpleMode ~= "none"
@@ -11701,7 +11776,8 @@ function SetupOptionsPanel()
             local tex = GetSpellTexture and GetSpellTexture(spellID)
                      or (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID))
             if tex then icon:SetTexture(tex) end
-            icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+            local z = settings.debuffIconZoom or 0.07
+            icon:SetTexCoord(z, 1 - z, z, 1 - z)
             -- Static fake cooldown swipe: a huge duration parked at a fixed
             -- fraction so the wedge never visibly moves. Native countdown
             -- numbers stay hidden; the duration text below is a manual static
@@ -11771,6 +11847,7 @@ function SetupOptionsPanel()
             frame.Buffs:Hide()
             frame.Buffs.num = 0
         end
+        if ns.UF_HideAuraContainers then ns.UF_HideAuraContainers(frame) end
         local settings = db.profile.boss or {}
         local simpleMode = ns.GetBossSimpleBuffMode(settings)
         local simple = simpleMode ~= "none"
@@ -11846,7 +11923,8 @@ function SetupOptionsPanel()
             local tex = GetSpellTexture and GetSpellTexture(spellID)
                      or (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID))
             if tex then icon:SetTexture(tex) end
-            icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+            local z = settings.buffIconZoom or 0.07
+            icon:SetTexCoord(z, 1 - z, z, 1 - z)
             local border = CreateFrame("Frame", nil, iconFrame)
             border:SetAllPoints(icon)
             border:SetFrameLevel(iconFrame:GetFrameLevel() + 1)
@@ -12728,6 +12806,13 @@ do
 
     local function Update()
         if not db then return end
+        -- 12.1: dispel display is owned by the container dispel slots once the
+        -- player frame migrates (the index scan below errors while auras are
+        -- secret). The slots live in EUI_UnitFrames_AuraContainers.lua.
+        if ns.UF_DispelOverlayDisabled then
+            if olTex then olTex:Hide() end
+            return
+        end
         local pf = frames and frames["player"]
         local health = pf and pf.Health
         if not health then return end
@@ -12773,11 +12858,13 @@ do
         if mode == "full" then
             olTex:SetAllPoints(health)
             olTex:SetColorTexture(r, g, b, alpha)
-        elseif mode == "gradient" then
+        elseif mode == "gradient" or mode == "gradient_sharp" then
             -- Pre-baked vertical gradient tinted via vertex color (CreateColor
             -- cannot wrap secret components; SetVertexColor passes them natively)
             olTex:SetAllPoints(health)
-            olTex:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\textures\\gradient-tb.tga")
+            olTex:SetTexture(mode == "gradient_sharp"
+                and "Interface\\AddOns\\EllesmereUI\\media\\textures\\gradient-sharp.tga"
+                or "Interface\\AddOns\\EllesmereUI\\media\\textures\\gradient-tb.tga")
             olTex:SetVertexColor(r, g, b, alpha)
         else -- "fill": cover only the filled health portion
             local fillTex = health:GetStatusBarTexture()

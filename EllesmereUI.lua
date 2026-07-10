@@ -1989,6 +1989,31 @@ do
     end
 
     ---------------------------------------------------------------------------
+    --  CenterToPixels(center, dim, effectiveScale)
+    --
+    --  Inverse of SnapCenterForDim, for LIVE-geometry readouts and deltas:
+    --  convert a frame's live CENTER coordinate (UIParent units) into the
+    --  stored-convention physical pixel value. An odd-pixel-dimension frame
+    --  rests its center on a half pixel (stored N applies to N+0.5 so both
+    --  edges are whole pixels), so the readout subtracts that half pixel
+    --  before rounding. Plain ToPixels' tie-up round maps N+0.5 to N+1, and
+    --  a centering delta computed from that overshoots: the frame lands at
+    --  center -0.5, one whole pixel off an identical element centered from
+    --  its stored value. Even dimensions behave exactly like ToPixels.
+    ---------------------------------------------------------------------------
+    function PP.CenterToPixels(center, dim, es)
+        if center == nil then return nil end
+        local v = center / PP.mult
+        if dim and dim > 0 then
+            es = es or (UIParent and UIParent:GetEffectiveScale() or 1)
+            local onePixel = PP.perfect / es
+            local dimPx = math.floor(dim / onePixel + 0.5 + 0.001)
+            if dimPx % 2 == 1 then v = v - 0.5 end
+        end
+        return math.floor(v + 0.5 + 0.001)
+    end
+
+    ---------------------------------------------------------------------------
     --  Convenience wrappers -- pixel-snapped frame geometry
     ---------------------------------------------------------------------------
     function PP.Size(frame, w, h)
@@ -2199,17 +2224,19 @@ do
         if not container.GetEffectiveScale then return end
         local ok, es = pcall(container.GetEffectiveScale, container)
         if not ok or not es then return end
-        -- Degenerate effective scale guard -- OPT-IN, only for borders that set
-        -- container._scaleGuard (nameplate frames; see PP.CreateBorder). onePixel
-        -- below is perfect/es, so a near-zero es makes onePixel (and the edge-strip
-        -- thickness) explode -- a 1px border becomes a frame-spanning black box that
-        -- then STICKS until the next valid re-snap. Nameplate frames are WorldFrame
-        -- children that transiently hit near-zero scale during recycle/hide/
-        -- PLAYER_ENTERING_WORLD (e.g. the SetScale(0.001) hide path); UIParent-based
-        -- borders never do, so they leave this unset and are completely unaffected.
-        -- Skip the snap so the strips keep their last-good size; the next valid snap
-        -- restores 1px.
-        if container._scaleGuard and es < 0.1 then return end
+        -- Degenerate PARENT-scale guard -- OPT-IN, only for borders that set
+        -- container._scaleGuard (nameplate frames; see PP.CreateBorder). Those
+        -- containers are scale-DECOUPLED (SetIgnoreParentScale), so their own es
+        -- is pinned to 1 and onePixel below can never explode -- but the plate
+        -- they anchor to still transiently hits near-zero scale during recycle/
+        -- hide/PLAYER_ENTERING_WORLD (the SetScale(0.001) hide path). Snapping
+        -- against that degenerate rect is pointless churn; skip it and let the
+        -- next valid pass re-assert. UIParent-based borders leave the flag unset
+        -- and are completely unaffected.
+        if container._scaleGuard then
+            local pok, pes = pcall(frame.GetEffectiveScale, frame)
+            if pok and pes and pes < 0.1 then return end
+        end
         local onePixel = es > 0 and (PP.perfect / es) or PP.mult
         local bs = borderSize or 1
         local edgeSize = bs > 0 and math.max(onePixel, math.floor(bs + 0.5) * onePixel) or 0
@@ -2324,16 +2351,48 @@ do
         end
     end
 
-    -- scaleGuard (opt-in): when true, SnapBorderTextures skips this border's snap
-    -- while the frame's effective scale is degenerately small (< 0.1). Only
-    -- nameplate frames pass it -- they are WorldFrame children that transiently hit
-    -- near-zero scale and would otherwise explode a 1px strip into a black box.
-    -- Every other caller leaves it nil and is unaffected.
+    -- scaleGuard (opt-in, nameplate borders): marks a border whose PARENT frame has
+    -- a DYNAMIC effective scale. Nameplates are the only such surface: our Scale
+    -- Target Nameplate / Scale Casting Nameplate features ease plate:SetScale live,
+    -- recycled plates snap back to 1, and Blizzard can rescale the base plate.
+    -- Two effects, both scoped strictly to flagged borders:
+    --
+    --  1. The container is scale-DECOUPLED (SetIgnoreParentScale(true) + SetScale 1):
+    --     its strips render in a fixed scale-1 coordinate space while their anchors
+    --     keep tracking the plate's live rect, so edge thickness stays EXACTLY
+    --     round(borderSize) physical pixels no matter how the plate's scale changes
+    --     AFTER the snap. Without this, thickness is baked at snap-time effective
+    --     scale; any later DOWN-scale (target lost, cast ended, every mid-ease
+    --     frame, plate recycled from an enlarged unit) leaves the strips thinner
+    --     than 1 physical pixel -- and a sub-1px unsnapped quad covers NO pixel
+    --     center at many sub-pixel screen positions, so individual border sides
+    --     VANISH as the plate slides with the camera (angle/resolution dependent).
+    --     DisablePixelSnap alone cannot fix that: it removes the snap-to-0 failure
+    --     but keeps exact-geometry rasterization, which is where sub-1px quads drop.
+    --
+    --  2. SnapBorderTextures skips its work while the PARENT's effective scale is
+    --     degenerately small (< 0.1, the SetScale(0.001) hide path).
+    --
+    -- Every other caller leaves it nil and is completely unaffected.
+    local function DecoupleBorderScale(container)
+        if container._scaleDecoupled then return end
+        if not container.SetIgnoreParentScale then return end
+        container._scaleDecoupled = true
+        container:SetIgnoreParentScale(true)
+        container:SetScale(1)
+    end
+
     function PP.CreateBorder(frame, r, g, b, a, borderSize, drawLayer, subLevel, scaleGuard)
         local bd = _ppBorderData[frame]
         if bd then
             -- Let a later call opt an already-created border into the guard.
-            if scaleGuard then bd.container._scaleGuard = true end
+            -- Decoupling changes the container's coordinate space, so re-snap
+            -- immediately -- the strips' stored sizes were computed in the old one.
+            if scaleGuard and not bd.container._scaleGuard then
+                bd.container._scaleGuard = true
+                DecoupleBorderScale(bd.container)
+                SnapBorderTextures(bd.container, frame, bd.borderSize or 1)
+            end
             return bd.container
         end
         r = r or 0; g = g or 0; b = b or 0; a = a or 1
@@ -2366,6 +2425,7 @@ do
 
         container._bdColor = { r, g, b, a }
         container._scaleGuard = scaleGuard or nil
+        if scaleGuard then DecoupleBorderScale(container) end
         bd = { container = container, borderSize = borderSize, borderColor = { r, g, b, a } }
         _ppBorderData[frame] = bd
 
@@ -8335,6 +8395,17 @@ BuildTabs = function(pageNames, disabledPages, disabledTooltips)
 
         tabBar._searchBox = editBox
         tabBar._searchFrame = searchFrame
+
+        -- Spec Override capture toggle (left of the search box). All look
+        -- and behavior live in EllesmereUI_SpecOverrides.lua.
+        if EllesmereUI.SpecOverrides_SetupButton then
+            local soBtn = CreateFrame("Button", nil, tabBar)
+            soBtn:SetSize(26, 26)
+            soBtn:SetPoint("RIGHT", searchFrame, "LEFT", -10, 0)
+            soBtn:SetFrameLevel(tabBar:GetFrameLevel() + 2)
+            EllesmereUI.SpecOverrides_SetupButton(soBtn)
+            tabBar._specOvBtn = soBtn
+        end
     end
     tabBar._searchFrame:Show()
     -- Clear search text when tabs are rebuilt (module switch)
@@ -9354,6 +9425,11 @@ function EllesmereUI:GetActiveModule()
     return activeModule
 end
 
+function EllesmereUI:GetModuleTitle(folderName)
+    local m = folderName and modules[folderName]
+    return m and m.title
+end
+
 function EllesmereUI:SelectModule(folderName)
     if not modules[folderName] then return end
     if folderName == activeModule then return end
@@ -9808,7 +9884,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "8.4.1"
+EllesmereUI.VERSION = "8.4.2"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end

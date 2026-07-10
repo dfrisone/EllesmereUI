@@ -32,6 +32,7 @@ local SH_DEFAULTS = {
     barEnabled      = false,
     growDirection   = "LEFT",
     iconSize        = 36,
+    iconZoom        = 0.08,
     iconSpacing     = 1,
     iconCount       = 5,
     iconOpacity     = 1,
@@ -557,7 +558,8 @@ local function MakeIcon(parent)
     ic.bg = bg
     ic.tex = ic.frame:CreateTexture(nil, "ARTWORK")
     ic.tex:SetAllPoints()
-    ic.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    local z = DB().iconZoom or 0.08
+    ic.tex:SetTexCoord(z, 1 - z, z, 1 - z)
     ic.frame:Hide()
     return ic
 end
@@ -643,6 +645,7 @@ BuildIconStrip = function()
     local iconSz = PhysicalPixels(sh.iconSize or 24)
     local gap = PhysicalPixels(sh.iconSpacing or 1)
     local dir = sh.growDirection or "LEFT"
+    local iconZoom = sh.iconZoom or 0.08
 
     local maxIcons = sh.iconCount or 5
     local histCount = min(#_history, maxIcons)
@@ -681,6 +684,10 @@ BuildIconStrip = function()
         local ic = _iconPool[i]
         if not ic then break end
         if i <= count then
+            if ic._cachedZoom ~= iconZoom then
+                ic._cachedZoom = iconZoom
+                ic.tex:SetTexCoord(iconZoom, 1 - iconZoom, iconZoom, 1 - iconZoom)
+            end
             if layoutChanged then
                 ic.frame:SetScript("OnUpdate", nil)
                 ic.frame:SetScale(1)
@@ -777,7 +784,8 @@ local function MakeHistoryBar(parent)
     bar.icon = bar.row:CreateTexture(nil, "OVERLAY")
     bar.icon:SetSize(18, 18)
     bar.icon:SetPoint("LEFT", bar.row, "LEFT", 0, 0)
-    bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    local z = DB().iconZoom or 0.08
+    bar.icon:SetTexCoord(z, 1 - z, z, 1 - z)
 
     bar.fill = CreateFrame("StatusBar", nil, bar.row)
     bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 0, 0)
@@ -1064,6 +1072,7 @@ RefreshBarWindow = function()
 
     local total = min(#_history, sh.maxBars or 5)
     local loopEnd = max(visSlots, _lastBarVisible)
+    local barIconZoom = sh.iconZoom or 0.08
 
     -- Layout key: only rebuild positions/sizes when settings change
     local layoutKey = barH .. "|" .. barSp .. "|" .. texPath
@@ -1076,6 +1085,11 @@ RefreshBarWindow = function()
         local idx = _barScroll + i
         if i <= visSlots and idx <= total then
             local entry = _history[idx]
+
+            if bar._cachedZoom ~= barIconZoom then
+                bar._cachedZoom = barIconZoom
+                bar.icon:SetTexCoord(barIconZoom, 1 - barIconZoom, barIconZoom, 1 - barIconZoom)
+            end
 
             -- Layout: only on settings change or slot reuse
             if layoutChanged or bar._cachedSlot ~= i then

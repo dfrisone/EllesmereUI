@@ -298,6 +298,7 @@ initFrame:SetScript("OnEvent", function(self)
                           EllesmereUIDB.tooltipMythicScore = v
                       end },
                     { type="toggle", label="Show Mount",
+                      tooltip="Adds the mount a player is riding to their tooltip, with a green check if you own it or a red X if you don't.",
                       disabled=ttReskinOff, disabledTooltip="Reskin Tooltip",
                       get=function()
                           return EllesmereUIDB and EllesmereUIDB.tooltipShowMount or false
@@ -826,7 +827,14 @@ initFrame:SetScript("OnEvent", function(self)
                   if not EllesmereUIDB then EllesmereUIDB = {} end
                   EllesmereUIDB.flyoutItemLevels = v
               end },
-            { type="spacer" }
+            { type="slider", text="Icon Zoom", min=0, max=0.20, step=0.01,
+              tooltip="Crops the border of the equipment-slot item icons on the character and inspect sheets. 0 shows the full icon. Only affects the themed character sheet.",
+              getValue=function() return (EllesmereUIDB and EllesmereUIDB.charSheetIconZoom) or 0.07 end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.charSheetIconZoom = v
+                  if EllesmereUI._refreshCharSheetIconZoom then EllesmereUI._refreshCharSheetIconZoom() end
+              end }
         );  y = y - h
 
         _, h = W:Spacer(parent, y, 10);  y = y - h

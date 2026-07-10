@@ -1890,6 +1890,14 @@ local function GetAuraSlotOffsets(slotKey)
     if not pos or pos == "none" then return 0, 0 end
     return GetSlotOffsets(pos)
 end
+-- 12.1 aura containers read layout inputs through these.
+ns.GetAuraSlotOffsets = GetAuraSlotOffsets
+function ns.NP_GetProfile() return p end
+function ns.NP_GetDefaults() return defaults end
+function ns.NP_ClassPowerTopPush(plate)
+    if GetClassPowerTopPush then return GetClassPowerTopPush(plate) or 0 end
+    return 0
+end
 
 -- Get XY offset for a text slot key (e.g. "textSlotTop")
 local function GetTextSlotOffsets(slotKey)
@@ -2038,18 +2046,36 @@ PositionArrowsOutsideAuras = function(plate)
         local cxOff = select(1, GetAuraSlotOffsets("classification"))
         rightExtent = math.max(rightExtent, sideOff + rightPush + clSz + cxOff)
     end
+    -- 12.1 restricted-tree rendering (field-confirmed on PTR): inside the
+    -- aspect-restricted nameplate subtree, SINGLE-POINT + SetSize regions
+    -- render displaced from their anchor, while rects fully defined by
+    -- anchors (fill, bg, hash line) render exactly. So both arrows pin
+    -- TOP+BOTTOM to the health bar's CORNERS (hash-line pattern): the bar
+    -- edges resolve engine-side, the offsets stay small numbers scaled
+    -- exactly like the legacy single-point form (live-visual parity), and
+    -- nothing here reads geometry ("Can't measure restricted regions").
+    -- Same rendered result as before: inner edge (extent + 8) from the bar
+    -- edge, vertically centered, 16 * scale tall. The symmetric +/-dy pair
+    -- keeps centering exact regardless of pixel-mult rounding.
+    local st = ns.ResolveTargetArrowStyle(p)
+    local sc = (p and p.targetArrowScale) or 1.0
+    local aw = math.floor(((st and st.w) or 16) * sc + 0.5)
+    local ah = math.floor(16 * sc + 0.5)
+    local dy = (ah - GetHealthBarHeight()) / 2
+    local lox = -(leftExtent + 8 + aw / 2)
+    local rox = (rightExtent + 8 + aw / 2)
+    -- Stashed for the 12.1 container reanchor (EUI_Nameplates_AuraContainers
+    -- ReanchorArrows), which re-points arrows to engine-sized aura container
+    -- edges and needs the same dimensions without re-deriving the style.
+    plate._arrowW, plate._arrowH = aw, ah
     plate.leftArrow:ClearAllPoints()
     plate.rightArrow:ClearAllPoints()
-    if leftExtent > 0 then
-        PP.Point(plate.leftArrow, "RIGHT", plate.health, "LEFT", -(leftExtent + 8), 0)
-    else
-        PP.Point(plate.leftArrow, "RIGHT", plate.health, "LEFT", -8, 0)
-    end
-    if rightExtent > 0 then
-        PP.Point(plate.rightArrow, "LEFT", plate.health, "RIGHT", rightExtent + 8, 0)
-    else
-        PP.Point(plate.rightArrow, "LEFT", plate.health, "RIGHT", 8, 0)
-    end
+    PP.Point(plate.leftArrow, "TOP", plate.health, "TOPLEFT", lox, dy)
+    PP.Point(plate.leftArrow, "BOTTOM", plate.health, "BOTTOMLEFT", lox, -dy)
+    PP.Width(plate.leftArrow, aw)
+    PP.Point(plate.rightArrow, "TOP", plate.health, "TOPRIGHT", rox, dy)
+    PP.Point(plate.rightArrow, "BOTTOM", plate.health, "BOTTOMRIGHT", rox, -dy)
+    PP.Width(plate.rightArrow, aw)
 end
 end -- do (AddSideExtent scope)
 ns.PositionArrowsOutsideAuras = PositionArrowsOutsideAuras
@@ -2167,15 +2193,21 @@ local function EnsureArrows(plate)
     local st = ns.ResolveTargetArrowStyle(p)
     local sc = (p and p.targetArrowScale) or 1.0
     local aw, ah = math.floor(st.w * sc + 0.5), math.floor(16 * sc + 0.5)
-    plate.leftArrow = plate:CreateTexture(nil, "OVERLAY")
+    -- Regions OF the health bar (12.1: the plate subtree is aspect-restricted
+    -- and unmeasurable). NO creation anchors: single-point + size rects render
+    -- DISPLACED inside the restricted tree, so the only sanctioned anchor form
+    -- is the fully-anchored TOP+BOTTOM scheme applied by
+    -- PositionArrowsOutsideAuras -- which runs on every target apply, always
+    -- after Show(). An unanchored hidden texture has no rect and draws
+    -- nothing, so the creation state is safe. Rendering outside the bar rect
+    -- is fine (health runs SetClipsChildren(false)).
+    plate.leftArrow = plate.health:CreateTexture(nil, "OVERLAY")
     plate.leftArrow:SetTexture(ns.TARGET_ARROW_DIR .. st.l .. ".png")
-    plate.rightArrow = plate:CreateTexture(nil, "OVERLAY")
+    plate.rightArrow = plate.health:CreateTexture(nil, "OVERLAY")
     plate.rightArrow:SetTexture(ns.TARGET_ARROW_DIR .. st.r .. ".png")
     PP.Size(plate.leftArrow, aw, ah)
-    PP.Point(plate.leftArrow, "RIGHT", plate.health, "LEFT", -8, 0)
     plate.leftArrow:Hide()
     PP.Size(plate.rightArrow, aw, ah)
-    PP.Point(plate.rightArrow, "LEFT", plate.health, "RIGHT", 8, 0)
     plate.rightArrow:Hide()
 end
 
@@ -3339,6 +3371,9 @@ function ns.RefreshAllSettings()
         end
     end
     if ns.ApplyClassPowerSetting then ns.ApplyClassPowerSetting() end
+    -- 12.1 aura containers: fingerprint-guarded, near-free when no aura
+    -- settings changed.
+    if ns.NPC_ReloadAll then ns.NPC_ReloadAll() end
 end
 
 function ns.HideHoverEffect(plate)
@@ -5069,7 +5104,7 @@ local function HideBlizzardFrame(nameplate, unit)
     -- -> immediate rebuild; no stash otherwise -> owe ONE deferred
     -- authoritative rebuild (never rebuild ungated per event -- that
     -- was the rebuild storm that negated every fast path).
-    if uf.AurasFrame and not hookedAurasFrames[uf.AurasFrame] then
+    if uf.AurasFrame and not ns.NPC_OwnsAuras and not hookedAurasFrames[uf.AurasFrame] then
         hookedAurasFrames[uf.AurasFrame] = true
         hooksecurefunc(uf.AurasFrame, "RefreshAuras", function(af)
             if af:IsForbidden() then return end
@@ -5112,7 +5147,8 @@ local function HideBlizzardFrame(nameplate, unit)
     end
     -- Keep Blizzard's UnitFrame processing UNIT_AURA so its
     -- debuffList/buffList stay current for our importance filter.
-    if unit and uf.AurasFrame then
+    -- (12.1 containers: those lists are taint-locked and unused -- skip.)
+    if unit and uf.AurasFrame and not ns.NPC_OwnsAuras then
         uf:RegisterUnitEvent("UNIT_AURA", unit)
     end
     if uf.selectionHighlight and not hookedHighlights[uf.selectionHighlight] then
@@ -5724,8 +5760,15 @@ function NameplateFrame:SetUnit(unit, nameplate)
     self:RegisterUnitEvent("UNIT_HEALTH", unit)
     self:RegisterUnitEvent("UNIT_ABSORB_AMOUNT_CHANGED", unit)
     self:RegisterUnitEvent("UNIT_NAME_UPDATE", unit)
-    self:RegisterUnitEvent("UNIT_AURA", unit)
+    -- 12.1 containers own the aura rows and the legacy UNIT_AURA handler
+    -- chain ends in an inert UpdateAuras -- skip the registration entirely
+    -- (dead event delivery per plate per aura change otherwise).
+    if not ns.NPC_OwnsAuras then
+        self:RegisterUnitEvent("UNIT_AURA", unit)
+    end
     self:RegisterUnitEvent("UNIT_THREAT_LIST_UPDATE", unit)
+    -- 12.1: attach a pooled aura-container bundle for this unit.
+    if ns.NPC_AttachPlate then ns.NPC_AttachPlate(self, unit) end
     -- Critical: health bar must display immediately
     self:UpdateHealth()
     -- PERF: defer non-critical work 1 frame. Stacking bounds, name, cast bar,
@@ -5866,6 +5909,8 @@ function NameplateFrame:ClearUnit()
         end
         bSlot._auraId = nil
     end
+    -- 12.1: release this plate's aura-container bundle back to the pool.
+    if ns.NPC_DetachPlate then ns.NPC_DetachPlate(self) end
     self.unit = nil
     self.nameplate = nil
     self._shownAuras = nil
@@ -5970,7 +6015,11 @@ function NameplateFrame:UpdateHealthValues()
             unit = actualUnit
             -- Only refresh auras for the lockout when one was actually active
             -- (zero cost when the Cast Lockout feature is off / no lockout).
-            if self._castLockout then self._castLockout = nil; self:UpdateAuras() end
+            if self._castLockout then
+                self._castLockout = nil
+                self:UpdateAuras()
+                if ns.NPC_UpdateLockout then ns.NPC_UpdateLockout(self) end
+            end
             self:UpdateName()
             self._castDirtyFull = true
             self:UpdateCast()
@@ -6714,6 +6763,9 @@ function ns._npGroupTouched(updateInfo, frames, count)
 end
 
 function NameplateFrame:UpdateAuras(updateInfo)
+    -- 12.1: aura rows render via engine containers (see the containers
+    -- file); this whole legacy path is inert.
+    if ns.NPC_OwnsAuras then return end
     if not self.unit or not self.nameplate then return end
     local unit = self.unit
 
@@ -8052,10 +8104,12 @@ function NameplateFrame:ShowCastLockout()
     }
     self._castLockout = lockout
     self:UpdateAuras()
+    if ns.NPC_UpdateLockout then ns.NPC_UpdateLockout(self) end
     C_Timer.After(ns.DEFAULT_CAST_LOCKOUT_DURATION, function()
         if self._castLockout ~= lockout or GetTime() < lockout.expires then return end
         self._castLockout = nil
         self:UpdateAuras()
+        if ns.NPC_UpdateLockout then ns.NPC_UpdateLockout(self) end
     end)
 end
 function NameplateFrame:UNIT_HEALTH()

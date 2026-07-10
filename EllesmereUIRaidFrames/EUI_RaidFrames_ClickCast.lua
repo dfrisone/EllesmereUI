@@ -800,11 +800,20 @@ local function SetClickAttr(frame, parsed, actionType, spellOrMacro, macrotext, 
     local suffix = tostring(parsed.buttonNum)
     local typeAttr = prefix .. "type" .. suffix
     -- 12.0.7 gates a raw "togglemenu" on unit buttons (and an insecure reopen
-    -- taints its protected items). Route the menu through the secure proxy via
-    -- the ungated "click" action instead.
+    -- taints its protected items); the gate is still present in 12.1. Route
+    -- the menu through the secure proxy. TRANSPORT: on 12.1 the "click"
+    -- action crashes on a Blizzard typo (SecureTemplates.lua:564, aspect
+    -- check on the mouse-button string), so 12.1 uses a "/click <proxy>"
+    -- macro; 12.0 keeps the proven click action.
     if actionType == "togglemenu" and EllesmereUI.GetSecureMenuProxy then
-        SetGatedType(frame, typeAttr, "click", oocOnly)
-        frame:SetAttribute(prefix .. "clickbutton" .. suffix, EllesmereUI.GetSecureMenuProxy(frame))
+        local proxy = EllesmereUI.GetSecureMenuProxy(frame)
+        if EllesmereUI.IS_121 then
+            SetGatedType(frame, typeAttr, "macro", oocOnly)
+            frame:SetAttribute(prefix .. "macrotext" .. suffix, "/click " .. proxy:GetName())
+        else
+            SetGatedType(frame, typeAttr, "click", oocOnly)
+            frame:SetAttribute(prefix .. "clickbutton" .. suffix, proxy)
+        end
         return
     end
     -- 12.0.7 also gates a raw "target" on unit buttons. Plain unmodified
@@ -813,8 +822,14 @@ local function SetClickAttr(frame, parsed, actionType, spellOrMacro, macrotext, 
     -- target binding (other buttons / modifiers) through the ungated "click"
     -- proxy. Keeps the change scoped to users who rebound target off left-click.
     if actionType == "target" and (suffix ~= "1" or prefix ~= "") and EllesmereUI.GetSecureTargetProxy then
-        SetGatedType(frame, typeAttr, "click", oocOnly)
-        frame:SetAttribute(prefix .. "clickbutton" .. suffix, EllesmereUI.GetSecureTargetProxy(frame))
+        local proxy = EllesmereUI.GetSecureTargetProxy(frame)
+        if EllesmereUI.IS_121 then
+            SetGatedType(frame, typeAttr, "macro", oocOnly)
+            frame:SetAttribute(prefix .. "macrotext" .. suffix, "/click " .. proxy:GetName())
+        else
+            SetGatedType(frame, typeAttr, "click", oocOnly)
+            frame:SetAttribute(prefix .. "clickbutton" .. suffix, proxy)
+        end
         return
     end
     -- Raw action type. Only menu/target honor oocOnly via the combat driver;
@@ -842,17 +857,30 @@ end
 local function SetKeyAttr(frame, idx, actionType, spellOrMacro, macrotext, oocOnly)
     local suffix = "eui_" .. idx
     local typeAttr = "type-" .. suffix
-    -- Route a "menu" keybind through the secure proxy (see SetClickAttr).
+    -- Route a "menu" keybind through the secure proxy (see SetClickAttr for
+    -- why 12.1 uses the /click macro transport instead of the click action).
     if actionType == "togglemenu" and EllesmereUI.GetSecureMenuProxy then
-        SetGatedType(frame, typeAttr, "click", oocOnly)
-        frame:SetAttribute("clickbutton-" .. suffix, EllesmereUI.GetSecureMenuProxy(frame))
+        local proxy = EllesmereUI.GetSecureMenuProxy(frame)
+        if EllesmereUI.IS_121 then
+            SetGatedType(frame, typeAttr, "macro", oocOnly)
+            frame:SetAttribute("macrotext-" .. suffix, "/click " .. proxy:GetName())
+        else
+            SetGatedType(frame, typeAttr, "click", oocOnly)
+            frame:SetAttribute("clickbutton-" .. suffix, proxy)
+        end
         return
     end
     -- A "target" keybind is never plain left-click, so it always hits the 12.0.7
     -- gate -- route it through the ungated "click" proxy (see SetClickAttr).
     if actionType == "target" and EllesmereUI.GetSecureTargetProxy then
-        SetGatedType(frame, typeAttr, "click", oocOnly)
-        frame:SetAttribute("clickbutton-" .. suffix, EllesmereUI.GetSecureTargetProxy(frame))
+        local proxy = EllesmereUI.GetSecureTargetProxy(frame)
+        if EllesmereUI.IS_121 then
+            SetGatedType(frame, typeAttr, "macro", oocOnly)
+            frame:SetAttribute("macrotext-" .. suffix, "/click " .. proxy:GetName())
+        else
+            SetGatedType(frame, typeAttr, "click", oocOnly)
+            frame:SetAttribute("clickbutton-" .. suffix, proxy)
+        end
         return
     end
     -- Only menu/target honor oocOnly via the combat driver; spell/macro carry

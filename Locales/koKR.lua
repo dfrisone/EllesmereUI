@@ -1715,8 +1715,7 @@ L["Widens the clickable hitbox of enemy nameplates. 100% = matches bar width. In
 -- add Nameplates Popup (이름표 팝업)
 L["Changing Max Debuffs requires a UI reload to take effect."] = "'최대 약화 효과 개수' 변경은 UI 리로드 후 적용됩니다."
 -- add Nameplates Format (이름표 포맷)
-L["%1$s Slot Settings"] = "%s 슬롯 설정"   -- core concats slotLabel.." Slot Settings" ("Top Slot Settings") -> needs %s key so reverse-format compiles and re-translates the "Top" capture; %1$s/exact = dead key (본체가 slotLabel.." Slot Settings" 영문 concat, %s 키라야 역포맷으로 "Top" 캡처 재번역, %1$s/exact면 죽은 키)
-L["%1%s Text Settings"] = "%s 글자 설정"   -- text gear: slotLabel.." Settings" ("Top Text Settings") -> re-translates "Top" capture; no overlap with "Slot Settings" pattern (텍스트 톱니: slotLabel.." Settings", "Top" 캡처 재번역, "Slot Settings" 패턴과 미겹침)
+L["%1$s Slot Settings"] = "%s 슬롯 설정"   -- key must match the exact Lf() literal in the slot-gear title; the text-gear title uses the generic "%1$s Settings" key instead (키는 슬롯 톱니 제목의 Lf() 리터럴과 정확히 일치해야 함; 텍스트 톱니 제목은 범용 "%1$s Settings" 키 사용)
 L["Level %d"] = "%d레벨"
 
 -- == add UnitFrames (유닛 프레임) ==============================================
@@ -2452,7 +2451,6 @@ L["Custom Active State Decimals"] = "활성 상태 소수점 사용자 지정"
 L["Custom Buff ID"] = "사용자 지정 강화 효과 ID"
 L["Custom Item"] = "사용자 지정 아이템"
 L["Custom Item ID"] = "사용자 지정 아이템 ID"
-L["Custom Shape Glow"] = "사용자 지정 모양 반짝임"
 L["Custom Shape Glow requires a custom button shape"] = "사용자 지정 모양 반짝임은 사용자 지정 버튼 모양이 필요합니다"
 L["Custom shapes always use Shape Glow. Set the bar's Icon Shape to None or Cropped to pick a different glow."] = "사용자 지정 모양은 항상 모양 반짝임를 사용합니다. 다른 반짝임를 선택하려면 바의 아이콘 모양을 없음 또는 잘림으로 설정하십시오."
 L["Custom Spell ID"] = "사용자 지정 주문 ID"
@@ -3244,7 +3242,8 @@ L["BattleRes Icon"] = "전투 부활 아이콘"
 L["Bloodlust Icon"] = "피의 욕망 아이콘"
 L["Cast Bar Circle"] = "시전 바 원"
 L["Changes the crosshair colour when your current target is out of melee range."] = "현재 대상이 근접 공격 범위를 벗어나면 조준선 색상을 변경합니다."
-L["Changes the crosshair color when your current target is out of range. Currently active range cutoff: 5yd."] = "현재 대상이 사정거리를 벗어났을 때 조준선 색상을 변경합니다. 현재 활성화된 사정거리 기준: 5미터."
+L["Changes the crosshair color when your current target is out of range."] = "현재 대상이 사정거리를 벗어났을 때 조준선 색상을 변경합니다."
+L["Currently active range cutoff: %1$syd."] = "현재 활성화된 사정거리 기준: %1$s미터."
 L["Checked transforms are removed automatically when applied to you."] = "체크된 변신 효과는 캐릭터에게 적용될 때 자동으로 제거됩니다."
 L["Choose when the crosshair is shown."] = "조준선을 표시할 조건을 선택합니다."
 L["Choose which transforms are removed"] = "제거할 변신 효과를 선택합니다."
@@ -3526,7 +3525,6 @@ L["Show Diminishing Returns"] = "점감 효과 표시"
 L["Show each enchant's name as text (colored to match that item's item level) instead of its icon. The name normally appears only when hovering the icon."] = "아이콘 대신 각 마법부여의 이름을 글자로 표시합니다 (해당 아이템의 아이템 레벨에 맞춰 색상이 지정됨). 이름은 보통 아이콘에 마우스를 올렸을 때만 나타납니다."
 L["Show Item Text"] = "아이템 글자 보이기"
 L["Show Player Titles in Tooltips"] = "툴팁에 플레이어 칭호 표시"
-L["Shows a countdown bar below the queue accept popup indicating how long you have to accept."] = "대기열 수락 팝업 아래에 수락 가능한 시간을 보여주는 카운트다운 바를 표시합니다."
 L["Shows a player's RP title on their unit tooltip."] = "유닛 툴팁에 플레이어의 칭호를 표시합니다."
 L["Shows full spell and ability descriptions in tooltips instead of just the name. Only enforced on login after you toggle this setting."] = "툴팁에 이름만이 아니라 주문/능력의 전체 설명을 표시합니다. 이 설정을 변경한 후에는 다음 접속 시에만 적용됩니다."
 L["Shows saved instance lockouts with boss kill progress on the minimap calendar button tooltip."] = "미니맵 달력 버튼 툴팁에 우두머리 처치 진행도와 함께 저장된 인스턴스 잠금을 표시합니다."

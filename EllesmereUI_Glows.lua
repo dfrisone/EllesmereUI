@@ -112,7 +112,15 @@ local function _DriverOnUpdate(self, elapsed)
         -- A wrapper that is shown but alpha-0 stays IsVisible()==true and keeps
         -- animating exactly as it did under its own OnUpdate; only Hide()-d or
         -- hidden-ancestor wrappers are skipped, and they resume automatically.
-        if (not wrapper.IsVisible) or wrapper:IsVisible() then
+        -- 12.1: a wrapper inside an ENGINE aura-button subtree has a SECRET
+        -- visibility (the engine drives the button's shown state); a boolean
+        -- test on it errors. Treat secret as hidden: the animation freezes
+        -- for those wrappers while restricted (the glow still renders when
+        -- its parent is actually shown) instead of ticking on the engine's
+        -- 10x hidden pool buttons.
+        local vis = (not wrapper.IsVisible) or wrapper:IsVisible()
+        if issecretvalue and issecretvalue(vis) then vis = false end
+        if vis then
             local fn = _regFn[i]
             if fn then fn(wrapper, dt) end
         end
@@ -759,12 +767,30 @@ end
 -------------------------------------------------------------------------------
 --  Public API — attached to EllesmereUI.Glows
 -------------------------------------------------------------------------------
+-- Styles that render through C-side FlipBook AnimationGroups (GCD, Modern
+-- WoW Glow, Classic WoW Glow) animate IDENTICALLY under 12.1 aura
+-- restrictions; driver-ticked styles (Pixel, Action Button, Auto-Cast,
+-- Shape) cannot -- secret visibility blocks their Lua ticks, leaving a
+-- frozen artifact. Gameplay glows living on ENGINE aura buttons must remap
+-- through this so the glow looks the same in and out of restricted content:
+-- Pixel -> Classic WoW Glow (ants), everything else driver-based -> Modern
+-- WoW Glow (the standard proc loop).
+local SAFE_STYLE_MAP = { [1] = 7, [2] = 6, [3] = 6, [4] = 6 }
+local function RestrictionSafeStyle(idx)
+    local entry = GLOW_STYLES[idx]
+    if entry and (entry.procedural or entry.buttonGlow or entry.autocast or entry.shapeGlow) then
+        return SAFE_STYLE_MAP[idx] or 6
+    end
+    return idx
+end
+
 EllesmereUI.Glows = {
     STYLES              = GLOW_STYLES,
 
     -- High-level API (recommended)
     StartGlow           = StartGlow,
     StopGlow            = StopGlow,
+    RestrictionSafeStyle = RestrictionSafeStyle,
 
     -- Low-level engines (for addons that need direct control)
     StartProceduralAnts = StartProceduralAnts,

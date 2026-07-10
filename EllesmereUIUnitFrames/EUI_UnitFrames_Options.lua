@@ -74,7 +74,11 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     local function ReloadAndUpdate()
-        if ReloadFrames then ReloadFrames() end
+        -- Resolve at call time: ns.ReloadFrames gets wrapped after this file's
+        -- setup runs (aura containers, dispel overlay); a load-time capture
+        -- would bypass those hooks and settings would stop live-updating.
+        local rf = ns.ReloadFrames or ReloadFrames
+        if rf then rf() end
         UpdatePreview()
     end
 
@@ -2972,9 +2976,11 @@ initFrame:SetScript("OnEvent", function(self)
                     if mode == "full" then
                         dispelOverlayPreview:SetAllPoints(health)
                         dispelOverlayPreview:SetColorTexture(c.r, c.g, c.b, alpha)
-                    elseif mode == "gradient" then
+                    elseif mode == "gradient" or mode == "gradient_sharp" then
                         dispelOverlayPreview:SetAllPoints(health)
-                        dispelOverlayPreview:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\textures\\gradient-tb.tga")
+                        dispelOverlayPreview:SetTexture(mode == "gradient_sharp"
+                            and "Interface\\AddOns\\EllesmereUI\\media\\textures\\gradient-sharp.tga"
+                            or "Interface\\AddOns\\EllesmereUI\\media\\textures\\gradient-tb.tga")
                         dispelOverlayPreview:SetVertexColor(c.r, c.g, c.b, alpha)
                     else
                         dispelOverlayPreview:SetPoint("TOPLEFT", health, "TOPLEFT", 0, 0)
@@ -3107,7 +3113,7 @@ initFrame:SetScript("OnEvent", function(self)
                             if bf._iconTex then
                                 bf._iconTex:SetTexture(_previewBuffIcons[i] or 135932)
                                 -- SetTexture resets texcoord, so re-apply the crop each update.
-                                ns.SetAuraIconCrop(bf._iconTex, buffCrop, buffSize, buffH)
+                                ns.SetAuraIconCrop(bf._iconTex, buffCrop, buffSize, buffH, s.buffIconZoom or 0.07)
                             end
                         else
                             if bf:IsShown() then bf:Hide() end
@@ -3222,12 +3228,12 @@ initFrame:SetScript("OnEvent", function(self)
                     local simpleIconPt   = (simpleMode == "right") and "TOPLEFT"  or "TOPRIGHT"
                     local simpleParentPt = (simpleMode == "right") and "TOPRIGHT" or "TOPLEFT"
                     local simpleEdgeSign = (simpleMode == "right") and 1 or -1
-                    local anchorKey = justH .. am.pt .. am.ox .. am.oy .. dx .. dy .. debuffSize .. debuffH .. (useSimpleBossAnchor and "S" or "N") .. simpleMode .. dOffX .. "gx" .. debuffGapX .. "gy" .. debuffGapY
+                    local anchorKey = justH .. am.pt .. am.ox .. am.oy .. dx .. dy .. debuffSize .. debuffH .. (useSimpleBossAnchor and "S" or "N") .. simpleMode .. dOffX .. "gx" .. debuffGapX .. "gy" .. debuffGapY .. "z" .. (s.debuffIconZoom or 0.07)
                     for i, df in ipairs(debuffIcons) do
                         if i <= visibleDebuffCount then
                             if df._anchorKey ~= anchorKey then
                                 PP.Size(df, debuffSize, debuffH)
-                                if df._iconTex then ns.SetAuraIconCrop(df._iconTex, debuffCrop, debuffSize, debuffH) end
+                                if df._iconTex then ns.SetAuraIconCrop(df._iconTex, debuffCrop, debuffSize, debuffH, s.debuffIconZoom or 0.07) end
                                 df:ClearAllPoints()
                                 if i == 1 then
                                     if useSimpleBossAnchor then
@@ -9151,6 +9157,9 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="toggle", label="Cropped Icons",
                       get=function() return SValSupported("buffCropIcons", false) end,
                       set=function(v) SSetSupported("buffCropIcons", v) end },
+                    { type="slider", label="Icon Zoom", min=0, max=0.20, step=0.01,
+                      get=function() return SValSupported("buffIconZoom", 0.07) end,
+                      set=function(v) SSetSupported("buffIconZoom", v) end },
                 },
             })
             MakeCogBtn(leftRgn, buffCogShow, nil, nil, BuffDisabled)
@@ -9272,6 +9281,9 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="toggle", label="Cropped Icons",
                       get=function() return SValSupported("debuffCropIcons", false) end,
                       set=function(v) SSetSupported("debuffCropIcons", v) end },
+                    { type="slider", label="Icon Zoom", min=0, max=0.20, step=0.01,
+                      get=function() return SValSupported("debuffIconZoom", 0.07) end,
+                      set=function(v) SSetSupported("debuffIconZoom", v) end },
                 },
             })
             MakeCogBtn(leftRgn, debuffCogShow, nil, nil, DebuffDisabled)
@@ -9366,24 +9378,61 @@ initFrame:SetScript("OnEvent", function(self)
         -- RAID, Crowd Control, Big Defensive, External Defensive). "Own Only"
         -- reuses the legacy onlyPlayerDebuffs key so existing settings carry over.
         do
-            local filterItems = {
-                { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Buffs/Debuffs that appear on Raid Frames" },
-                { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
-                { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
-                { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
-                { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Buffs/Debuffs you apply" },
-            }
-            local BUFF_FILTER_KEYS   = { ownOnly = "onlyPlayerBuffs",   raidFrames = "buffRaid",   crowdControl = "buffCrowdControl",   bigDefensive = "buffBigDefensive",   externalDefensive = "buffExternalDefensive" }
-            local DEBUFF_FILTER_KEYS = { ownOnly = "onlyPlayerDebuffs", raidFrames = "debuffRaid", crowdControl = "debuffCrowdControl", bigDefensive = "debuffBigDefensive", externalDefensive = "debuffExternalDefensive" }
+            -- Version-branched classification lists: 12.1 exposes the full
+            -- engine set; 12.0 keeps today's exact five entries. Both
+            -- branches assign the SAME local names the consumers below use.
+            local buffFilterItems, debuffFilterItems, BUFF_FILTER_KEYS, DEBUFF_FILTER_KEYS
+            if EllesmereUI.IS_121 then
+                -- Full 12.1 classification set. Checked classes OR together at
+                -- runtime; all default OFF (off = show everything). Cancelable and
+                -- Stealable are buff-side classes; Boss/Role/Priority are
+                -- debuff-side engine selectors.
+                buffFilterItems = {
+                    { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Buffs that appear on Raid Frames" },
+                    { key = "raidInCombat",      label = "Raid (In Combat)",   tooltip = "Shows only auras flagged for raid frames during combat" },
+                    { key = "dispellable",       label = "Dispellable",        tooltip = "Shows only auras with a dispel type you can dispel" },
+                    { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
+                    { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
+                    { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
+                    { key = "cancelable",        label = "Cancelable",         tooltip = "Shows only buffs that can be canceled" },
+                    { key = "stealable",         label = "Stealable",          tooltip = "Shows only buffs you can spellsteal or purge" },
+                    { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Buffs you apply" },
+                }
+                debuffFilterItems = {
+                    { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Debuffs that appear on Raid Frames" },
+                    { key = "raidInCombat",      label = "Raid (In Combat)",   tooltip = "Shows only auras flagged for raid frames during combat" },
+                    { key = "dispellable",       label = "Dispellable",        tooltip = "Shows only auras with a dispel type you can dispel" },
+                    { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
+                    { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
+                    { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
+                    { key = "bossAura",          label = "Boss Auras",         tooltip = "Shows only debuffs applied by bosses" },
+                    { key = "roleAura",          label = "Role Auras",         tooltip = "Shows only debuffs flagged for your role" },
+                    { key = "priorityAura",      label = "Priority",           tooltip = "Shows only priority debuffs" },
+                    { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Debuffs you apply" },
+                }
+                BUFF_FILTER_KEYS   = { ownOnly = "onlyPlayerBuffs",   raidFrames = "buffRaid",   raidInCombat = "buffRaidInCombat",   dispellable = "buffDispellable",   crowdControl = "buffCrowdControl",   bigDefensive = "buffBigDefensive",   externalDefensive = "buffExternalDefensive",   cancelable = "buffCancelable", stealable = "buffStealable" }
+                DEBUFF_FILTER_KEYS = { ownOnly = "onlyPlayerDebuffs", raidFrames = "debuffRaid", raidInCombat = "debuffRaidInCombat", dispellable = "debuffDispellable", crowdControl = "debuffCrowdControl", bigDefensive = "debuffBigDefensive", externalDefensive = "debuffExternalDefensive", bossAura = "debuffBossAura", roleAura = "debuffRoleAura", priorityAura = "debuffPriorityAura" }
+            else
+                buffFilterItems = {
+                    { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Buffs/Debuffs that appear on Raid Frames" },
+                    { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
+                    { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
+                    { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
+                    { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Buffs/Debuffs you apply" },
+                }
+                debuffFilterItems = buffFilterItems
+                BUFF_FILTER_KEYS   = { ownOnly = "onlyPlayerBuffs",   raidFrames = "buffRaid",   crowdControl = "buffCrowdControl",   bigDefensive = "buffBigDefensive",   externalDefensive = "buffExternalDefensive" }
+                DEBUFF_FILTER_KEYS = { ownOnly = "onlyPlayerDebuffs", raidFrames = "debuffRaid", crowdControl = "debuffCrowdControl", bigDefensive = "debuffBigDefensive", externalDefensive = "debuffExternalDefensive" }
+            end
             -- "Own Only" is not offered for the PLAYER's debuffs (you rarely apply
             -- your own debuffs to yourself); any stale onlyPlayerDebuffs value is
-            -- ignored at runtime (see ns.EUIAuraFilter).
-            local debuffFilterItems = filterItems
+            -- ignored at runtime.
             if selectedUnit == "player" then
-                debuffFilterItems = {}
-                for _, it in ipairs(filterItems) do
-                    if it.key ~= "ownOnly" then debuffFilterItems[#debuffFilterItems + 1] = it end
+                local trimmed = {}
+                for _, it in ipairs(debuffFilterItems) do
+                    if it.key ~= "ownOnly" then trimmed[#trimmed + 1] = it end
                 end
+                debuffFilterItems = trimmed
             end
             local unitLabel = UNIT_LABELS_SUP[selectedUnit] or "Player"
             local filterRow
@@ -9410,7 +9459,7 @@ initFrame:SetScript("OnEvent", function(self)
                 local rgn = filterRow._leftRegion
                 if rgn._control then rgn._control:Hide() end
                 local cbDD, cbRefresh = EllesmereUI.BuildVisOptsCBDropdown(
-                    rgn, 210, rgn:GetFrameLevel() + 2, filterItems,
+                    rgn, 210, rgn:GetFrameLevel() + 2, buffFilterItems,
                     function(k) return SValSupported(BUFF_FILTER_KEYS[k], false) end,
                     function(k, v) SSetSupported(BUFF_FILTER_KEYS[k], v) end)
                 PP.Point(cbDD, "RIGHT", rgn, "RIGHT", -20, 0)
@@ -9452,8 +9501,9 @@ initFrame:SetScript("OnEvent", function(self)
                 fill     = "Fill Overlay",
                 full     = "Full Overlay",
                 gradient = "Gradient Overlay",
+                gradient_sharp = "Gradient Sharp",
             }
-            local dispelOverlayOrder = { "none", "fill", "full", "gradient" }
+            local dispelOverlayOrder = { "none", "fill", "full", "gradient", "gradient_sharp" }
             local function DispelRefresh()
                 if ns.UpdatePlayerDispelOverlay then ns.UpdatePlayerDispelOverlay() end
                 UpdatePreview()
@@ -9719,6 +9769,19 @@ initFrame:SetScript("OnEvent", function(self)
                       tooltip="Show the part of an absorb that exceeds your empty health and backfills over your current health. When off, absorbs only fill the empty part of the health bar.",
                       get=function() return SValSupported("showOvershield", true) end,
                       set=function(v) SSetSupported("showOvershield", v) end },
+                    -- Single global toggle (boss block key, nil = enabled):
+                    -- boss frames render absorbs with the TARGET frame's
+                    -- absorb styling -- no per-boss customization.
+                    { type="toggle", label="Show on Boss Frames",
+                      tooltip="Render absorbs on Boss Frames using the Target frame's absorb styling.",
+                      get=function() return not (db.profile.boss and db.profile.boss.showAbsorbs == false) end,
+                      set=function(v)
+                          local b = db.profile.boss
+                          if b then
+                              if v then b.showAbsorbs = nil else b.showAbsorbs = false end
+                          end
+                          ReloadAndUpdate()
+                      end },
                 },
             })
             MakeCogBtn(rgn, cogShow)
@@ -11989,18 +12052,38 @@ initFrame:SetScript("OnEvent", function(self)
             -- BUFFS AND DEBUFFS section (below DISPLAY)
             bossAuraHeader, hh = Ww:SectionHeader(pp, "Buffs and Debuffs", yy);  yy = yy - hh
 
+            -- Effective boss aura locations. Simple display overrides the stored
+            -- location at runtime and the location dropdowns display None while
+            -- it is active, so every disabled check must treat the location as
+            -- None whenever the matching simple mode is on. Raw key checks
+            -- deadlock: defaults hold simpleDebuffs="left" alongside
+            -- debuffAnchor="bottomleft", which locked BOTH the Simple Debuff
+            -- Display dropdown (raw anchor not none) and the Debuffs Location
+            -- dropdown (simple active) at the same time.
+            local function BossDebuffLocationActive()
+                local s = db.profile.boss
+                if ns.GetBossSimpleDebuffMode(s) ~= "none" then return false end
+                return (s.debuffAnchor or "bottomleft") ~= "none"
+            end
+            local function BossBuffLocationActive()
+                local s = db.profile.boss
+                if ns.GetBossSimpleBuffMode(s) ~= "none" then return false end
+                if s.showBuffs == false then return false end
+                return (s.buffAnchor or "topleft") ~= "none"
+            end
+
             -- Simple Buff Display: identical to Simple Debuff Display above but for
             -- buffs. Defaults to None. Forces a single Left/Right column matched to
             -- the frame height, overriding Buffs Location + Buff Size while active.
             local simpleBuffTextOff = function()
-                return ns.db.profile.boss.showBuffs
-                or db.profile.boss.simpleBuffs == "none"
+                return BossBuffLocationActive()
+                or ns.GetBossSimpleBuffMode(db.profile.boss) == "none"
                 or not db.profile.boss.simpleBuffShowCooldownText
             end
             simpleBuffRow, hh = Ww:DualRow(pp, yy,
                 { type="dropdown", text="Simple Buff Display",
                   disabled = function()
-                      return ns.db.profile.boss.showBuffs
+                      return BossBuffLocationActive()
                   end,
                   disabledTooltip="Buffs Location", requireState="disabled",
                   tooltip = "Force boss buffs into a single large column matched to the frame height.",
@@ -12064,7 +12147,7 @@ initFrame:SetScript("OnEvent", function(self)
                 -- Inline Duration + Stack swatches mirroring the regular Buff Text
                 -- Size swatches (same keys); greyed + disabled on this row cog's
                 -- condition.
-                local buffOff = function() return ns.db.profile.boss.showBuffs or db.profile.boss.simpleBuffs == "none" end
+                local buffOff = function() return BossBuffLocationActive() or ns.GetBossSimpleBuffMode(db.profile.boss) == "none" end
                 do
                     local sw, upd = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5,
                         function() local c = db.profile.boss.buffCooldownTextColor; if c then return c.r, c.g, c.b end; return 1, 1, 1 end,
@@ -12126,14 +12209,14 @@ initFrame:SetScript("OnEvent", function(self)
             -- holding the stack size and stack X/Y position controls.
             
             local simpleTextOff = function()
-                return ns.db.profile.boss.debuffAnchor ~= "none"
-                or db.profile.boss.simpleDebuffs == "none"
+                return BossDebuffLocationActive()
+                or ns.GetBossSimpleDebuffMode(db.profile.boss) == "none"
                 or not db.profile.boss.simpleDebuffShowCooldownText
             end
             simpleRow, hh = Ww:DualRow(pp, yy,
                 { type="dropdown", text="Simple Debuff Display",
                   disabled = function()
-                      return ns.db.profile.boss.debuffAnchor ~= "none"
+                      return BossDebuffLocationActive()
                   end,
                   disabledTooltip="Debuffs Location", requireState="disabled",
                   tooltip = "Force boss debuffs into a single large column matched to the frame height.",
@@ -12198,7 +12281,7 @@ initFrame:SetScript("OnEvent", function(self)
                 -- Inline Duration + Stack swatches mirroring the regular Debuff Text
                 -- Size swatches (same keys); greyed + disabled on this row cog's
                 -- condition.
-                local debuffOff = function() return ns.db.profile.boss.debuffAnchor ~= "none" or db.profile.boss.simpleDebuffs == "none" end
+                local debuffOff = function() return BossDebuffLocationActive() or ns.GetBossSimpleDebuffMode(db.profile.boss) == "none" end
                 do
                     local sw, upd = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5,
                         function() local c = db.profile.boss.debuffCooldownTextColor; if c then return c.r, c.g, c.b end; return 1, 1, 1 end,
@@ -12361,6 +12444,16 @@ initFrame:SetScript("OnEvent", function(self)
                 } })
                 BossCogBtn(bossAuraSizeRow._leftRegion, bSizeCog, EllesmereUI.DIRECTIONS_ICON, bossBuffSizeOff)
             end
+            do  -- Icon Zoom cog on Buff Size (gated only on buffs hidden, so it
+                -- stays adjustable in Simple Buff Display, where zoom still applies)
+                local bossBuffZoomOff = function() return db.profile.boss.showBuffs == false end
+                local _, bZoomCog = EllesmereUI.BuildCogPopup({ title = "Icon Zoom", rows = {
+                    { type="slider", label="Zoom", min=0, max=0.20, step=0.01,
+                      get=function() return db.profile.boss.buffIconZoom or 0.07 end,
+                      set=function(v) db.profile.boss.buffIconZoom = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end },
+                } })
+                BossCogBtn(bossAuraSizeRow._leftRegion, bZoomCog, nil, bossBuffZoomOff)
+            end
             do  -- Directions cog on Debuff Size (X/Y cluster offset)
                 local _, dSizeCog = EllesmereUI.BuildCogPopup({ title = "Debuff Position", rows = {
                     { type="slider", label="Offset X", min=-200, max=200, step=1,
@@ -12376,6 +12469,15 @@ initFrame:SetScript("OnEvent", function(self)
                 } })
                 BossCogBtn(bossAuraSizeRow._rightRegion, dSizeCog, EllesmereUI.DIRECTIONS_ICON, bossDebuffSizeOff)
             end
+            do  -- Icon Zoom cog on Debuff Size
+                local bossDebuffZoomOff = function() return (db.profile.boss.debuffAnchor or "bottomleft") == "none" end
+                local _, dZoomCog = EllesmereUI.BuildCogPopup({ title = "Icon Zoom", rows = {
+                    { type="slider", label="Zoom", min=0, max=0.20, step=0.01,
+                      get=function() return db.profile.boss.debuffIconZoom or 0.07 end,
+                      set=function(v) db.profile.boss.debuffIconZoom = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end },
+                } })
+                BossCogBtn(bossAuraSizeRow._rightRegion, dZoomCog, nil, bossDebuffZoomOff)
+            end
 
             -- Per-unit DEBUFF filter for boss frames (NOT synced). Boss BUFFS are
             -- never filtered -- they always show every HELPFUL aura. Multi-select
@@ -12385,28 +12487,59 @@ initFrame:SetScript("OnEvent", function(self)
             -- key so existing boss settings carry over.
             do
                 local PP = EllesmereUI.PanelPP
-                local filterItems = {
-                    { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Debuffs that appear on Raid Frames" },
-                    { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
-                    { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
-                    { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
-                    { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Debuffs you apply" },
-                }
-                local DEBUFF_FILTER_KEYS = { ownOnly = "onlyPlayerDebuffs", raidFrames = "debuffRaid", crowdControl = "debuffCrowdControl", bigDefensive = "debuffBigDefensive", externalDefensive = "debuffExternalDefensive" }
+                -- Version-branched: 12.1 exposes the full engine
+                -- classification set plus a buff-side list for the 12.1-only
+                -- Boss Buff Filter; 12.0 keeps today's exact five entries
+                -- (buff vars stay nil -- only the 12.1 block consumes them).
+                local filterItems, DEBUFF_FILTER_KEYS, buffFilterItems, BUFF_FILTER_KEYS
+                if EllesmereUI.IS_121 then
+                    filterItems = {
+                        { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Debuffs that appear on Raid Frames" },
+                        { key = "raidInCombat",      label = "Raid (In Combat)",   tooltip = "Shows only auras flagged for raid frames during combat" },
+                        { key = "dispellable",       label = "Dispellable",        tooltip = "Shows only auras with a dispel type you can dispel" },
+                        { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
+                        { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
+                        { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
+                        { key = "bossAura",          label = "Boss Auras",         tooltip = "Shows only debuffs applied by bosses" },
+                        { key = "roleAura",          label = "Role Auras",         tooltip = "Shows only debuffs flagged for your role" },
+                        { key = "priorityAura",      label = "Priority",           tooltip = "Shows only priority debuffs" },
+                        { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Debuffs you apply" },
+                    }
+                    DEBUFF_FILTER_KEYS = { ownOnly = "onlyPlayerDebuffs", raidFrames = "debuffRaid", raidInCombat = "debuffRaidInCombat", dispellable = "debuffDispellable", crowdControl = "debuffCrowdControl", bigDefensive = "debuffBigDefensive", externalDefensive = "debuffExternalDefensive", bossAura = "debuffBossAura", roleAura = "debuffRoleAura", priorityAura = "debuffPriorityAura" }
+                    buffFilterItems = {
+                        { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Buffs that appear on Raid Frames" },
+                        { key = "raidInCombat",      label = "Raid (In Combat)",   tooltip = "Shows only auras flagged for raid frames during combat" },
+                        { key = "dispellable",       label = "Dispellable",        tooltip = "Shows only auras with a dispel type you can dispel" },
+                        { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
+                        { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
+                        { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
+                        { key = "cancelable",        label = "Cancelable",         tooltip = "Shows only buffs that can be canceled" },
+                        { key = "stealable",         label = "Stealable",          tooltip = "Shows only buffs you can spellsteal or purge" },
+                        { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Buffs you apply" },
+                    }
+                    BUFF_FILTER_KEYS = { ownOnly = "onlyPlayerBuffs", raidFrames = "buffRaid", raidInCombat = "buffRaidInCombat", dispellable = "buffDispellable", crowdControl = "buffCrowdControl", bigDefensive = "buffBigDefensive", externalDefensive = "buffExternalDefensive", cancelable = "buffCancelable", stealable = "buffStealable" }
+                else
+                    filterItems = {
+                        { key = "raidFrames",        label = "Raid Frames",        tooltip = "Shows only the Debuffs that appear on Raid Frames" },
+                        { key = "crowdControl",      label = "Crowd Control",      tooltip = "Shows only crowd-control auras" },
+                        { key = "bigDefensive",      label = "Big Defensive",      tooltip = "Shows only major defensive cooldowns" },
+                        { key = "externalDefensive", label = "External Defensive", tooltip = "Shows only external defensive cooldowns cast on the unit" },
+                        { key = "ownOnly",           label = "Own Only",           tooltip = "Shows only the Debuffs you apply" },
+                    }
+                    DEBUFF_FILTER_KEYS = { ownOnly = "onlyPlayerDebuffs", raidFrames = "debuffRaid", crowdControl = "debuffCrowdControl", bigDefensive = "debuffBigDefensive", externalDefensive = "debuffExternalDefensive" }
+                end
                 -- Buff/Debuff Text Size: cooldown-text size sliders, each gated by
                 -- the "Show Duration" toggle at the top of its own Duration & Stack
                 -- cog (which also holds Duration X/Y + Stack size/position/X/Y).
                 -- Buff Text Size is a 1:1 mirror of Debuff Text Size.
 
                 local buffTextOff = function()
-                    return not ns.db.profile.boss.showBuffs
-                    or db.profile.boss.simpleBuffs ~= "none"
+                    return not BossBuffLocationActive()
                     or not db.profile.boss.buffShowCooldownText
                 end
                 local debuffTextOff = function()
-                    return ns.db.profile.boss.debuffAnchor == "none"
-                    or db.profile.boss.simpleDebuffs ~= "none" or
-                    not db.profile.boss.debuffShowCooldownText
+                    return not BossDebuffLocationActive()
+                    or not db.profile.boss.debuffShowCooldownText
                 end
                 local textSizeRow
                 textSizeRow, hh = Ww:DualRow(pp, yy,
@@ -12425,7 +12558,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Inline Duration + Stack text-color swatches on the Buff Text
                     -- Size slider; greyed + mouse-disabled on the same condition as
                     -- the row's cog.
-                    local buffOff = function() return ns.GetBossSimpleBuffMode(db.profile.boss) ~= "none" or not ns.db.profile.boss.showBuffs end
+                    local buffOff = function() return not BossBuffLocationActive() end
                     do
                         local sw, upd = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5,
                             function() local c = db.profile.boss.buffCooldownTextColor; if c then return c.r, c.g, c.b end; return 1, 1, 1 end,
@@ -12485,7 +12618,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Inline Duration + Stack text-color swatches on the Debuff Text
                     -- Size slider; greyed + mouse-disabled on the same condition as
                     -- the row's cog.
-                    local debuffOff = function() return ns.GetBossSimpleDebuffMode(db.profile.boss) ~= "none" or ns.db.profile.boss.debuffAnchor == "none" end
+                    local debuffOff = function() return not BossDebuffLocationActive() end
                     do
                         local sw, upd = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5,
                             function() local c = db.profile.boss.debuffCooldownTextColor; if c then return c.r, c.g, c.b end; return 1, 1, 1 end,
@@ -12541,20 +12674,32 @@ initFrame:SetScript("OnEvent", function(self)
                     -- debuff Duration & Stack controls do not apply.
                     BossCogBtn(rightRgn, debuffStackCogShow, nil, debuffOff)
                 end
-                -- Boss Debuff Filter in slot 1 (boss buffs are never filtered, so
-                -- the right slot is intentionally blank). The multi-select checkbox
-                -- dropdown is injected into the left slot, replacing the placeholder.
+                -- Boss Debuff Filter in slot 1. The right slot is the
+                -- 12.1-only Boss Buff Filter; on 12.0 it stays the blank
+                -- label it is today (boss buffs are never filtered there).
                 local filterRow
                 local filterOff = function()
                     local p = db.profile.boss
                     return ns.GetBossSimpleDebuffMode(p) == "none" and (p.debuffAnchor or "bottomleft") == "none"
+                end
+                local buffFilterOff
+                local bossFilterRightSlot = { type="label", text="" }
+                if EllesmereUI.IS_121 then
+                    buffFilterOff = function()
+                        local p = db.profile.boss
+                        return ns.GetBossSimpleBuffMode(p) == "none" and not p.showBuffs
+                    end
+                    bossFilterRightSlot = { type="dropdown", text="Boss Buff Filter",
+                      disabled=buffFilterOff, disabledTooltip="Buffs", requireState="displayed",
+                      values={ __placeholder="..." }, order={ "__placeholder" },
+                      getValue=function() return "__placeholder" end, setValue=function() end }
                 end
                 filterRow, hh = Ww:DualRow(pp, yy,
                     { type="dropdown", text="Boss Debuff Filter",
                       disabled=filterOff, disabledTooltip="Debuffs", requireState="displayed",
                       values={ __placeholder="..." }, order={ "__placeholder" },
                       getValue=function() return "__placeholder" end, setValue=function() end },
-                    { type="label", text="" });  yy = yy - hh
+                    bossFilterRightSlot);  yy = yy - hh
                 do
                     local rgn = filterRow._leftRegion
                     if rgn._control then rgn._control:Hide() end
@@ -12587,6 +12732,36 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                     UpdateFilterDisabled()
                     EllesmereUI.RegisterWidgetRefresh(UpdateFilterDisabled)
+                end
+                -- Right slot: Boss Buff Filter (12.1 only; mirror of the
+                -- debuff dropdown).
+                if EllesmereUI.IS_121 then
+                    local rgn = filterRow._rightRegion
+                    if rgn._control then rgn._control:Hide() end
+                    local cbDD, cbRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+                        rgn, 210, rgn:GetFrameLevel() + 2, buffFilterItems,
+                        function(k) return db.profile.boss[BUFF_FILTER_KEYS[k]] or false end,
+                        function(k, v) db.profile.boss[BUFF_FILTER_KEYS[k]] = v; ReloadAndUpdate() end)
+                    PP.Point(cbDD, "RIGHT", rgn, "RIGHT", -20, 0)
+                    rgn._control = cbDD; rgn._lastInline = nil
+                    EllesmereUI.RegisterWidgetRefresh(cbRefresh)
+                    local buffFilterBlock = CreateFrame("Frame", nil, cbDD)
+                    buffFilterBlock:SetAllPoints()
+                    buffFilterBlock:SetFrameLevel(cbDD:GetFrameLevel() + 10)
+                    buffFilterBlock:EnableMouse(true)
+                    buffFilterBlock:SetScript("OnEnter", function()
+                        EllesmereUI.ShowWidgetTooltip(cbDD, EllesmereUI.DisabledTooltip("Buffs", "displayed"))
+                    end)
+                    buffFilterBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+                    local function UpdateBuffFilterDisabled()
+                        if buffFilterOff() then
+                            cbDD:SetAlpha(0.3); buffFilterBlock:Show()
+                        else
+                            cbDD:SetAlpha(1); buffFilterBlock:Hide()
+                        end
+                    end
+                    UpdateBuffFilterDisabled()
+                    EllesmereUI.RegisterWidgetRefresh(UpdateBuffFilterDisabled)
                 end
             end
 

@@ -697,16 +697,23 @@ local friendlyFrameCache = CreateFramePool("Frame", UIParent, nil, nil, false, f
     plate.name:SetWordWrap(false)
     plate.name:SetMaxLines(1)
 
+    -- Fully-anchored rects, NOT single point + size: inside the 12.1
+    -- restricted plate subtree, point+size regions render DISPLACED. The
+    -- name's LEFT/RIGHT relPoint supplies both the edge x and the vertical
+    -- center line; the symmetric +/-8 pair renders 16 tall, centered --
+    -- identical geometry to the old single-point form on live.
     local _aSt = ns.ResolveTargetArrowStyle(FP())
     plate.leftArrow = plate:CreateTexture(nil, "OVERLAY")
     plate.leftArrow:SetTexture(ns.TARGET_ARROW_DIR .. _aSt.l .. ".png")
-    plate.leftArrow:SetSize(_aSt.w, 16)
-    plate.leftArrow:SetPoint("RIGHT", plate.name, "LEFT", -2, 0)
+    plate.leftArrow:SetWidth(_aSt.w)
+    plate.leftArrow:SetPoint("TOP", plate.name, "LEFT", -(2 + _aSt.w / 2), 8)
+    plate.leftArrow:SetPoint("BOTTOM", plate.name, "LEFT", -(2 + _aSt.w / 2), -8)
     plate.leftArrow:Hide()
     plate.rightArrow = plate:CreateTexture(nil, "OVERLAY")
     plate.rightArrow:SetTexture(ns.TARGET_ARROW_DIR .. _aSt.r .. ".png")
-    plate.rightArrow:SetSize(_aSt.w, 16)
-    plate.rightArrow:SetPoint("LEFT", plate.name, "RIGHT", 2, 0)
+    plate.rightArrow:SetWidth(_aSt.w)
+    plate.rightArrow:SetPoint("TOP", plate.name, "RIGHT", 2 + _aSt.w / 2, 8)
+    plate.rightArrow:SetPoint("BOTTOM", plate.name, "RIGHT", 2 + _aSt.w / 2, -8)
     plate.rightArrow:Hide()
 
     plate.raidFrame = CreateFrame("Frame", nil, plate)

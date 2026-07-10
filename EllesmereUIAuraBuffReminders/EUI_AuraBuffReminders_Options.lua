@@ -1411,6 +1411,157 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(UpdateZoneBtnDisabled)
         end
 
+        -- Ready Check Mana Warning toggle (eye | cog | swatch inline)
+        row, h = W:DualRow(parent, y,
+            { type="toggle", text="Ready Check Mana Warning",
+              tooltip="Flashes LOW MANA during an out-of-combat raid ready check while you are a healer under 80% mana.",
+              getValue=function() local c = CDB(); return not c or c.rcManaWarn ~= false end,
+              setValue=function(v)
+                  local c = CDB(); if c then c.rcManaWarn = v end
+                  if not v and _G._EABR_RCWarnHidePreview then _G._EABR_RCWarnHidePreview() end
+                  if _G._EABR_RCWarnUpdateReg then _G._EABR_RCWarnUpdateReg() end
+                  EllesmereUI:RefreshPage()
+              end },
+            { type="label", text="" }
+        );  y = y - h
+
+        -- Inline: eyeball | cog | color swatch on the mana warning toggle
+        do
+            local leftRgn = row._leftRegion
+            local function rcwOff()
+                local c = CDB()
+                return c ~= nil and c.rcManaWarn == false
+            end
+            local rcwPreviewShown = false
+            local RefreshRcwEye  -- assigned below; cog offset sliders flip the eye on
+
+            -- Color swatch (rightmost inline, closest to toggle). Default shows
+            -- the brightened mana color the warning uses when no custom is set.
+            local swatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5,
+                function()
+                    local c = CDB()
+                    local col = c and c.rcManaWarnColor
+                    if col then return col.r, col.g, col.b, 1 end
+                    local mc = EllesmereUI.GetPowerColor and EllesmereUI.GetPowerColor("MANA")
+                    if mc then
+                        return math.min(mc.r * 1.5, 1), math.min(mc.g * 1.5, 1), math.min(mc.b * 1.5, 1), 1
+                    end
+                    return 0, 0.825, 1, 1
+                end,
+                function(r, g, b)
+                    local c = CDB(); if not c then return end
+                    c.rcManaWarnColor = { r = r, g = g, b = b }
+                    if _G._EABR_RCWarnApply then _G._EABR_RCWarnApply() end
+                end, false, 20)
+            swatch:SetPoint("RIGHT", leftRgn._lastInline or leftRgn._control, "LEFT", -12, 0)
+            leftRgn._lastInline = swatch
+
+            local swatchBlock = CreateFrame("Frame", nil, swatch)
+            swatchBlock:SetAllPoints()
+            swatchBlock:SetFrameLevel(swatch:GetFrameLevel() + 10)
+            swatchBlock:EnableMouse(true)
+            swatchBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Ready Check Mana Warning"))
+            end)
+            swatchBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+            -- Cog: Text Size + X/Y Offset. Offset edits force the preview on
+            -- (and light the eye) so the warning is visible while moving it.
+            local function ShowPreviewFromCog()
+                rcwPreviewShown = true
+                if RefreshRcwEye then RefreshRcwEye() end
+                if _G._EABR_RCWarnPreview then _G._EABR_RCWarnPreview() end
+            end
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Mana Warning Settings",
+                rows = {
+                    { type="slider", label="Text Size", min=10, max=72, step=1,
+                      get=function() local c = CDB(); return c and c.rcManaWarnSize or 48 end,
+                      set=function(v) local c = CDB(); if not c then return end; c.rcManaWarnSize = v
+                          if _G._EABR_RCWarnApply then _G._EABR_RCWarnApply() end end },
+                    { type="slider", label="X Offset", min=-600, max=600, step=1,
+                      get=function() local c = CDB(); return c and c.rcManaWarnX or 0 end,
+                      set=function(v) local c = CDB(); if not c then return end; c.rcManaWarnX = v
+                          ShowPreviewFromCog() end },
+                    { type="slider", label="Y Offset", min=-600, max=600, step=1,
+                      get=function() local c = CDB(); return c and c.rcManaWarnY or 0 end,
+                      set=function(v) local c = CDB(); if not c then return end; c.rcManaWarnY = v
+                          ShowPreviewFromCog() end },
+                },
+            })
+            local cogBtn = MakeCogBtn(leftRgn, cogShow)
+
+            local cogBlock = CreateFrame("Frame", nil, cogBtn)
+            cogBlock:SetAllPoints()
+            cogBlock:SetFrameLevel(cogBtn:GetFrameLevel() + 10)
+            cogBlock:EnableMouse(true)
+            cogBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Ready Check Mana Warning"))
+            end)
+            cogBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+            -- Eye icon toggles a live preview (left of cog)
+            local EYE_VISIBLE   = EllesmereUI.MEDIA_PATH .. "icons\\eui-visible.png"
+            local EYE_INVISIBLE = EllesmereUI.MEDIA_PATH .. "icons\\eui-invisible.png"
+            local eyeBtn = CreateFrame("Button", nil, leftRgn)
+            eyeBtn:SetSize(26, 26)
+            eyeBtn:SetPoint("RIGHT", leftRgn._lastInline or leftRgn._control, "LEFT", -8, 0)
+            leftRgn._lastInline = eyeBtn
+            eyeBtn:SetFrameLevel(leftRgn:GetFrameLevel() + 5)
+            eyeBtn:SetAlpha(0.4)
+            local eyeTex = eyeBtn:CreateTexture(nil, "OVERLAY")
+            eyeTex:SetAllPoints()
+            RefreshRcwEye = function()
+                eyeTex:SetTexture(rcwPreviewShown and EYE_INVISIBLE or EYE_VISIBLE)
+            end
+            RefreshRcwEye()
+            eyeBtn:SetScript("OnEnter", function(self)
+                self:SetAlpha(0.7)
+                EllesmereUI.ShowWidgetTooltip(self, "Preview mana warning")
+            end)
+            eyeBtn:SetScript("OnLeave", function(self)
+                EllesmereUI.HideWidgetTooltip()
+                self:SetAlpha(0.4)
+            end)
+            eyeBtn:SetScript("OnClick", function()
+                rcwPreviewShown = not rcwPreviewShown
+                RefreshRcwEye()
+                if rcwPreviewShown then
+                    if _G._EABR_RCWarnPreview then _G._EABR_RCWarnPreview() end
+                else
+                    if _G._EABR_RCWarnHidePreview then _G._EABR_RCWarnHidePreview() end
+                end
+            end)
+
+            local eyeBlock = CreateFrame("Frame", nil, eyeBtn)
+            eyeBlock:SetAllPoints()
+            eyeBlock:SetFrameLevel(eyeBtn:GetFrameLevel() + 10)
+            eyeBlock:EnableMouse(true)
+            eyeBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(eyeBtn, EllesmereUI.DisabledTooltip("Ready Check Mana Warning"))
+            end)
+            eyeBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+            -- Shared disabled-state refresh for all three inlines
+            local function UpdateRcwInlinesDisabled()
+                local off = rcwOff()
+                if off then
+                    rcwPreviewShown = false
+                    RefreshRcwEye()
+                    swatch:SetAlpha(0.3);  swatchBlock:Show()
+                    cogBtn:SetAlpha(0.15); cogBlock:Show()
+                    eyeBtn:SetAlpha(0.15); eyeBlock:Show()
+                else
+                    swatch:SetAlpha(1)
+                    swatchBlock:Hide()
+                    cogBtn:SetAlpha(0.4); cogBlock:Hide()
+                    eyeBtn:SetAlpha(0.4); eyeBlock:Hide()
+                end
+            end
+            UpdateRcwInlinesDisabled()
+            EllesmereUI.RegisterWidgetRefresh(UpdateRcwInlinesDisabled)
+        end
+
         -- Wire up click mappings for preview hit overlays
         wipe(_eabrClickMappings)
         _eabrClickMappings.display = { section = displaySection, target = displayFirstRow }

@@ -661,7 +661,9 @@ EllesmereUI._WHATSNEW_PATCHES = {
                 module = "CDM",
                 title  = "Decimal Countdowns for Custom Timers",
                 desc   = "Presets and custom spell or item IDs can now show a 1-decimal countdown (like 2.7) once their active state or buff duration drops under a threshold you set, with an optional color change for those final seconds.",
-                nav    = { module = "EllesmereUICooldownManager", page = "CDM Bars", section = "EXTRAS", highlight = "Custom Active State Decimals",
+                -- The bar-level toggle this note shipped with became the per-spell
+                -- "Threshold Text" dropdown; land on the page without a highlight.
+                nav    = { module = "EllesmereUICooldownManager", page = "CDM Bars",
                     preSelect = function()
                         if EllesmereUI._setCDMBar then EllesmereUI._setCDMBar("cooldowns") end
                     end },
@@ -6672,18 +6674,37 @@ initFrame:SetScript("OnEvent", function(self)
         end,
     })
 
-    -- Profiles & Presets: its own single-page sidebar module. Reuses the
-    -- existing profiles page builder; the profiles-root lifecycle is handled by
-    -- the shared CleanupProfilesRoot hooks below (now keyed to PROFILES_KEY).
+    -- Profiles & Presets: its own sidebar module. Reuses the existing
+    -- profiles page builder; the profiles-root lifecycle is handled by the
+    -- shared CleanupProfilesRoot hooks below (now keyed to PROFILES_KEY).
+    -- Second tab: the Spec Overrides management list (built by
+    -- EllesmereUI_SpecOverrides.lua).
+    local PAGE_SPECOV = "Spec Overrides"
     EllesmereUI:RegisterModule(PROFILES_KEY, {
         title       = "Profiles & Presets",
         description = "Import, export, and switch EllesmereUI profiles and presets.",
-        pages       = { PAGE_PROFILES },
+        pages       = { PAGE_PROFILES, PAGE_SPECOV },
         buildPage   = function(pageName, parent, yOffset)
+            if pageName == PAGE_SPECOV then
+                CleanupProfilesRoot()
+                if EllesmereUI.SpecOverrides_BuildListPage then
+                    return EllesmereUI.SpecOverrides_BuildListPage(parent, yOffset)
+                end
+                return 200
+            end
             return BuildProfilesPage(pageName, parent, yOffset)
         end,
-        onPageCacheRestore = function()
-            if not EllesmereUI._profilesRoot then
+        onPageCacheRestore = function(pageName)
+            if pageName == PAGE_SPECOV then
+                CleanupProfilesRoot()
+                -- The override list changes while the page is cached; rebuild.
+                C_Timer.After(0, function()
+                    if EllesmereUI:GetActiveModule() == PROFILES_KEY
+                       and EllesmereUI:GetActivePage() == PAGE_SPECOV then
+                        EllesmereUI:RefreshPage(true)
+                    end
+                end)
+            elseif not EllesmereUI._profilesRoot then
                 C_Timer.After(0, function()
                     if EllesmereUI:GetActiveModule() == PROFILES_KEY then
                         BuildProfilesPage(PAGE_PROFILES, nil, -6)

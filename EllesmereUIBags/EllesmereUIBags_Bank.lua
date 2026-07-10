@@ -1359,7 +1359,7 @@ local function GetOrCreateBankSlot(idx)
     if btn.newitemglowAnim then btn.newitemglowAnim:Stop() end
 
     btn:SetSize(SLOT_SIZE, SLOT_SIZE)
-    if btn.icon then btn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+    if btn.icon then local z = BP().bagItemIconZoom or 0.08; btn.icon:SetTexCoord(z, 1 - z, z, 1 - z) end
 
     -- Remove highlight/pushed textures shape
     local ht = btn.HighlightTexture or btn:GetHighlightTexture()
@@ -1481,6 +1481,15 @@ local function RefreshBankTextSizes()
     end
 end
 EUI_Bank.RefreshTextSizes = RefreshBankTextSizes
+
+-- Fast icon-zoom update for bank slots (mirrors bags RefreshIconZoom)
+local function RefreshBankIconZoom()
+    local z = BP().bagItemIconZoom or 0.08
+    for _, btn in pairs(_bankSlots) do
+        if btn.icon then btn.icon:SetTexCoord(z, 1 - z, z, 1 - z) end
+    end
+end
+EUI_Bank.RefreshIconZoom = RefreshBankIconZoom
 
 local function CountUsedSlots(bagID, numSlots)
     local used = 0

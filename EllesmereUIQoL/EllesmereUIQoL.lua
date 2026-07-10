@@ -3074,11 +3074,21 @@ do
 
     local auraFrame = CreateFrame("Frame")
 
+    -- 12.1: index scans hard-error while aura restrictions are active
+    -- (M+/raids, even out of combat). Transforms are cosmetic; skipping the
+    -- sweep there is fine -- it re-runs on the next event outside.
+    local function AurasRestricted()
+        local AK = EllesmereUI and EllesmereUI.AuraKit
+        if AK and AK.AurasRestricted then return AK.AurasRestricted() end
+        return false
+    end
+
     -- Sweep current buffs, canceling any included transform. Descending so a
     -- cancel (which shifts later buff indices down) cannot skip a match.
     local function CancelMatching(force)
         if not (C_UnitAuras and C_UnitAuras.GetBuffDataByIndex) then return end
         if not force and UnitAffectingCombat("player") then return end
+        if AurasRestricted() then return end
         for i = 40, 1, -1 do
             local data = C_UnitAuras.GetBuffDataByIndex("player", i)
             if data then
@@ -3096,9 +3106,14 @@ do
             CancelMatching(true)
             return
         end
-        -- UNIT_AURA (player only, via RegisterUnitEvent)
+        -- UNIT_AURA (player only, via RegisterUnitEvent). 12.1: the payload
+        -- (and its fields) can be secret in restricted content -- boolean
+        -- use of a secret errors, and the sweep would error anyway; bail.
         if not updateInfo then return end
-        if updateInfo.isFullUpdate then
+        if issecretvalue and issecretvalue(updateInfo) then return end
+        local isFull = updateInfo.isFullUpdate
+        if isFull ~= nil and issecretvalue and issecretvalue(isFull) then return end
+        if isFull then
             CancelMatching(false)
         elseif updateInfo.addedAuras then
             for _, aura in ipairs(updateInfo.addedAuras) do
@@ -3120,6 +3135,7 @@ do
         if spellID ~= 131476 then return end
         if UnitAffectingCombat("player") then return end
         if not (C_UnitAuras and C_UnitAuras.GetBuffDataByIndex) then return end
+        if AurasRestricted() then return end
         for i = 40, 1, -1 do
             local data = C_UnitAuras.GetBuffDataByIndex("player", i)
             if data then

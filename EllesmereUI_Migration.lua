@@ -3248,6 +3248,138 @@ EllesmereUI.RegisterMigration({
     end,
 })
 
+-- Convert the per-bar "Custom Active State Decimals" (bd.faDecimals*) into the
+-- per-spell Threshold Text settings that replaced it. The old bar toggle drove a
+-- 1-decimal countdown (+ optional color change) on custom/preset icons' hardcoded
+-- timers; the new model stores Threshold Seconds / Threshold Decimals / Threshold
+-- Color per spell. For every bar that had the toggle on, each custom spell/item
+-- member gets stamped so it renders exactly as before:
+--  * cd/utility bars: item presets and custom/racial spells stamp the
+--    profile-level customActiveStates entry (their menu + Fake-Active engine read
+--    that store). Trinket SLOT presets resolve their settings key by the EQUIPPED
+--    item at runtime; stamped here only when the inventory API already answers
+--    (best effort -- re-arming per trinket is one click).
+--  * buff-family bars: custom buffs (cast-timer entries / tagged custom ids)
+--    stamp the spec BUFF family store. Blizzard-tracked buffs were never covered
+--    by the old toggle, so they are not stamped.
+-- The old bd.faDecimals* keys are consumed (removed) in the same pass. Shared
+-- with profile import so old-format strings transform immediately.
+function EllesmereUI.MigrateCdmThresholdText(cdm, specProfiles)
+    local barsCfg = cdm and cdm.cdmBars and cdm.cdmBars.bars
+    if type(barsCfg) ~= "table" then return end
+    for _, bd in ipairs(barsCfg) do
+        if type(bd) == "table" then
+            local thr = tonumber(bd.faDecimalsThreshold) or 5
+            if thr > 59 then thr = 59 end
+            if bd.faDecimals == true and thr > 0 and bd.key then
+                local colorOn = bd.faDecimalsColorEnabled == true
+                local cr = bd.faDecimalsColorR or 1
+                local cg = bd.faDecimalsColorG or 0.2
+                local cb = bd.faDecimalsColorB or 0.2
+                local isBuffFam = (bd.barType == "buffs") or (bd.key == "buffs")
+                local function Stamp(e)
+                    if type(e) ~= "table" then return end
+                    e.thresholdSeconds = thr
+                    e.thresholdDecimals = true
+                    if colorOn then
+                        e.thresholdColorEnabled = true
+                        e.thresholdColorR = cr
+                        e.thresholdColorG = cg
+                        e.thresholdColorB = cb
+                    end
+                end
+                local function StampCas(key)
+                    if type(cdm.customActiveStates) ~= "table" then
+                        cdm.customActiveStates = {}
+                    end
+                    local e = cdm.customActiveStates[key]
+                    if type(e) ~= "table" then
+                        e = {}
+                        cdm.customActiveStates[key] = e
+                    end
+                    Stamp(e)
+                end
+                if type(specProfiles) == "table" then
+                    for _, specProf in pairs(specProfiles) do
+                        local bs = type(specProf) == "table"
+                            and type(specProf.barSpells) == "table"
+                            and specProf.barSpells[bd.key]
+                        local assigned = type(bs) == "table" and bs.assignedSpells
+                        if type(assigned) == "table" then
+                            for _, sid in ipairs(assigned) do
+                                if type(sid) == "number" then
+                                    if isBuffFam then
+                                        -- Custom buffs: cast-timer entries (stored
+                                        -- duration) and tagged custom ids.
+                                        if sid > 0 and ((type(bs.spellDurations) == "table"
+                                                and (tonumber(bs.spellDurations[sid]) or 0) > 0)
+                                            or (type(bs.customSpellIDs) == "table"
+                                                and bs.customSpellIDs[sid])) then
+                                            local st = specProf.spellSettingsBuff
+                                            if type(st) ~= "table" then
+                                                st = {}
+                                                specProf.spellSettingsBuff = st
+                                            end
+                                            local e = st[sid]
+                                            if type(e) ~= "table" then
+                                                e = {}
+                                                st[sid] = e
+                                            end
+                                            Stamp(e)
+                                        end
+                                    elseif sid <= -2000000000 then
+                                        -- Hosted-buff marker: a real Blizzard buff,
+                                        -- never covered by the old toggle.
+                                    elseif sid == -13 or sid == -14 then
+                                        local ok, itemID = pcall(GetInventoryItemID, "player", -sid)
+                                        if ok and itemID then StampCas(-itemID) end
+                                    elseif sid < 0 then
+                                        StampCas(sid)
+                                    elseif (type(bs.customSpellIDs) == "table" and bs.customSpellIDs[sid])
+                                        or (type(cdm.customActiveStates) == "table"
+                                            and type(cdm.customActiveStates[sid]) == "table"
+                                            and (tonumber(cdm.customActiveStates[sid].duration) or 0) > 0) then
+                                        -- Tagged custom spell ids, plus racials or
+                                        -- other injected spells that already carry a
+                                        -- user-defined active state.
+                                        StampCas(sid)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            bd.faDecimals = nil
+            bd.faDecimalsThreshold = nil
+            bd.faDecimalsColorEnabled = nil
+            bd.faDecimalsColorR = nil
+            bd.faDecimalsColorG = nil
+            bd.faDecimalsColorB = nil
+        end
+    end
+end
+
+EllesmereUI.RegisterMigration({
+    id          = "cdm_threshold_text_v1",
+    scope       = "global",
+    description = "Replace the per-bar Custom Active State Decimals with per-spell Threshold Text: opted-in bars' custom spell/item members get per-spell Threshold Seconds/Decimals (+ Color) stamps, and the old bar keys are removed.",
+    body = function(ctx)
+        local db = ctx.db
+        if not db or type(db.profiles) ~= "table" then return end
+        local saProfiles = db.spellAssignments and db.spellAssignments.profiles
+        for profName, profData in pairs(db.profiles) do
+            local cdm = type(profData) == "table" and type(profData.addons) == "table"
+                and profData.addons.EllesmereUICooldownManager
+            if type(cdm) == "table" then
+                local bucket = type(saProfiles) == "table" and saProfiles[profName]
+                local sp = type(bucket) == "table" and bucket.specProfiles or nil
+                EllesmereUI.MigrateCdmThresholdText(cdm, sp)
+            end
+        end
+    end,
+})
+
 -- The Mythic+ Timer's Enemy Forces bar historically shared one bar texture with
 -- the main timer bar (both read barTexture / barBgTexture). The Forces bar now
 -- has its own enemyBarTexture / enemyBarBgTexture so the two can be styled
@@ -3340,3 +3472,437 @@ migrationFrame:SetScript("OnEvent", function(self, event, addonName)
     end
 
 end)
+
+--------------------------------------------------------------------------------
+--  RESOURCE BARS: Simple/Advanced -> Spec Overrides migration
+--
+--  Retires the Resource Bars Advanced per-spec mode (advancedSpecs copy-on-
+--  unsync sections) and the per-spec bar enables (health/primary/secondary
+--  .disabledSpecs) by converting them into Spec Overrides groups + entries:
+--    * one card per advanced spec (named after the spec, class icon), holding
+--      one entry per section whose copy DIFFERS from the Simple config --
+--      only differing leaf keys become overrides.
+--    * one card per per-spec enable ("Class Resource" / "Power Bar" /
+--      "Health Bar") for specs disabled via the Simple disabledSpecs picker.
+--  Threshold data (thresholdSpecs / tickValues / thresholdFormMode) is NEVER
+--  diffed into overrides. When an advanced copy carries threshold edits that
+--  differ from Simple, those spec-scoped entries are retargeted to the spec
+--  and merged into the Simple threshold list (the threshold system is
+--  natively per-spec via entry.specIDs), preserving resolution behavior.
+--  The raw advanced data survives in rb.advancedSpecsBackup for later cleanup.
+--
+--  CRITICAL BASIS: stored profile tables are SPARSE (Lite defaults are merged
+--  at NewDB time, not persisted) while unsync copies are FAT snapshots of the
+--  merged runtime table. All comparisons therefore run over DEFAULTS-MERGED
+--  effective values, and entries store effective scalars -- raw-table diffs
+--  mis-classify real edits as drift and strip runtime-injected defaults.
+--  This requires the RB DEFAULTS table, so the migration runs from Resource
+--  Bars' OnInitialize (which exports EllesmereUI._RBSectionDefaults and then
+--  walks every stored profile) AND directly on imported profile data (old
+--  export strings), self-guarded by a flag on the RB profile table so all
+--  paths are idempotent. With no defaults available (RB addon disabled) the
+--  migration is a no-op WITHOUT stamping the flag, so it runs when RB loads.
+--------------------------------------------------------------------------------
+do
+    local PS, FS = "\30", "\31"
+    local NIL_SENT = "__SPECOV_NIL__"
+    local RB_FOLDER = "EllesmereUIResourceBars"
+    local RB_PAGE = "Class, Power and Health Bars"
+
+    -- Static spec map: migration bodies must not call live game APIs.
+    local SPEC_INFO = {
+        [62]={"Arcane","MAGE"},[63]={"Fire","MAGE"},[64]={"Frost","MAGE"},
+        [65]={"Holy","PALADIN"},[66]={"Protection","PALADIN"},[70]={"Retribution","PALADIN"},
+        [71]={"Arms","WARRIOR"},[72]={"Fury","WARRIOR"},[73]={"Protection","WARRIOR"},
+        [102]={"Balance","DRUID"},[103]={"Feral","DRUID"},[104]={"Guardian","DRUID"},[105]={"Restoration","DRUID"},
+        [250]={"Blood","DEATHKNIGHT"},[251]={"Frost","DEATHKNIGHT"},[252]={"Unholy","DEATHKNIGHT"},
+        [253]={"Beast Mastery","HUNTER"},[254]={"Marksmanship","HUNTER"},[255]={"Survival","HUNTER"},
+        [256]={"Discipline","PRIEST"},[257]={"Holy","PRIEST"},[258]={"Shadow","PRIEST"},
+        [259]={"Assassination","ROGUE"},[260]={"Outlaw","ROGUE"},[261]={"Subtlety","ROGUE"},
+        [262]={"Elemental","SHAMAN"},[263]={"Enhancement","SHAMAN"},[264]={"Restoration","SHAMAN"},
+        [265]={"Affliction","WARLOCK"},[266]={"Demonology","WARLOCK"},[267]={"Destruction","WARLOCK"},
+        [268]={"Brewmaster","MONK"},[269]={"Windwalker","MONK"},[270]={"Mistweaver","MONK"},
+        [577]={"Havoc","DEMONHUNTER"},[581]={"Vengeance","DEMONHUNTER"},[1480]={"Devourer","DEMONHUNTER"},
+        [1467]={"Devastation","EVOKER"},[1468]={"Preservation","EVOKER"},[1473]={"Augmentation","EVOKER"},
+    }
+    local CLASS_TITLE = {
+        WARRIOR="Warrior", PALADIN="Paladin", HUNTER="Hunter", ROGUE="Rogue",
+        PRIEST="Priest", DEATHKNIGHT="Death Knight", SHAMAN="Shaman", MAGE="Mage",
+        WARLOCK="Warlock", MONK="Monk", DRUID="Druid", DEMONHUNTER="Demon Hunter",
+        EVOKER="Evoker",
+    }
+
+    local RB_SECTIONS = {
+        { key = "secondary", label = "Class Resource", enableLabel = "Show Class Resource" },
+        { key = "primary",   label = "Power Bar",      enableLabel = "Show Power Bar" },
+        -- health is OPT-IN at runtime (`hp.enabled and ...`; nil = hidden),
+        -- unlike power/secondary (`enabled ~= false`; nil = shown).
+        { key = "health",    label = "Health Bar",     enableLabel = "Show Health Bar", optIn = true },
+    }
+
+    -- Effective "is this section's bar shown" for a config table, matching
+    -- each section's runtime truthiness over the DEFAULTS-MERGED value, with
+    -- the per-spec disabledSpecs filter folded in when a spec is given.
+    local function SectionEff(sec, t, defs, specID)
+        local en = t.enabled
+        if en == nil then en = defs and defs.enabled end
+        local eff
+        if sec.optIn then
+            eff = en and true or false
+        else
+            eff = en ~= false
+        end
+        if eff and specID and type(t.disabledSpecs) == "table" and t.disabledSpecs[specID] then
+            eff = false
+        end
+        return eff
+    end
+
+    -- Threshold-system keys are never diffed into overrides; disabledSpecs
+    -- and enabled are folded into effective enables (SectionEff) instead.
+    local RB_SKIP_KEYS = {
+        thresholdSpecs = true, tickValues = true, thresholdFormMode = true,
+        disabledSpecs = true, enabled = true,
+    }
+
+    local function DeepCopyT(src)
+        if type(src) ~= "table" then return src end
+        local out = {}
+        for k, v in pairs(src) do out[k] = DeepCopyT(v) end
+        return out
+    end
+
+    local function DeepEq(a, b)
+        if a == b then return true end
+        if type(a) ~= "table" or type(b) ~= "table" then return false end
+        for k, v in pairs(a) do
+            if not DeepEq(v, b[k]) then return false end
+        end
+        for k in pairs(b) do
+            if a[k] == nil then return false end
+        end
+        return true
+    end
+
+    -- Walk a section table by a PS-joined relative path, falling back to the
+    -- defaults subtree wherever the table side runs out (effective value).
+    local function GetPathEff(t, defs, path)
+        for seg in string.gmatch(path, "[^\30]+") do
+            local tv = (type(t) == "table") and t[seg] or nil
+            local dv = (type(defs) == "table") and defs[seg] or nil
+            t, defs = tv, dv
+            if t == nil and defs == nil then return nil end
+        end
+        if t ~= nil then return t end
+        return defs
+    end
+
+    -- Union of differing leaf paths between a Simple section and an advanced
+    -- copy, compared over DEFAULTS-MERGED effective values on BOTH sides
+    -- (stored Simple is sparse; copies are fat merged snapshots -- raw
+    -- comparison mis-reads defaults as user edits and vice versa). Skips
+    -- threshold/disabledSpecs/enabled keys, numeric keys, and table shape
+    -- mismatches. Emitted leaves may involve nil ONLY when neither side nor
+    -- the defaults define the key's counterpart -- those keys are inline-
+    -- fallback keys the renderers already tolerate as absent.
+    local function DiffSection(simple, copy, defs, prefix, out)
+        simple = type(simple) == "table" and simple or {}
+        copy = type(copy) == "table" and copy or {}
+        defs = type(defs) == "table" and defs or {}
+        local keys = {}
+        for k in pairs(simple) do keys[k] = true end
+        for k in pairs(copy) do keys[k] = true end
+        for k in pairs(defs) do keys[k] = true end
+        for k in pairs(keys) do
+            if type(k) ~= "number" and not RB_SKIP_KEYS[k] then
+                local sv, cv, dv = simple[k], copy[k], defs[k]
+                local effS = (sv == nil) and dv or sv
+                local effC = (cv == nil) and dv or cv
+                local path = prefix and (prefix .. PS .. tostring(k)) or tostring(k)
+                if type(effS) == "table" and type(effC) == "table" then
+                    DiffSection(
+                        type(sv) == "table" and sv or nil,
+                        type(cv) == "table" and cv or nil,
+                        type(dv) == "table" and dv or nil,
+                        path, out)
+                elseif type(effS) ~= "table" and type(effC) ~= "table"
+                   and effS ~= effC then
+                    out[path] = true
+                end
+            end
+        end
+    end
+
+    -- Q1-A threshold merge: make the spec resolve in the SIMPLE list exactly
+    -- as it did in the advanced copy. The copy's entries matching the spec
+    -- (explicit or All-Specs) are retargeted to specIDs={spec} and inserted
+    -- at the FRONT of the Simple list in resolver tier order (spec+talent,
+    -- spec plain, all+talent, all plain); the spec is stripped from
+    -- pre-existing Simple entries so nothing else can match it.
+    local function MergeThresholds(simpleSec, copySec, specID, backup)
+        local cList = copySec.thresholdSpecs
+        if type(cList) ~= "table" or #cList == 0 then return end
+        if DeepEq(cList, simpleSec.thresholdSpecs) then return end
+        if copySec.thresholdFormMode or simpleSec.thresholdFormMode then
+            -- Form-mode thresholds resolve by druid form, not spec; a per-spec
+            -- retarget cannot represent them. Keep them in the backup only.
+            backup.thresholdFormMergeSkipped = true
+            return
+        end
+        local specTalent, specPlain, allTalent, allPlain = {}, {}, {}, {}
+        for _, entry in ipairs(cList) do
+            if type(entry) == "table" and type(entry.specIDs) == "table" then
+                local mSpec, mAll = false, false
+                for _, sid in ipairs(entry.specIDs) do
+                    if sid == specID then mSpec = true end
+                    if sid == 0 then mAll = true end
+                end
+                if mSpec or mAll then
+                    local cp = DeepCopyT(entry)
+                    cp.specIDs = { specID }
+                    local bucket
+                    if entry.talentSpellID then
+                        bucket = mSpec and specTalent or allTalent
+                    else
+                        bucket = mSpec and specPlain or allPlain
+                    end
+                    bucket[#bucket + 1] = cp
+                end
+            end
+        end
+        simpleSec.thresholdSpecs = simpleSec.thresholdSpecs or {}
+        local target = simpleSec.thresholdSpecs
+        -- Strip this spec from pre-existing Simple entries (drop entries that
+        -- only served this spec).
+        for i = #target, 1, -1 do
+            local entry = target[i]
+            if type(entry) == "table" and type(entry.specIDs) == "table" then
+                local changed = false
+                for j = #entry.specIDs, 1, -1 do
+                    if entry.specIDs[j] == specID then
+                        table.remove(entry.specIDs, j)
+                        changed = true
+                    end
+                end
+                if changed and #entry.specIDs == 0 then table.remove(target, i) end
+            end
+        end
+        -- Front-insert retargeted entries in tier order.
+        local merged = {}
+        for _, bucket in ipairs({ specTalent, specPlain, allTalent, allPlain }) do
+            for _, entry in ipairs(bucket) do merged[#merged + 1] = entry end
+        end
+        for i = #merged, 1, -1 do
+            table.insert(target, 1, merged[i])
+        end
+    end
+
+    --- Migrates one profile root table (EllesmereUIDB.profiles[name] shape:
+    --- .addons.EllesmereUIResourceBars + spec-override tables at root).
+    function EllesmereUI.MigrateRBAdvancedProfile(prof)
+        if type(prof) ~= "table" then return end
+        local rb = prof.addons and prof.addons.EllesmereUIResourceBars
+        if type(rb) ~= "table" then return end
+        if rb._rbAdvMigrated then return end
+        -- Defaults are mandatory for effective-value comparison; without them
+        -- (RB addon not loaded) do nothing and leave the flag unset so the
+        -- migration runs when RB initializes.
+        local DEFS = EllesmereUI._RBSectionDefaults
+        if type(DEFS) ~= "table" then return end
+        rb._rbAdvMigrated = true
+
+        local adv = rb.advancedSpecs
+        local activeAdv = {}
+        if type(adv) == "table" then
+            for _, e in ipairs(adv) do
+                if type(e) == "table" and type(e.specID) == "number" and e.enabled ~= false then
+                    activeAdv[#activeAdv + 1] = e
+                end
+            end
+        end
+        local hasDisabled = false
+        for _, sec in ipairs(RB_SECTIONS) do
+            local s = rb[sec.key]
+            if type(s) == "table" and type(s.disabledSpecs) == "table" and next(s.disabledSpecs) then
+                hasDisabled = true
+                break
+            end
+        end
+        if #activeAdv == 0 and not hasDisabled and not (type(adv) == "table" and #adv > 0) then
+            return   -- nothing to migrate
+        end
+
+        prof.specOverrides = prof.specOverrides or {}
+        prof.specOverrideGroups = prof.specOverrideGroups or {}
+        local store, groups = prof.specOverrides, prof.specOverrideGroups
+        local function nextId()
+            local id = (prof.specOverrideNextId or 0) + 1
+            prof.specOverrideNextId = id
+            return id
+        end
+
+        local backup = { advancedSpecs = adv, disabledSpecs = {} }
+
+        -- One card per advanced spec (created lazily).
+        local specCards = {}
+        local function SpecCard(specID)
+            local g = specCards[specID]
+            if not g then
+                local info = SPEC_INFO[specID]
+                local name
+                if info then
+                    name = info[1] .. " - " .. (CLASS_TITLE[info[2]] or info[2])
+                else
+                    name = "Spec " .. tostring(specID)
+                end
+                g = {
+                    id = nextId(),
+                    name = name,
+                    icon = info and { kind = "class", key = info[2] } or nil,
+                    specs = { specID },
+                }
+                specCards[specID] = g
+                groups[#groups + 1] = g
+            end
+            return g
+        end
+
+        for _, sec in ipairs(RB_SECTIONS) do
+            local simple = rb[sec.key]
+            if type(simple) == "table" then
+                local defs = type(DEFS[sec.key]) == "table" and DEFS[sec.key] or {}
+                local enabledFkey = RB_FOLDER .. FS .. sec.key .. PS .. "enabled"
+                local simpleEff = SectionEff(sec, simple, defs)
+
+                -- 1) Threshold merges + per-spec diffs (defaults-merged)
+                local union = {}
+                local copyBySpec = {}
+                local specsWithDiffs = {}
+                for _, e in ipairs(activeAdv) do
+                    local copy = e[sec.key]
+                    if type(copy) == "table" then
+                        MergeThresholds(simple, copy, e.specID, backup)
+                        copyBySpec[e.specID] = copy
+                        local out = {}
+                        DiffSection(simple, copy, defs, nil, out)
+                        for path in pairs(out) do
+                            union[path] = true
+                            specsWithDiffs[e.specID] = true
+                        end
+                    end
+                end
+
+                -- 2) Effective enables: advanced copies fold their own enabled
+                --    + disabledSpecs; Simple disabledSpecs cover non-copy specs.
+                local effEnable = {}
+                for specID, copy in pairs(copyBySpec) do
+                    local eff = SectionEff(sec, copy, defs, specID)
+                    if eff ~= simpleEff then
+                        effEnable[specID] = eff
+                        specsWithDiffs[specID] = true
+                    end
+                end
+                local dsSpecs = {}
+                local ds = simple.disabledSpecs
+                backup.disabledSpecs[sec.key] = ds
+                if type(ds) == "table" then
+                    for specID, on in pairs(ds) do
+                        if on and type(specID) == "number" and not copyBySpec[specID] and simpleEff then
+                            effEnable[specID] = false
+                            dsSpecs[#dsSpecs + 1] = specID
+                        end
+                    end
+                end
+                table.sort(dsSpecs)
+                if next(effEnable) then union["enabled"] = true end
+
+                -- 3) Spec-card entries: full union, values for EVERY copy-
+                --    holding spec (order-independent for shared keys), plus
+                --    partial enabled-only maps for enable-card specs.
+                if next(union) then
+                    local default = {}
+                    for path in pairs(union) do
+                        local v = GetPathEff(simple, defs, path)
+                        local fkey = RB_FOLDER .. FS .. sec.key .. PS .. path
+                        default[fkey] = (v == nil or type(v) == "table") and NIL_SENT or v
+                    end
+                    local valuesBySpec = {}
+                    for specID, copy in pairs(copyBySpec) do
+                        local m = {}
+                        for path in pairs(union) do
+                            local v = GetPathEff(copy, defs, path)
+                            local fkey = RB_FOLDER .. FS .. sec.key .. PS .. path
+                            m[fkey] = (v == nil or type(v) == "table") and NIL_SENT or v
+                        end
+                        if union["enabled"] then
+                            -- effective enable (section truthiness + the
+                            -- copy's own disabledSpecs folded in)
+                            m[enabledFkey] = SectionEff(sec, copy, defs, specID)
+                        end
+                        valuesBySpec[specID] = m
+                    end
+                    for _, specID in ipairs(dsSpecs) do
+                        valuesBySpec[specID] = { [enabledFkey] = false }
+                    end
+
+                    for specID in pairs(specsWithDiffs) do
+                        if copyBySpec[specID] then
+                            local g = SpecCard(specID)
+                            local entry = {
+                                label = sec.label,
+                                crumb = "Resource Bars  >  " .. RB_PAGE,
+                                module = RB_FOLDER,
+                                page = RB_PAGE,
+                                group = g.id,
+                                values = { default = DeepCopyT(default) },
+                            }
+                            for sID, m in pairs(valuesBySpec) do
+                                entry.values[sID] = DeepCopyT(m)
+                            end
+                            store[#store + 1] = entry
+                        end
+                    end
+
+                    -- 4) Enable card for Simple disabledSpecs specs.
+                    if #dsSpecs > 0 then
+                        local g = {
+                            id = nextId(),
+                            name = sec.label,
+                            icon = { kind = "multi" },
+                            specs = dsSpecs,
+                        }
+                        groups[#groups + 1] = g
+                        local entry = {
+                            label = sec.enableLabel,
+                            crumb = "Resource Bars  >  " .. RB_PAGE,
+                            module = RB_FOLDER,
+                            page = RB_PAGE,
+                            group = g.id,
+                            values = { default = { [enabledFkey] = default[enabledFkey] } },
+                        }
+                        -- every diverging spec gets its effective value so
+                        -- apply order over the shared key can never clobber
+                        for specID, eff in pairs(effEnable) do
+                            entry.values[specID] = { [enabledFkey] = eff }
+                        end
+                        store[#store + 1] = entry
+                    end
+                end
+
+                simple.disabledSpecs = nil
+            end
+        end
+
+        -- 5) Backup + strip the retired mechanisms.
+        rb.advancedSpecsBackup = backup
+        rb.advancedSpecs = nil
+        rb.advancedSelectedSpec = nil
+        rb.barDisplayMode = nil
+    end
+end
+
+-- NOTE: deliberately NOT registered with the early migration runner -- the
+-- comparison needs Resource Bars' DEFAULTS table, which only exists once the
+-- RB addon loads. RB's OnInitialize exports EllesmereUI._RBSectionDefaults
+-- and then invokes MigrateRBAdvancedProfile for every stored profile; the
+-- profile import paths call it directly for imported data.

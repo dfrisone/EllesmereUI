@@ -1754,7 +1754,8 @@ initFrame:SetScript("OnEvent", function(self)
                     ApplyTimerPos(buffs[i].durationText, buffs[i], buffTPos, buffDurSz, buffDurX, buffDurY, buffDurC)
                     PlaceInSlot(buffs[i], buffSlotVal, i, PV_CONST.BUFF_COUNT, buffSz, buffH, buffSpacing, buffXOff, buffYOff)
                     -- Dispel glow preview (always stop first to pick up color/style changes)
-                    if showDispelGlowPreview and DBVal("dispelGlow") == true then
+                    if showDispelGlowPreview and DBVal("dispelGlow") == true
+                        and DBVal("showAllEnemyBuffs") ~= true then
                         if buffs[i].dispelGlow and buffs[i].dispelGlow.active then
                             ns.StopDispelGlow(buffs[i])
                         end
@@ -3275,6 +3276,22 @@ initFrame:SetScript("OnEvent", function(self)
             return DBVal("dispelGlow") ~= true
         end
 
+        -- Shared graying for the inline swatch/eye. 12.1: Show All Enemy
+        -- Buffs suppresses the glow entirely (the row is no longer
+        -- dispellable-only), locking the style/color controls. 12.0 keeps
+        -- the legacy conditions: the swatch also grays while Use Dispel
+        -- Type Color is on (checkTypeColor); the eye button never did.
+        local function dispelGlowLocked(checkTypeColor)
+            if dispelGlowOff() then return true end
+            if EllesmereUI.IS_121 then
+                return DBVal("showAllEnemyBuffs") == true
+            end
+            if checkTypeColor and DBVal("dispelGlowUseTypeColor") == true then
+                return true
+            end
+            return false
+        end
+
         local dispelGlowStyleValues = { [0] = "None" }
         local dispelGlowStyleOrder = { 0 }
         for i, entry in ipairs(ns.PANDEMIC_GLOW_STYLES) do
@@ -3282,37 +3299,84 @@ initFrame:SetScript("OnEvent", function(self)
             dispelGlowStyleOrder[#dispelGlowStyleOrder + 1] = i
         end
 
-        local dispelGlowRow
-        dispelGlowRow, h = W:DualRow(parent, y,
-            { type="dropdown", text="Dispel Glow Style",
-              values=dispelGlowStyleValues,
-              getValue=function()
+        -- Build-both-select-one: the dropdown table is shared; the right
+        -- slot differs per client (12.1 replaces Use Dispel Type Color --
+        -- per-aura type is unreadable there -- with Show All Enemy Buffs).
+        local dispelGlowDropdown = {
+            type="dropdown", text="Dispel Glow Style",
+            values=dispelGlowStyleValues,
+            getValue=function()
                 if dispelGlowOff() then return 0 end
                 local raw = ns.GetDispelGlowStyle and ns.GetDispelGlowStyle() or (DBVal("dispelGlowStyle") or 2)
                 if type(raw) ~= "number" then return 2 end
                 if raw < 1 or raw > #ns.PANDEMIC_GLOW_STYLES then return 2 end
                 return raw
-              end,
-              setValue=function(v)
-                if v == 0 then
-                    DB().dispelGlow = false
-                else
-                    DB().dispelGlow = true
-                    DB().dispelGlowStyle = v
+            end,
+            setValue=function(v)
+                local function applyStyle()
+                    if v == 0 then
+                        DB().dispelGlow = false
+                    else
+                        DB().dispelGlow = true
+                        DB().dispelGlowStyle = v
+                    end
+                    RefreshAllAuras()
+                    UpdatePreview()
+                    C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
                 end
+                -- 12.1: off->on pays the per-plate aura-watcher cost --
+                -- prompt like the suite's other performance-priced enables.
+                -- Style switches while already enabled never prompt.
+                if EllesmereUI.IS_121 and v ~= 0 and DBVal("dispelGlow") ~= true then
+                    EllesmereUI:ShowConfirmPopup({
+                        title       = "Dispel Glow",
+                        message     = "Dispel Glow may cause a slight loss in performance efficiency. Do you want to enable it?",
+                        confirmText = "Enable",
+                        cancelText  = "Cancel",
+                        onConfirm   = applyStyle,
+                        onCancel    = function()
+                            C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
+                        end,
+                    })
+                    return
+                end
+                applyStyle()
+            end,
+            order=dispelGlowStyleOrder,
+        }
+        local dispelRightWidget
+        if EllesmereUI.IS_121 then
+            -- Disabled fields attach ONLY here: on 12.0 they must be
+            -- absent, not false.
+            dispelGlowDropdown.disabled = function() return DBVal("showAllEnemyBuffs") == true end
+            dispelGlowDropdown.disabledTooltip = "Disable Show All Enemy Buffs"
+            dispelRightWidget = { type="toggle", text="Show All Enemy Buffs",
+              getValue=function() return DBVal("showAllEnemyBuffs") or false end,
+              setValue=function(v)
+                DB().showAllEnemyBuffs = v
                 RefreshAllAuras()
                 UpdatePreview()
                 C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
-              end,
-              order=dispelGlowStyleOrder },
-            { type="toggle", text="Use Dispel Type Color",
+                EllesmereUI:ShowConfirmPopup({
+                    title = "Reload Required",
+                    message = "Changing Show All Enemy Buffs requires a UI reload to take effect.",
+                    confirmText = "Reload Now",
+                    cancelText = "Later",
+                    onConfirm = function() ReloadUI() end,
+                })
+              end }
+        else
+            dispelRightWidget = { type="toggle", text="Use Dispel Type Color",
               getValue=function() return DBVal("dispelGlowUseTypeColor") or false end,
               setValue=function(v)
                 DB().dispelGlowUseTypeColor = v
                 RefreshAllAuras()
                 UpdatePreview()
                 C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
-              end });  y = y - h
+              end }
+        end
+        local dispelGlowRow
+        dispelGlowRow, h = W:DualRow(parent, y, dispelGlowDropdown, dispelRightWidget);  y = y - h
 
         -- Inline color swatch for dispel glow
         do
@@ -3329,14 +3393,14 @@ initFrame:SetScript("OnEvent", function(self)
             local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, glowColorGet, glowColorSet, nil, 20)
             PP.Point(swatch, "RIGHT", leftRgn._control, "LEFT", -12, 0)
             leftRgn._lastInline = swatch
-            -- Gray out swatch when dispel glow is off or using type color
+            -- Gray out swatch when dispel glow is off or suppressed
             EllesmereUI.RegisterWidgetRefresh(function()
-                local off = dispelGlowOff() or (DBVal("dispelGlowUseTypeColor") == true)
+                local off = dispelGlowLocked(true)
                 swatch:SetAlpha(off and 0.15 or 1)
                 swatch:EnableMouse(not off)
                 updateSwatch()
             end)
-            local initialOff = dispelGlowOff() or (DBVal("dispelGlowUseTypeColor") == true)
+            local initialOff = dispelGlowLocked(true)
             swatch:SetAlpha(initialOff and 0.15 or 1)
             swatch:EnableMouse(not initialOff)
         end
@@ -3371,9 +3435,9 @@ initFrame:SetScript("OnEvent", function(self)
                 self:SetAlpha(0.4)
                 EllesmereUI.HideWidgetTooltip()
             end)
-            -- Gray out when dispel glow is off
+            -- Gray out when dispel glow is off or suppressed
             EllesmereUI.RegisterWidgetRefresh(function()
-                local off = dispelGlowOff()
+                local off = dispelGlowLocked(false)
                 eyeBtn:SetAlpha(off and 0.15 or 0.4)
                 eyeBtn:EnableMouse(not off)
             end)

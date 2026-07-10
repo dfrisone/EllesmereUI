@@ -1413,8 +1413,9 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
         end
 
-        -- Row 3: Icon Size | Max Icons
-        _, h = W:DualRow(parent, y,
+        -- Row 3: Icon Size (+ icon zoom cog) | Max Icons
+        local shSizeRow
+        shSizeRow, h = W:DualRow(parent, y,
             { type = "slider", text = "Icon Size",
               min = 20, max = 60, step = 1,
               disabled = iconOff, disabledTooltip = "Icon History",
@@ -1427,6 +1428,32 @@ initFrame:SetScript("OnEvent", function(self)
               getValue = function() return SHDB().iconCount or 5 end,
               setValue = function(v) SHDB().iconCount = v; RefreshSH() end }
         );  y = y - h
+        -- Inline cog on Icon Size: Icon Zoom (shared by the icon strip and the
+        -- bar window, so it stays usable whenever either display is on).
+        do
+            local rgn = shSizeRow._leftRegion
+            local shZoomOff = function() return iconOff() and barOff() end
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Icon Zoom",
+                rows = {
+                    { type = "slider", label = "Zoom", min = 0, max = 0.20, step = 0.01,
+                      get = function() return SHDB().iconZoom or 0.08 end,
+                      set = function(v) SHDB().iconZoom = v; RefreshSH() end },
+                },
+            })
+            local cogBtn = CreateFrame("Button", nil, rgn)
+            cogBtn:SetSize(26, 26)
+            cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+            rgn._lastInline = cogBtn
+            cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            cogBtn:SetAlpha(shZoomOff() and 0.15 or 0.4)
+            local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
+            cogTex:SetAllPoints(); cogTex:SetTexture(EllesmereUI.COGS_ICON)
+            cogBtn:SetScript("OnEnter", function(self) if not shZoomOff() then self:SetAlpha(0.7) end end)
+            cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(shZoomOff() and 0.15 or 0.4) end)
+            cogBtn:SetScript("OnClick", function(self) if not shZoomOff() then cogShow(self) end end)
+            EllesmereUI.RegisterWidgetRefresh(function() cogBtn:SetAlpha(shZoomOff() and 0.15 or 0.4) end)
+        end
 
         -- Row 4: Icon Spacing | Opacity
         _, h = W:DualRow(parent, y,

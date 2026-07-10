@@ -250,31 +250,15 @@ ApplyToFrame = function(iconFrame, rule, win)
         if ns.StyleOverlayCooldownText then
             ns.StyleOverlayCooldownText(o.cd, bd, ss, iconFrame:GetScale())
         end
-        -- Custom Active State Decimals: when the bar opts in AND Duration Text is
-        -- shown, drive the overlay countdown from the shared decimal engine
-        -- (Blizzard's cooldown numbers can't show a 1-decimal countdown). The
-        -- fake-active window's duration is hardcoded, so the remaining time is
-        -- exact. OFF BY DEFAULT = zero cost: the gate is one field read, and the
-        -- else-branch Detach no-ops unless this overlay was previously attached.
-        -- StyleOverlayCooldownText (above) already set Blizzard's numbers per the
-        -- Duration Text state, so Detach here never needs to touch them.
-        if bd and bd.faDecimals and ns.DecimalCountdown then
-            local showCD = bd.showCooldownText
-            if ss and ss.showCooldownText ~= nil then showCD = ss.showCooldownText end
-            if showCD then
-                ns.DecimalCountdown.Attach(o.cd, win.start, win.dur, bd.faDecimalsThreshold or 5,
-                    function(fs)
-                        if ns.StyleOverlayDecimalText then
-                            ns.StyleOverlayDecimalText(fs, bd, ss, iconFrame:GetScale())
-                        end
-                    end,
-                    { on = bd.faDecimalsColorEnabled, r = bd.faDecimalsColorR,
-                      g = bd.faDecimalsColorG, b = bd.faDecimalsColorB })
-            else
-                ns.DecimalCountdown.Detach(o.cd)
-            end
-        elseif ns.DecimalCountdown then
-            ns.DecimalCountdown.Detach(o.cd)
+        -- Per-spell Threshold Text: the overlay countdown renders through the
+        -- engine formatter (decimals / color change below the spell's Threshold
+        -- Seconds). ss is the same block the swipe styling reads -- the user
+        -- rule's customActiveStates entry, or the resolved per-spell settings
+        -- for built-in rules. Gated = zero cost when unused; the apply helper
+        -- only touches widgets it manages, and StyleOverlayCooldownText (above)
+        -- already set the countdown numbers per the Duration Text state.
+        if ns._cdmAnyThresholdText and ns.ApplyThresholdFormatter then
+            ns.ApplyThresholdFormatter(o.cd, ss)
         end
         -- Feed the active glow + border the underlying icon's shape / border so
         -- Shape Glow masks to the shape (it reads the shape from its glow frame's
@@ -297,7 +281,6 @@ ApplyToFrame = function(iconFrame, rule, win)
         RestoreOverlayBorders(iconFrame, o)
         if ns.ApplyActiveOverlays then ns.ApplyActiveOverlays(o.frame, o, ss, false, bd) end
         o.cd:Clear()
-        if ns.DecimalCountdown then ns.DecimalCountdown.Detach(o.cd) end
         o.frame:SetAlpha(0)
     end
 end
@@ -617,6 +600,9 @@ EvalCdStateNow = function()
         local rule = _cdStateRules[r]
         local cas = rule.cas
         local eff = cas and cas.cdStateEffect
+        -- Blocking-false (per-trinket "None" over a slot-level bar apply) is
+        -- render-equivalent to nil: no effect, but the sound may still be set.
+        if eff == false then eff = nil end
         local soundKey = cas and cas.cdReadySoundKey
         if soundKey == "none" then soundKey = nil end
         if eff or soundKey then
@@ -767,38 +753,62 @@ function ns.FakeActive_Rearm()
     -- cooldown-state effect (cdStateEffect), or both.
     local store = ns.GetCustomActiveStates and ns.GetCustomActiveStates()
     if store then
+        -- Shared rule constructor. matchKey is the icon-identity key live frames
+        -- carry (fc.spellID): positive spell id, -itemID item preset, or a trinket
+        -- slot (-13/-14). srcKey keys the persistent CD-ready-sound armed state.
+        -- cas is the styling entry the rule reads -- for trinket slots a chained
+        -- item-over-slot view (see below).
+        local function AddUserRule(matchKey, srcKey, cas)
+            local hasDur = (cas.duration or 0) > 0
+            -- Explicit false = a per-trinket "None" blocking the slot's bar-apply
+            -- value from showing through; render-equivalent to nil.
+            local eff = cas.cdStateEffect
+            if eff == false then eff = nil end
+            local hasCd = eff ~= nil
+            local hasSound = cas.cdReadySoundKey ~= nil and cas.cdReadySoundKey ~= "none"
+            if not (hasDur or hasCd or hasSound) then return end
+            local rule = { spellID = matchKey, srcKey = srcKey, cas = cas, user = true }
+            _rules[#_rules + 1] = rule
+            _hasUserRules = true
+            if hasDur then
+                rule.trigger  = "cast"
+                rule.duration = cas.duration
+                MapCast(rule)
+            end
+            if hasCd or hasSound then
+                -- Both effects ride the same cooldown poll (EvalCdStateNow).
+                _cdStateRules[#_cdStateRules + 1] = rule
+            end
+        end
+        local eq13 = GetInventoryItemID and GetInventoryItemID("player", 13) or nil
+        local eq14 = GetInventoryItemID and GetInventoryItemID("player", 14) or nil
         for key, cas in pairs(store) do
-            -- Skip bare trinket-SLOT keys: trinket settings are keyed by item now
-            -- (a -13/-14 entry is only stale data from before that change).
-            if type(cas) == "table" and key ~= -13 and key ~= -14 then
-                local hasDur = (cas.duration or 0) > 0
-                local hasCd  = cas.cdStateEffect ~= nil
-                local hasSound = cas.cdReadySoundKey ~= nil and cas.cdReadySoundKey ~= "none"
-                if hasDur or hasCd or hasSound then
-                    -- Settings are keyed by spell / item. A trinket's settings are
-                    -- keyed by item, but its ICON is a slot (-13/-14) -- so route the
-                    -- rule to whichever slot currently holds that item. (Cast +
-                    -- cooldown then resolve from the slot, the existing path.) Not
-                    -- equipped -> the rule matches nothing, which is correct.
-                    local matchKey = key
-                    if key < 0 and GetInventoryItemID then
-                        local itemID = -key
-                        if GetInventoryItemID("player", 13) == itemID then matchKey = -13
-                        elseif GetInventoryItemID("player", 14) == itemID then matchKey = -14 end
-                    end
-                    local rule = { spellID = matchKey, srcKey = key, cas = cas, user = true }
-                    _rules[#_rules + 1] = rule
-                    _hasUserRules = true
-                    if hasDur then
-                        rule.trigger  = "cast"
-                        rule.duration = cas.duration
-                        MapCast(rule)
-                    end
-                    if hasCd or hasSound then
-                        -- Both effects ride the same cooldown poll (EvalCdStateNow).
-                        _cdStateRules[#_cdStateRules + 1] = rule
-                    end
-                end
+            -- Skip trinket-SLOT keys (dedicated pass below) and the EQUIPPED
+            -- trinkets' item keys (they ride their slot's rule as the own-value
+            -- layer -- a second rule here would fight it on the same frame). An
+            -- UNEQUIPPED trinket's item entry still becomes a rule; its key
+            -- matches no frame, which is correct (dormant until equipped).
+            if type(cas) == "table" and key ~= -13 and key ~= -14
+               and not (eq13 and key == -eq13) and not (eq14 and key == -eq14) then
+                AddUserRule(key, key, cas)
+            end
+        end
+        -- Trinket slots: ONE rule per slot. The slot entry (-13/-14) is the
+        -- "Apply to Bar" stamp -- slot-keyed so a bar application covers
+        -- whatever trinket is equipped, before and after swaps. The equipped
+        -- item's own entry (per-spell menu settings) chains over it per key,
+        -- so per-trinket choices win. Cast + cooldown already resolve the
+        -- slot's CURRENT item via ResolveCastSpells / PresetOnCD.
+        for slot = 13, 14 do
+            local slotE = store[-slot]
+            if type(slotE) ~= "table" then slotE = nil end
+            local itemID = (slot == 13) and eq13 or eq14
+            local itemE = itemID and store[-itemID] or nil
+            if type(itemE) ~= "table" then itemE = nil end
+            local eff = itemE or slotE
+            if eff then
+                if itemE and ns.ChainSettings then ns.ChainSettings(itemE, slotE) end
+                AddUserRule(-slot, -slot, eff)
             end
         end
     end

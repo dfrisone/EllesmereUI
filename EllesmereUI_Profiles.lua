@@ -861,6 +861,25 @@ function EllesmereUI.SnapshotAllAddons()
     data.customColors = DeepCopy(cc)
     -- Dark Mode palette + darken amounts (always the active profile's own).
     data.darkMode = DeepCopy(EllesmereUI.GetDarkModeDB())
+    -- Spec Overrides ride with the profile (freshen the current spec's stored
+    -- values from live first so exports never lag recent edits).
+    if EllesmereUI.SpecOverrides_HarvestCurrent then
+        EllesmereUI.SpecOverrides_HarvestCurrent()
+    end
+    do
+        local prof = EllesmereUIDB and EllesmereUIDB.profiles
+            and EllesmereUIDB.profiles[EllesmereUIDB.activeProfile or "Default"]
+        if prof and type(prof.specOverrides) == "table" and #prof.specOverrides > 0 then
+            data.specOverrides = DeepCopy(prof.specOverrides)
+        end
+        if prof and type(prof.specOverrideGroups) == "table" and #prof.specOverrideGroups > 0 then
+            data.specOverrideGroups = DeepCopy(prof.specOverrideGroups)
+            data.specOverrideNextId = prof.specOverrideNextId
+        end
+        if prof and type(prof.specUnlockOverrides) == "table" then
+            data.specUnlockOverrides = DeepCopy(prof.specUnlockOverrides)
+        end
+    end
     -- Include unlock mode layout data (anchors, size matches)
     if EllesmereUIDB then
         data.unlockLayout = {
@@ -1088,6 +1107,12 @@ end
 
 --- Trigger live refresh on all loaded addons after a profile apply.
 function EllesmereUI.RefreshAllAddons()
+    -- Spec Overrides: write the current spec's override values into the live
+    -- profile FIRST, so every module refresh below picks them up. This makes
+    -- profile swaps and imports override-correct without their own pass.
+    if EllesmereUI.SpecOverrides_ApplyValues then
+        EllesmereUI.SpecOverrides_ApplyValues()
+    end
     -- Suppress stale anchor moves on AB bars during the rebuild phase.
     -- LayoutBar positions them from the new profile's barPositions; resize
     -- hooks would reposition them with old-profile offsets (1-frame blink).
@@ -1216,6 +1241,12 @@ end
 --- the new profile dimensions.
 function EllesmereUI.OnSpecSwitchComplete()
     EllesmereUI._specProfileSwitching = false
+    -- Unlock spec-overrides: perform any deferred generic-element position
+    -- writes and the override settle BEFORE the matches/positions/resync
+    -- below, so this pass lays out against the final swapped stores.
+    if EllesmereUI.SpecOverrides_FlushUnlock then
+        EllesmereUI.SpecOverrides_FlushUnlock()
+    end
     if EllesmereUI.ApplyAllWidthHeightMatches then
         EllesmereUI.ApplyAllWidthHeightMatches()
     end
@@ -1932,6 +1963,14 @@ function EllesmereUI.ImportProfile(importStr, profileName)
         if imported.fonts then merged.fonts = DeepCopy(imported.fonts) end
         if imported.customColors then merged.customColors = DeepCopy(imported.customColors) end
         if imported.darkMode then merged.darkMode = DeepCopy(imported.darkMode) end
+        if imported.specOverrides then merged.specOverrides = DeepCopy(imported.specOverrides) end
+        if imported.specOverrideGroups then
+            merged.specOverrideGroups = DeepCopy(imported.specOverrideGroups)
+            merged.specOverrideNextId = imported.specOverrideNextId
+        end
+        if imported.specUnlockOverrides then
+            merged.specUnlockOverrides = DeepCopy(imported.specUnlockOverrides)
+        end
         -- Layout: the new profile's unlockLayout is the active profile's CURRENT
         -- layout, with the imported relationships merged in PER MODULE.
         --
@@ -2026,6 +2065,20 @@ function EllesmereUI.ImportProfile(importStr, profileName)
                 end
             end
         end
+        -- Old-format strings can carry the per-bar Custom Active State Decimals
+        -- keys (bd.faDecimals*); convert them to the per-spell Threshold Text
+        -- stamps the same way the login migration does (the old keys are
+        -- consumed, so this is idempotent). Runs outside the cdmSpells guard:
+        -- even a string without a spell store must have its bar keys retired.
+        if EllesmereUI.MigrateCdmThresholdText then
+            local importedCdm = merged.addons and merged.addons["EllesmereUICooldownManager"]
+            if type(importedCdm) == "table" then
+                local sa2 = EllesmereUIDB and EllesmereUIDB.spellAssignments
+                local bucket2 = sa2 and sa2.profiles and sa2.profiles[profileName]
+                local sp2 = type(bucket2) == "table" and bucket2.specProfiles or nil
+                EllesmereUI.MigrateCdmThresholdText(importedCdm, sp2)
+            end
+        end
         -- Remove the new profile from all sync targets so the pre-logout
         -- sync doesn't overwrite it. Other profiles' sync relationships
         -- are preserved (per-profile sync system).
@@ -2056,6 +2109,12 @@ function EllesmereUI.ImportProfile(importStr, profileName)
         -- unassigned -- or was just auto-assigned to THIS profile -- activate.
         local assignedNow = curSpecID and db.specProfiles[curSpecID]
         if assignedNow and assignedNow ~= profileName then
+            -- Stored but not activated: migrate legacy Resource Bars Advanced
+            -- data now (the runner's flag was inherited from the base profile,
+            -- so it would never run for this import otherwise).
+            if EllesmereUI.MigrateRBAdvancedProfile then
+                EllesmereUI.MigrateRBAdvancedProfile(db.profiles[profileName])
+            end
             return true, nil, "spec_locked"
         end
         -- Flush the OUTGOING (currently active) profile's LIVE unlock data into its
@@ -2069,6 +2128,11 @@ function EllesmereUI.ImportProfile(importStr, profileName)
         -- since it was last saved (they survived only inside the imported profile,
         -- so deleting it lost them for good). This is the reported "bars lose their
         -- anchors and width match after import" bug.
+        -- Spec Overrides: sync the outgoing profile's current-spec values
+        -- with live edits before the imported profile takes over.
+        if EllesmereUI.SpecOverrides_HarvestCurrent then
+            EllesmereUI.SpecOverrides_HarvestCurrent()
+        end
         local outgoing = db.profiles[db.activeProfile or "Default"]
         if outgoing and EllesmereUIDB then
             outgoing.unlockLayout = {
@@ -2093,6 +2157,17 @@ function EllesmereUI.ImportProfile(importStr, profileName)
         payload.data.unlockLayout = merged.unlockLayout
         EllesmereUI.ApplyProfileData(payload.data)
         FixupImportedClassColors()
+        -- Resource Bars: migrate legacy Advanced/per-spec-enable data carried
+        -- by old export strings (ApplyProfileData refilled the live RB table
+        -- from the raw payload, so this must run after it). Idempotent.
+        if EllesmereUI.MigrateRBAdvancedProfile then
+            EllesmereUI.MigrateRBAdvancedProfile(db.profiles[profileName])
+        end
+        -- Spec Overrides: apply the imported profile's stored values for the
+        -- current spec on top of the just-applied addon data.
+        if EllesmereUI.SpecOverrides_Apply then
+            EllesmereUI.SpecOverrides_Apply(curSpecID)
+        end
         -- Don't ReloadUI() here: the caller (options panel import flow)
         -- may need to show the CDM spec picker popup before reloading.
         -- The caller handles the reload/refresh after the popup completes.
@@ -2123,6 +2198,20 @@ function EllesmereUI.ImportProfile(importStr, profileName)
         end
         if payload.data.darkMode then
             merged.darkMode = DeepCopy(payload.data.darkMode)
+        end
+        if payload.data.specOverrides then
+            merged.specOverrides = DeepCopy(payload.data.specOverrides)
+        end
+        if payload.data.specOverrideGroups then
+            merged.specOverrideGroups = DeepCopy(payload.data.specOverrideGroups)
+            merged.specOverrideNextId = payload.data.specOverrideNextId
+        end
+        if payload.data.specUnlockOverrides then
+            merged.specUnlockOverrides = DeepCopy(payload.data.specUnlockOverrides)
+        end
+        -- Resource Bars: migrate legacy Advanced data from old export strings.
+        if EllesmereUI.MigrateRBAdvancedProfile then
+            EllesmereUI.MigrateRBAdvancedProfile(merged)
         end
         -- Store as new profile
         merged.spellAssignments = nil
@@ -2340,6 +2429,13 @@ function EllesmereUI.SwitchProfile(name)
     local db = GetProfilesDB()
     if not db.profiles[name] then return end
 
+    -- Spec Overrides: sync the current spec's stored values with any live
+    -- edits before leaving the outgoing profile (suppressed while a spec
+    -- transition is mid-flight -- the spec handler already harvested).
+    if EllesmereUI.SpecOverrides_HarvestCurrent then
+        EllesmereUI.SpecOverrides_HarvestCurrent()
+    end
+
     -- Save current fonts into the outgoing profile before switching. Custom
     -- colors are GLOBAL (not per-profile) and are deliberately NOT saved here --
     -- snapshotting them per profile let a combat-end spec switch restore a stale
@@ -2446,6 +2542,7 @@ do
     local lastKnownSpecID = nil
     local lastKnownCharKey = nil
     local pendingSpecSwitch = false   -- true when a switch was deferred by combat
+    local pendingOverrideOldSpec = nil -- outgoing spec for a combat-deferred Spec Overrides transition
     local specRetryTimer = nil        -- retry handle for new characters
 
     specFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
@@ -2458,6 +2555,14 @@ do
         if event == "PLAYER_REGEN_ENABLED" then
             if pendingSpecSwitch then
                 pendingSpecSwitch = false
+                -- Spec Overrides: run the combat-deferred leave/enter
+                -- transition (harvest old spec, apply below).
+                local overrideTransition = pendingOverrideOldSpec ~= nil
+                    and pendingOverrideOldSpec ~= lastKnownSpecID
+                if overrideTransition and EllesmereUI.SpecOverrides_OnSpecChanged then
+                    EllesmereUI.SpecOverrides_OnSpecChanged(pendingOverrideOldSpec, lastKnownSpecID)
+                end
+                pendingOverrideOldSpec = nil
                 -- Re-resolve after combat ends (spec may have changed again)
                 local targetProfile = ResolveSpecProfile()
                 if targetProfile then
@@ -2478,6 +2583,12 @@ do
                             })
                         end
                     end
+                end
+                -- Spec Overrides: apply the (possibly re-resolved) current
+                -- spec's stored values. No-op when a profile switch above
+                -- already applied them.
+                if overrideTransition and EllesmereUI.SpecOverrides_Apply then
+                    EllesmereUI.SpecOverrides_Apply(lastKnownSpecID)
                 end
             end
             return
@@ -2571,6 +2682,9 @@ do
                 return -- same char, same spec, nothing to do
             end
         end
+        local prevSpecID = lastKnownSpecID
+        -- True whenever Spec Overrides must run a leave/enter transition.
+        local specTransition = isFirstLogin or charChanged or prevSpecID ~= specID
         lastKnownSpecID = specID
         lastKnownCharKey = charKey
 
@@ -2589,7 +2703,32 @@ do
         ---------------------------------------------------------------
         if InCombatLockdown() then
             pendingSpecSwitch = true
+            -- Remember the outgoing spec so the deferred Spec Overrides
+            -- transition can harvest it after combat.
+            if specTransition and not charChanged then
+                pendingOverrideOldSpec = prevSpecID
+            end
             return
+        end
+
+        -- Unlock mode cannot survive a spec transition: movers, session
+        -- snapshots, and pending edits all belong to the OUTGOING spec's
+        -- layout (unlock mode always displays the current spec), so a stale
+        -- save would corrupt both baseline and spec-override data. Force-
+        -- close DISCARDING the session before any harvest or apply runs.
+        -- Combat parity is free: the whole handler defers to REGEN above.
+        if specTransition and EllesmereUI.ForceCloseUnlockDiscard then
+            EllesmereUI.ForceCloseUnlockDiscard()
+        end
+
+        -- Spec Overrides: harvest the outgoing spec's live values into the
+        -- still-active profile BEFORE any spec-profile switch below, and mark
+        -- the transition so mid-swap harvests can't mis-key values. Cross-char
+        -- re-entries pass no old spec (live values may belong to another
+        -- character's spec).
+        if specTransition and EllesmereUI.SpecOverrides_OnSpecChanged then
+            EllesmereUI.SpecOverrides_OnSpecChanged(
+                (not charChanged and prevSpecID ~= specID) and prevSpecID or nil, specID)
         end
 
         ---------------------------------------------------------------
@@ -2686,6 +2825,15 @@ do
                     end)
                 end
             end
+        end
+
+        -- Spec Overrides: apply the incoming spec's stored values. Any
+        -- spec-profile switch above already applied values inside its
+        -- RefreshAllAddons pass, so this duplicate is a value-equal no-op
+        -- there; it is the ONLY apply for same-profile spec changes and
+        -- plain first logins.
+        if specTransition and EllesmereUI.SpecOverrides_Apply then
+            EllesmereUI.SpecOverrides_Apply(specID, isFirstLogin)
         end
     end)
 end

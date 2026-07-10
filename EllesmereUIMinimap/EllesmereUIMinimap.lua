@@ -5184,26 +5184,38 @@ do
                 btn:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -1, y)
                 btn:SetHeight(BUTTON_H)
 
+                -- 12.1: "/click <name>" macro transport (the 12.1 "click"
+                -- secure action crashes on a Blizzard typo, SecureTemplates
+                -- :564; MicroButtons are globally named so the macro reaches
+                -- them directly). 12.0 keeps the proven click transport.
+                local secureType = EllesmereUI.IS_121 and "macro" or "click"
                 if microRef then
-                    btn:SetAttribute("*clickbutton1", microRef)
+                    if EllesmereUI.IS_121 then
+                        btn:SetAttribute("*macrotext1", "/click " .. item.microButton)
+                    else
+                        btn:SetAttribute("*clickbutton1", microRef)
+                    end
                 end
                 btn:SetAttribute("useOnKeyDown", false)
-                btn:SetAttribute("*type1", "click")
+                btn:SetAttribute("*type1", secureType)
                 btn:EnableMouse(true)
                 btn:RegisterForClicks("AnyUp")
 
                 -- Activate secure click from the restricted secure environment.
                 -- Without this, addon-set attributes are not trusted.
+                -- The restore branch MUST match the transport set above --
+                -- restoring a mismatched type silently reverts the 12.1
+                -- macro transport on the first combat exit.
                 RegisterStateDriver(btn, "combatlock", "[combat] combat; nocombat")
-                btn:SetAttribute("_onstate-combatlock", [[
+                btn:SetAttribute("_onstate-combatlock", ([[
                     if newstate == 'combat' then
                         self:SetAttribute('*type1', nil)
                         self:EnableMouse(false)
                     else
-                        self:SetAttribute('*type1', 'click')
+                        self:SetAttribute('*type1', '%s')
                         self:EnableMouse(true)
                     end
-                ]])
+                ]]):format(secureType))
 
                 local hl = btn:CreateTexture(nil, "HIGHLIGHT")
                 hl:SetAllPoints()

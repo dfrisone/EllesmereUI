@@ -415,6 +415,9 @@ for _, info in ipairs(BAR_CONFIG) do
         overrideNumIcons = nil,
         overrideNumRows  = nil,
         growDirection    = "up",
+        -- Legacy flag, superseded by iconOrder. iconOrder deliberately has
+        -- no default: nil means "derive from reverseIconOrder" so profiles
+        -- saved before it existed keep their exact layout.
         reverseIconOrder = false,
         alwaysShowButtons = true,
         showPagingArrows = false,
@@ -2904,6 +2907,62 @@ function EAB:ResolveGrowDirectionForLayout(key, s, depth)
     return (s.growDirection or "up"):upper()
 end
 
+-- Resolve a bar's icon order setting into abstract order parts.
+-- iconOrder supersedes the legacy reverseIconOrder boolean; profiles
+-- saved before iconOrder existed have it nil and fall back to the
+-- boolean, so existing layouts render unchanged with zero migration.
+-- Returns: flowFlip (reverse button flow along the fill axis), plus
+-- hAnchor ("LEFT"/"RIGHT") and vAnchor ("TOP"/"BOTTOM") for the corner
+-- modes (both nil in the two legacy modes).
+-- Wrapped in do-end and reached via ns so no file-scope local slots
+-- are consumed (this file is at the Lua 5.1 200-local cap).
+do
+    local function ResolveIconOrder(s)
+        local order = s.iconOrder
+        if order == nil then
+            order = s.reverseIconOrder and "reversed" or "default"
+        end
+        if order == "reversed" then
+            return true, nil, nil
+        elseif order == "TOPLEFT" then
+            return false, "LEFT", "TOP"
+        elseif order == "TOPRIGHT" then
+            return false, "RIGHT", "TOP"
+        elseif order == "BOTTOMLEFT" then
+            return false, "LEFT", "BOTTOM"
+        elseif order == "BOTTOMRIGHT" then
+            return false, "RIGHT", "BOTTOM"
+        end
+        return false, nil, nil
+    end
+
+    -- Convert the resolved icon order into concrete index flips for a
+    -- bar's button grid. Corner modes place button 1 in that corner of
+    -- the existing grid purely by permuting indexes -- the bar frame, its
+    -- size and the grid geometry never change. rowsUpward is only
+    -- meaningful for horizontal bars.
+    -- Third return (cornerFill): true in the four corner modes. On
+    -- vertical bars those fill ACROSS the columns first and wrap down to
+    -- the next row, matching the classic anchor-point behavior the
+    -- corners mirror; Default/Reversed keep the legacy down-each-column
+    -- fill. Horizontal bars already fill row-first, so callers ignore
+    -- it there.
+    function ns.GetOrderFlips(s, isVertical, rowsUpward)
+        local flowFlip, hAnchor, vAnchor = ResolveIconOrder(s)
+        local colFlip, rowFlip = false, false
+        if isVertical then
+            rowFlip = flowFlip or (vAnchor == "BOTTOM")
+            colFlip = (hAnchor == "RIGHT")
+        else
+            colFlip = flowFlip or (hAnchor == "RIGHT")
+            if vAnchor then
+                rowFlip = ((vAnchor == "TOP") == rowsUpward)
+            end
+        end
+        return colFlip, rowFlip, (hAnchor ~= nil)
+    end
+end
+
 -- Compute layout for a bar and return a table of per-button data.
 -- Returns: { [i] = { x, y, w, h, show } }, frameW, frameH
 local function ComputeBarLayout(key)
@@ -2963,6 +3022,10 @@ local function ComputeBarLayout(key)
     if showEmpty == nil then showEmpty = true end
     if info.isStance then showEmpty = false end
 
+    -- Icon order flips are constant for the whole grid.
+    local rowsUpward = not isVertical and (growDir == "UP" or growDir == "CENTER")
+    local colFlip, rowFlip, cornerFill = ns.GetOrderFlips(s, isVertical, rowsUpward)
+
     local result = {}
     for i = 1, info.count do
         local btn = buttons[i]
@@ -2972,28 +3035,30 @@ local function ComputeBarLayout(key)
         else
             local col, row
             if isVertical then
-                col = floor((i - 1) / stride)
-                row = (i - 1) % stride
+                if cornerFill then
+                    -- Corner modes fill across the columns first, then wrap
+                    -- down to the next row (numRows = the column count on
+                    -- vertical bars).
+                    col = (i - 1) % numRows
+                    row = floor((i - 1) / numRows)
+                else
+                    col = floor((i - 1) / stride)
+                    row = (i - 1) % stride
+                end
             else
                 col = (i - 1) % stride
                 row = floor((i - 1) / stride)
             end
+            -- Icon order flips first so the width/height-match extras
+            -- below derive from the final visual position.
+            if colFlip then col = (isVertical and numRows or stride) - 1 - col end
+            if rowFlip then row = (isVertical and stride or numRows) - 1 - row end
             local thisBtnW = (extraWC > 0 and col < extraWC) and (btnW + onePxC) or btnW
             local thisBtnH = (extraHC > 0 and row < extraHC) and (btnH + onePxC) or btnH
             local extraBeforeW = math.min(col, extraWC) * onePxC
             local extraBeforeH = math.min(row, extraHC) * onePxC
-            if s.reverseIconOrder then
-                if isVertical then
-                    row = stride - 1 - row
-                else
-                    col = stride - 1 - col
-                end
-                extraBeforeW = math.min(col, extraWC) * onePxC
-                extraBeforeH = math.min(row, extraHC) * onePxC
-            end
             local xOff = col * stepW + extraBeforeW
             local yOff
-            local rowsUpward = not isVertical and (growDir == "UP" or growDir == "CENTER")
             if rowsUpward then
                 yOff = row * stepH + extraBeforeH
             else
@@ -3105,6 +3170,13 @@ local function LayoutBar(key)
     if showEmpty == nil then showEmpty = true end
     if info.isStance then showEmpty = false end
 
+    -- Growth direction affects which edge is fixed during resize.
+    -- UP and CENTER on horizontal bars stack rows upward (2nd row
+    -- above 1st) matching the original default behavior. Icon order
+    -- flips permute indexes within that fixed grid.
+    local rowsUpward = not isVertical and (growDir == "UP" or growDir == "CENTER")
+    local colFlip, rowFlip, cornerFill = ns.GetOrderFlips(s, isVertical, rowsUpward)
+
     for i = 1, info.count do
         local btn = buttons[i]
         if not btn then break end
@@ -3120,12 +3192,25 @@ local function LayoutBar(key)
 
             local col, row
             if isVertical then
-                col = floor((i - 1) / stride)
-                row = (i - 1) % stride
+                if cornerFill then
+                    -- Corner modes fill across the columns first, then wrap
+                    -- down to the next row (numRows = the column count on
+                    -- vertical bars).
+                    col = (i - 1) % numRows
+                    row = floor((i - 1) / numRows)
+                else
+                    col = floor((i - 1) / stride)
+                    row = (i - 1) % stride
+                end
             else
                 col = (i - 1) % stride
                 row = floor((i - 1) / stride)
             end
+
+            -- Icon order flips first so the width/height-match extras
+            -- below derive from the final visual position.
+            if colFlip then col = (isVertical and numRows or stride) - 1 - col end
+            if rowFlip then row = (isVertical and stride or numRows) - 1 - row end
 
             -- Width/height match: first N columns/rows get +1 physical pixel.
             -- Only the matched axis expands -- height stays constant so all
@@ -3137,23 +3222,8 @@ local function LayoutBar(key)
             local extraBeforeH = math.min(row, extraH) * onePx
 
             btn:ClearAllPoints()
-            -- Reverse icon order if enabled (separate from growth direction)
-            if s.reverseIconOrder then
-                if isVertical then
-                    row = stride - 1 - row
-                else
-                    col = stride - 1 - col
-                end
-                -- Recalculate extra-pixel offsets for the reversed position
-                extraBeforeW = math.min(col, extraW) * onePx
-                extraBeforeH = math.min(row, extraH) * onePx
-            end
-            -- Growth direction affects which edge is fixed during resize.
-            -- UP and CENTER on horizontal bars stack rows upward (2nd row
-            -- above 1st) matching the original default behavior.
             local xOff = col * stepW + extraBeforeW
             local yOff, anchor
-            local rowsUpward = not isVertical and (growDir == "UP" or growDir == "CENTER")
             if rowsUpward then
                 yOff = row * stepH + extraBeforeH
                 anchor = "BOTTOMLEFT"
@@ -3297,6 +3367,17 @@ local function LayoutBar(key)
             frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, px, py)
         end
     end
+    -- Pre-resize center in UIParent space, captured BEFORE SetSize (an
+    -- edge-pointed frame moves its center when resized). The anchor offset
+    -- upkeep below validates against it.
+    local preCX, preCY
+    do
+        local c1, c2 = frame:GetCenter()
+        if c1 and c2 then
+            local r = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+            preCX, preCY = c1 * r, c2 * r
+        end
+    end
     EllesmereUI._layoutBarResizing = key
     frame:SetSize(max(frameW, 1), max(frameH, 1))
     EllesmereUI._layoutBarResizing = nil
@@ -3311,6 +3392,15 @@ local function LayoutBar(key)
         local prevH = frame._eabPrevLayoutH
         frame._eabPrevLayoutW = newW
         frame._eabPrevLayoutH = newH
+        -- Self-validating gate: the dw/2 compensation is only correct when the
+        -- bar's PRE-resize center actually sat at the anchor-derived position
+        -- (target center + stored offset on the compensated axis). During a
+        -- profile apply the bar still holds the OUTGOING profile's position
+        -- while unlockAnchors already carries the INCOMING profile's offsets;
+        -- compensating that mismatch corrupts the offsets cumulatively on every
+        -- swap. Layout passes can land before, inside, or after the
+        -- _abAnchorSuppressed window (e.g. extra bars built on a timer), so the
+        -- position check is the only ordering-proof guard.
         if (prevW or prevH)
            and not EllesmereUI._unlockActive
            and not EllesmereUI._abAnchorSuppressed
@@ -3326,9 +3416,24 @@ local function LayoutBar(key)
                         local side = ai.side
                         local PPo = EllesmereUI and EllesmereUI.PP
                         local uiES = PPo and UIParent:GetEffectiveScale()
+                        local tCX, tCY
+                        if EllesmereUI.GetAnchorTargetCenterUI then
+                            tCX, tCY = EllesmereUI.GetAnchorTargetCenterUI(key)
+                        end
+                        local TOL = 2  -- UI px; pixel-snap noise stays well under 1
+                        -- Width/height-matched bars: the match owns that axis;
+                        -- any resize there is the match asserting the target's
+                        -- size, which the saved offset already corresponds to.
+                        -- Compensating would corrupt the offset (see the CDM
+                        -- twin of this block).
+                        local wMatched = EllesmereUIDB and EllesmereUIDB.unlockWidthMatch and EllesmereUIDB.unlockWidthMatch[key]
+                        local hMatched = EllesmereUIDB and EllesmereUIDB.unlockHeightMatch and EllesmereUIDB.unlockHeightMatch[key]
                         -- Horizontal growth (LEFT/RIGHT): adjust offsetX on TOP/BOTTOM anchors
                         if prevW and math.abs(newW - prevW) > 0.1
-                           and (side == "TOP" or side == "BOTTOM") then
+                           and (side == "TOP" or side == "BOTTOM")
+                           and not wMatched
+                           and preCX and tCX
+                           and math.abs(preCX - (tCX + (ai.offsetX or 0))) <= TOL then
                             local dw = newW - prevW
                             if grow == "RIGHT" then
                                 ai.offsetX = ai.offsetX + dw / 2
@@ -3339,7 +3444,10 @@ local function LayoutBar(key)
                         end
                         -- Vertical growth (UP/DOWN): adjust offsetY on LEFT/RIGHT anchors
                         if prevH and math.abs(newH - prevH) > 0.1
-                           and (side == "LEFT" or side == "RIGHT") then
+                           and (side == "LEFT" or side == "RIGHT")
+                           and not hMatched
+                           and preCY and tCY
+                           and math.abs(preCY - (tCY + (ai.offsetY or 0))) <= TOL then
                             local dh = newH - prevH
                             if grow == "DOWN" then
                                 ai.offsetY = ai.offsetY - dh / 2
@@ -7987,23 +8095,24 @@ local function RegisterWithUnlockMode()
                 else
                     SaveBarPosition(info.key)
                 end
-                -- Follow baseline (StanceBar only): capture the anchor target's
-                -- geometry at save time so ApplyAnchorPosition can shift the
-                -- absolute saved growth edge by the target's displacement when
-                -- the target moves or resizes at runtime (e.g. an anchored CDM
-                -- bar gaining an icon). Mirrors the CDM savePos baseline. nil
-                -- for unanchored/CENTER-grow bars, so the follow stays off and
-                -- the pure absolute pin is unchanged.
-                if info.key == "StanceBar" then
+                -- Follow baseline: capture the anchor target's geometry at save
+                -- time so ApplyAnchorPosition can shift the absolute saved growth
+                -- edge by the target's displacement when the target moves or
+                -- resizes at runtime (e.g. an anchored bar whose target gains an
+                -- icon). Applies to every growth-direction bar (Stance Bar and
+                -- the main/extra action bars) so a perpendicular corner anchor to
+                -- a resizing chain target can follow. nil for unanchored/CENTER-
+                -- grow bars, so the follow stays off and the pure pin is unchanged.
+                do
                     local entry = EAB.db.profile.barPositions[info.key]
                     local s = EAB.db.profile.bars[info.key]
                     local gd = s and (s.growDirection or "up"):upper()
                     if entry and gd and gd ~= "CENTER"
                        and EllesmereUI.GetAnchorTargetCenterUI then
-                        entry.tgtx, entry.tgty = EllesmereUI.GetAnchorTargetCenterUI("StanceBar")
+                        entry.tgtx, entry.tgty = EllesmereUI.GetAnchorTargetCenterUI(info.key)
                         if EllesmereUI.GetAnchorTargetEdgesUI then
                             entry.tgtL, entry.tgtR, entry.tgtT, entry.tgtB =
-                                EllesmereUI.GetAnchorTargetEdgesUI("StanceBar")
+                                EllesmereUI.GetAnchorTargetEdgesUI(info.key)
                         end
                     end
                 end
@@ -8214,6 +8323,14 @@ function EAB:OnInitialize()
 
     _G._EAB_ApplyKeyDown = function() ApplyKeyDownCVar() end
     _G._EAB_Apply = function()
+        -- Re-point the exposed barPositions view at the active profile's
+        -- table. Profile swaps replace db.profile wholesale, and the unlock
+        -- system reads saved growth edges and follow baselines through this
+        -- reference; a stale pointer would read and write another profile's
+        -- saved positions.
+        if EAB.db and EAB.db.profile and EAB.db.profile.barPositions then
+            EllesmereUI._abBarPositions = EAB.db.profile.barPositions
+        end
         ApplyAll()
         if not InCombatLockdown() then
             RestoreBarPositions()
@@ -8689,7 +8806,12 @@ function EAB:FinishSetup()
         end
         wipe(_gridSurfacedBars)
     end
-    ActionButtonController:SetScript("OnEvent", function(_, event)
+    -- 12.1: registering events on a frame stamps it with the EventRegistrations
+    -- forbidden aspect, and the restricted environment refuses frames carrying
+    -- any aspect. The controller wraps buttons and executes snippets, so its
+    -- events must live on a plain sidecar listener, never on the controller.
+    EAB._abcEvents = CreateFrame("Frame")
+    EAB._abcEvents:SetScript("OnEvent", function(_, event)
         if event == "ACTIONBAR_SHOWGRID" then
             -- Cancel any pending restore (swap case: drop + immediate pickup)
             _gridRestorePending = false
@@ -8752,11 +8874,11 @@ function EAB:FinishSetup()
             end
         end
     end)
-    ActionButtonController:RegisterEvent("ACTIONBAR_SHOWGRID")
-    ActionButtonController:RegisterEvent("ACTIONBAR_HIDEGRID")
-    ActionButtonController:RegisterEvent("PET_BAR_HIDEGRID")
-    ActionButtonController:RegisterEvent("PLAYER_ENTERING_WORLD")
-    ActionButtonController:RegisterEvent("SPELLS_CHANGED")
+    EAB._abcEvents:RegisterEvent("ACTIONBAR_SHOWGRID")
+    EAB._abcEvents:RegisterEvent("ACTIONBAR_HIDEGRID")
+    EAB._abcEvents:RegisterEvent("PET_BAR_HIDEGRID")
+    EAB._abcEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+    EAB._abcEvents:RegisterEvent("SPELLS_CHANGED")
 
     -- Reset showgrid state at login (covers waiting for the game to apply
     -- the always-show-buttons state to the main bar).

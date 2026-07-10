@@ -756,6 +756,12 @@ end
 -- re-resolve the active spec profile per group.
 local function GroupGrowOf(tbb, gid)
     local g = TBBGroupStore(tbb, gid, false)
+    if g and g.globalKey then
+        -- Global group: shared value from the profile registry. A stale key
+        -- (entry deleted) falls through to the local values below.
+        local e = ns.TBBGlobalGroup and ns.TBBGlobalGroup(g.globalKey)
+        if e then return e.grow or "DOWN" end
+    end
     if g and g.grow then return g.grow end
     if gid == 1 and tbb.groupGrowDirection then return tbb.groupGrowDirection end
     return "DOWN"
@@ -763,6 +769,10 @@ end
 
 local function GroupSpacingOf(tbb, gid)
     local g = TBBGroupStore(tbb, gid, false)
+    if g and g.globalKey then
+        local e = ns.TBBGlobalGroup and ns.TBBGlobalGroup(g.globalKey)
+        if e and e.spacing ~= nil then return e.spacing end
+    end
     if g and g.spacing ~= nil then return g.spacing end
     if gid == 1 and tbb.groupSpacing ~= nil then return tbb.groupSpacing end
     return 2
@@ -774,6 +784,12 @@ end
 
 function ns.TBBSetGroupGrow(gid, v)
     local t = ns.GetTrackedBuffBars()
+    local gkey = ns.TBBGroupGlobalKey and ns.TBBGroupGlobalKey(gid)
+    if gkey then
+        local e = ns.TBBGlobalGroup(gkey)
+        if e then e.grow = v end
+        return
+    end
     TBBGroupStore(t, gid, true).grow = v
     if gid == 1 then t.groupGrowDirection = v end
 end
@@ -784,6 +800,12 @@ end
 
 function ns.TBBSetGroupSpacing(gid, v)
     local t = ns.GetTrackedBuffBars()
+    local gkey = ns.TBBGroupGlobalKey and ns.TBBGroupGlobalKey(gid)
+    if gkey then
+        local e = ns.TBBGlobalGroup(gkey)
+        if e then e.spacing = v end
+        return
+    end
     TBBGroupStore(t, gid, true).spacing = v
     if gid == 1 then t.groupSpacing = v end
 end
@@ -801,6 +823,10 @@ end
 function ns.TBBGroupName(gid)
     local t = ns.GetTrackedBuffBars()
     local g = TBBGroupStore(t, gid, false)
+    if g and g.globalKey then
+        local e = ns.TBBGlobalGroup and ns.TBBGlobalGroup(g.globalKey)
+        if e and type(e.name) == "string" and e.name ~= "" then return e.name end
+    end
     local n = g and g.name
     if type(n) == "string" and n ~= "" then return n end
     return nil
@@ -808,11 +834,320 @@ end
 
 function ns.TBBSetGroupName(gid, name)
     local t = ns.GetTrackedBuffBars()
+    local gkey = ns.TBBGroupGlobalKey and ns.TBBGroupGlobalKey(gid)
+    if gkey then
+        -- Global group: the shared name lives in the registry (never blank --
+        -- movers and dropdown rows on other specs need a concrete label).
+        local e = ns.TBBGlobalGroup(gkey)
+        if e then
+            if type(name) == "string" and name ~= "" then
+                e.name = name
+            end
+        end
+        return
+    end
     if type(name) ~= "string" or name == "" then
         local g = TBBGroupStore(t, gid, false)
         if g then g.name = nil end
     else
         TBBGroupStore(t, gid, true).name = name
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Global groups: a PROFILE-scoped registry shared by every spec. A per-spec
+--  group opts in by stamping groups[gid].globalKey; its name / grow / spacing
+--  / screen position then resolve through the registry entry, so every spec
+--  linked to the same key shares one identity (including the unlock mover,
+--  which registers under the stable "TBBG_<gkey>" key). Membership stays
+--  per-spec: a spec with no bars linked to the key simply has no frames and
+--  a hidden mover. Keys are monotonic and NEVER reused -- a reused key would
+--  resurrect stale unlock anchor links pointing at the old group.
+--  Zero migration: groups without a globalKey stamp behave exactly as before.
+-------------------------------------------------------------------------------
+do
+    local function TBBGlobalDB(create)
+        if not (ECME and ECME.db) then ECME = ns.ECME end
+        local p = ECME and ECME.db and ECME.db.profile
+        if not p then return nil end
+        if not p.tbbGlobalGroups and create then p.tbbGlobalGroups = {} end
+        return p.tbbGlobalGroups, p
+    end
+
+    function ns.GetTBBGlobalGroups()
+        return TBBGlobalDB(false)
+    end
+
+    function ns.TBBGlobalGroup(gkey)
+        local reg = TBBGlobalDB(false)
+        return reg and gkey and reg[gkey] or nil
+    end
+
+    -- The globalKey a per-spec group is linked to (nil = local group).
+    -- A stale stamp whose registry entry was deleted reads as local.
+    function ns.TBBGroupGlobalKey(gid)
+        local g = TBBGroupStore(ns.GetTrackedBuffBars(), gid, false)
+        local gkey = g and g.globalKey
+        if gkey and ns.TBBGlobalGroup(gkey) then return gkey end
+        return nil
+    end
+
+    -- Local gid linked to a global group on the ACTIVE spec (nil if none).
+    function ns.TBBLocalGidForGlobal(gkey)
+        local t = ns.GetTrackedBuffBars()
+        if not t.groups then return nil end
+        for k, g in pairs(t.groups) do
+            if g.globalKey == gkey then return tonumber(k) end
+        end
+        return nil
+    end
+
+    -- Find-or-create the active spec's local group for a global group.
+    -- The id must dodge BOTH gids used by bars and gids held by memberless
+    -- global links (TBBNextGroupID only scans bars -- reusing a linked gid
+    -- here would wipe another global group's link).
+    function ns.TBBEnsureLocalGroupForGlobal(gkey)
+        if not ns.TBBGlobalGroup(gkey) then return nil end
+        local gid = ns.TBBLocalGidForGlobal(gkey)
+        if gid then return gid end
+        local t = ns.GetTrackedBuffBars()
+        local used = {}
+        for _, c in ipairs(t.bars or {}) do
+            used[ns.TBBBarGroupID(c)] = true
+        end
+        if t.groups then
+            for k, g in pairs(t.groups) do
+                if g.globalKey then
+                    local kn = tonumber(k)
+                    if kn then used[kn] = true end
+                end
+            end
+        end
+        gid = 1
+        while used[gid] do gid = gid + 1 end
+        ns.TBBResetGroupSettings(gid)
+        TBBGroupStore(t, gid, true).globalKey = gkey
+        return gid
+    end
+
+    -- Sorted registry keys (stable ordering for dropdown rows / movers).
+    function ns.TBBGlobalGroupKeys()
+        local reg = TBBGlobalDB(false)
+        local list = {}
+        if reg then
+            for k in pairs(reg) do list[#list + 1] = k end
+            table.sort(list, function(a, b)
+                return (tonumber(a:match("%d+")) or 0) < (tonumber(b:match("%d+")) or 0)
+            end)
+        end
+        return list
+    end
+
+    -- Opt a group in (seed the registry from its current per-spec settings
+    -- and anchor position) or detach it (materialize the shared values back
+    -- into the per-spec store so nothing moves; the registry entry persists
+    -- for other specs -- full removal is TBBDeleteGlobalGroup).
+    function ns.TBBSetGroupGlobal(gid, on)
+        local t = ns.GetTrackedBuffBars()
+        local g = TBBGroupStore(t, gid, true)
+        if on then
+            if g.globalKey and ns.TBBGlobalGroup(g.globalKey) then return end
+            local reg, p = TBBGlobalDB(true)
+            if not reg then return end
+            local id = (p.tbbGlobalGroupNextId or 0) + 1
+            p.tbbGlobalGroupNextId = id
+            local gkey = "g" .. id
+            local L = EllesmereUI and EllesmereUI.L
+            local entry = {
+                name    = ns.TBBGroupName(gid) or ((L and L("Group") or "Group") .. " " .. gid),
+                grow    = GroupGrowOf(t, gid),
+                spacing = GroupSpacingOf(t, gid),
+            }
+            local ai = ns.TBBGroupAnchorIndex(gid)
+            local pos = ai and ns.GetTBBPositions()[tostring(ai)]
+            if pos and pos.point then
+                entry.pos = { point = pos.point, relPoint = pos.relPoint, x = pos.x, y = pos.y }
+            end
+            reg[gkey] = entry
+            g.globalKey = gkey
+        else
+            local gkey = g.globalKey
+            g.globalKey = nil
+            local entry = gkey and ns.TBBGlobalGroup(gkey)
+            if entry then
+                g.name = entry.name
+                g.grow = entry.grow
+                g.spacing = entry.spacing
+                if gid == 1 then
+                    t.groupGrowDirection = entry.grow
+                    t.groupSpacing = entry.spacing
+                end
+                if entry.pos then
+                    local posDB = ns.GetTBBPositions()
+                    for j, c in ipairs(t.bars or {}) do
+                        if ns.TBBBarGroupID(c) == gid then
+                            posDB[tostring(j)] = { point = entry.pos.point, relPoint = entry.pos.relPoint, x = entry.pos.x, y = entry.pos.y }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- ----------------------------------------------------------------------
+    -- Growth-edge extent: when an element is anchored to the side of a
+    -- tracking bar group that MATCHES the group's growth direction (TOP of
+    -- an upward-growing group, LEFT of a leftward-growing one, ...), the
+    -- anchor edge follows the outermost VISIBLE member instead of the static
+    -- anchor bar, so the element rides the stack as bars appear and fade.
+    -- Every other side/target combination is untouched (provider returns
+    -- nil and the anchor system uses the frame's own bounds).
+    -- ----------------------------------------------------------------------
+    local GROW_TO_SIDE = { UP = "TOP", DOWN = "BOTTOM", LEFT = "LEFT", RIGHT = "RIGHT" }
+
+    -- Resolve an anchor target key to a group id IF the anchored side
+    -- matches that group's growth direction (nil otherwise).
+    function ns.TBBExtentGidForTarget(targetKey, side)
+        if type(targetKey) ~= "string" or not side then return nil end
+        local gid
+        local gkey = targetKey:match("^TBBG_(.+)$")
+        if gkey then
+            gid = ns.TBBLocalGidForGlobal(gkey)
+        else
+            local idx = tonumber(targetKey:match("^TBB_(%d+)$"))
+            if not idx then return nil end
+            local t = ns.GetTrackedBuffBars()
+            local c = t.bars and t.bars[idx]
+            gid = c and ns.TBBBarGroupID(c) or 0
+            if gid == 0 or idx ~= ns.TBBGroupAnchorIndex(gid) then return nil end
+        end
+        if not gid then return nil end
+        local grow = (ns.TBBGroupGrow(gid) or "DOWN"):upper()
+        if GROW_TO_SIDE[grow] ~= side then return nil end
+        return gid
+    end
+
+    -- Anchor-system hook: outermost visible member edge in UIParent space,
+    -- or nil to use the target frame's own bounds. Inert while unlock mode
+    -- or the options placeholder preview owns bar positions.
+    function EllesmereUI._GetAnchorTargetExtent(targetKey, side)
+        if EllesmereUI._unlockActive or ns._tbbPlaceholderMode then return nil end
+        local gid = ns.TBBExtentGidForTarget(targetKey, side)
+        if not gid then return nil end
+        local t = ns.GetTrackedBuffBars()
+        local uiS = UIParent:GetEffectiveScale()
+        local best
+        for i, c in ipairs(t.bars or {}) do
+            if c.enabled ~= false and ns.TBBBarGroupID(c) == gid then
+                local f = tbbFrames[i]
+                if f and f:IsShown() and f:GetLeft() then
+                    local fS = f:GetEffectiveScale() / uiS
+                    local v
+                    if side == "TOP" then
+                        v = (f:GetTop() or 0) * fS
+                    elseif side == "BOTTOM" then
+                        v = (f:GetBottom() or 0) * fS
+                    elseif side == "LEFT" then
+                        v = (f:GetLeft() or 0) * fS
+                    else
+                        v = (f:GetRight() or 0) * fS
+                    end
+                    if not best then
+                        best = v
+                    elseif side == "TOP" or side == "RIGHT" then
+                        if v > best then best = v end
+                    elseif v < best then
+                        best = v
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    -- gid -> anchored unlock key needing extent updates. Memoized; the
+    -- unlock module bumps _anchorLinksStamp whenever links change, and
+    -- RegisterTBBUnlockElements nils the memo on every build (grow /
+    -- membership / spec changes).
+    local function RebuildExtentWatch()
+        local w = {}
+        local anchors = EllesmereUIDB and EllesmereUIDB.unlockAnchors
+        if anchors then
+            for _, info in pairs(anchors) do
+                if info.target then
+                    local gid = ns.TBBExtentGidForTarget(info.target, info.side)
+                    if gid then w[gid] = info.target end
+                end
+                local fb = info.fallback
+                if fb and fb.target then
+                    local gid = ns.TBBExtentGidForTarget(fb.target, fb.side)
+                    if gid then w[gid] = fb.target end
+                end
+            end
+        end
+        return w
+    end
+
+    local function TBBExtentWatchKey(gid)
+        if not gid or gid == 0 then return nil end
+        local stamp = EllesmereUI._anchorLinksStamp or 0
+        local w = ns._tbbExtentWatch
+        if not w or ns._tbbExtentWatchStamp ~= stamp then
+            w = RebuildExtentWatch()
+            ns._tbbExtentWatch = w
+            ns._tbbExtentWatchStamp = stamp
+        end
+        return w[gid]
+    end
+
+    -- Called by the reflow when a group's visible footprint actually changed
+    -- (change-gated there, so this is NOT per-tick). Queues the standard
+    -- batched anchor propagation for the group's unlock key.
+    function ns._NotifyTBBExtentChanged(gid)
+        local key = TBBExtentWatchKey(gid)
+        if not key then return end
+        if EllesmereUI.PropagateAnchorChain then
+            EllesmereUI.PropagateAnchorChain(key, "all")
+        end
+    end
+
+    -- Remove a global group everywhere: every spec's linked group detaches
+    -- with the shared values materialized locally (bars keep their current
+    -- positions), then the registry entry is deleted.
+    function ns.TBBDeleteGlobalGroup(gkey)
+        local reg = TBBGlobalDB(false)
+        local entry = reg and reg[gkey]
+        if not entry then return end
+        local sp = ns.GetActiveSpecProfiles and ns.GetActiveSpecProfiles()
+        if sp then
+            for _, prof in pairs(sp) do
+                local tbb = prof.trackedBuffBars
+                if tbb and tbb.groups then
+                    for k, g in pairs(tbb.groups) do
+                        if g.globalKey == gkey then
+                            g.globalKey = nil
+                            g.name = entry.name
+                            g.grow = entry.grow
+                            g.spacing = entry.spacing
+                            if k == "1" then
+                                tbb.groupGrowDirection = entry.grow
+                                tbb.groupSpacing = entry.spacing
+                            end
+                            if entry.pos then
+                                if not prof.tbbPositions then prof.tbbPositions = {} end
+                                local kn = tonumber(k)
+                                for j, c in ipairs(tbb.bars or {}) do
+                                    if ns.TBBBarGroupID(c) == kn then
+                                        prof.tbbPositions[tostring(j)] = { point = entry.pos.point, relPoint = entry.pos.relPoint, x = entry.pos.x, y = entry.pos.y }
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        reg[gkey] = nil
     end
 end
 
@@ -915,6 +1250,7 @@ local TBB_STYLE_KEYS = {
     "gradientEnabled", "gradientR", "gradientG", "gradientB", "gradientA", "gradientDir",
     "opacity", "hideWhenInactive",
     "showTimer", "timerPosition", "timerSize", "timerX", "timerY",
+    "timerDecimals", "timerDecimalThreshold",
     "showName", "namePosition", "nameSize", "nameX", "nameY",
     "showSpark",
     "iconDisplay", "iconSize", "iconX", "iconY", "iconBorderSize",
@@ -1145,6 +1481,11 @@ local function ReflowGroup(tbb, gid, bars)
     end
 
     if count == 0 then
+        -- Group fully collapsed: anchored elements fall back to the anchor
+        -- bar's own (hidden but resolvable) bounds. Notify once.
+        if st.lastCount ~= 0 and ns._NotifyTBBExtentChanged then
+            ns._NotifyTBBExtentChanged(gid)
+        end
         st.lastCount = 0
         return
     end
@@ -1197,6 +1538,13 @@ local function ReflowGroup(tbb, gid, bars)
             f:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
         end
         prev = f
+    end
+
+    -- The group's visible footprint changed (this point is only reached when
+    -- the visible sequence / grow / spacing actually changed): let elements
+    -- anchored to the group's growth side re-read the moving edge.
+    if ns._NotifyTBBExtentChanged then
+        ns._NotifyTBBExtentChanged(gid)
     end
 end
 
@@ -2314,17 +2662,18 @@ local function UpdateStacks(bar, blzChild, cfg)
             -- secret number so we can't compare it directly, but StatusBar
             -- SetValue accepts secret numbers natively. Feed it straight to
             -- the threshold overlay (FeedTBBThresholdOverlay uses SetValue).
+            -- 12.1: viewer auraInstanceIDs are SECRET in combat and the iid
+            -- query hard-errors on them; the threshold stack overlay
+            -- degrades to inert while restricted (no readable substitute --
+            -- application-count APIs are all restricted too).
             local auraInstID = blzChild.auraInstanceID
             local auraUnit = blzChild.auraDataUnit
-            if auraInstID and auraUnit then
-                local ad = C_UnitAuras.GetAuraDataByAuraInstanceID(auraUnit, auraInstID)
-                if ad and ad.applications then
-                    bar._stackCount = ad.applications  -- secret number, fed to SetValue
-                else
-                    bar._stackCount = 0
+            bar._stackCount = 0
+            if auraInstID and auraUnit and not issecretvalue(auraInstID) then
+                local ok2, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, auraInstID)
+                if ok2 and ad and ad.applications then
+                    bar._stackCount = ad.applications
                 end
-            else
-                bar._stackCount = 0
             end
             return
         end
@@ -2339,17 +2688,15 @@ local function UpdateStacks(bar, blzChild, cfg)
                     bar._stacksText:SetText(txt)
                     bar._stacksText:Show()
                 end
+                -- 12.1: secret iid in combat -- same degrade as above.
                 local auraInstID = blzChild.auraInstanceID
                 local auraUnit = blzChild.auraDataUnit
-                if auraInstID and auraUnit then
-                    local ad = C_UnitAuras.GetAuraDataByAuraInstanceID(auraUnit, auraInstID)
-                    if ad and ad.applications then
+                bar._stackCount = 0
+                if auraInstID and auraUnit and not issecretvalue(auraInstID) then
+                    local ok2, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, auraInstID)
+                    if ok2 and ad and ad.applications then
                         bar._stackCount = ad.applications
-                    else
-                        bar._stackCount = 0
                     end
-                else
-                    bar._stackCount = 0
                 end
                 return
             end
@@ -2455,6 +2802,69 @@ local function GetBlizzBarFontStrings(blizzBar)
     return nameFS, timerFS
 end
 
+-------------------------------------------------------------------------------
+--  EffectiveIconSpellID
+--  Resolves which spell id's ICON represents a config right now. cfg.spellID
+--  is the form captured at pick time; talents can override it to a different
+--  form with a different icon (C_Spell.GetOverrideSpell), and a bar saved for
+--  an override form loses that form when untalented (only its base remains
+--  known). Used by the icon fallback paths only -- when a bound Blizzard
+--  frame or live aura data is available, those win instead.
+-------------------------------------------------------------------------------
+local function EffectiveIconSpellID(cfg)
+    local sid = cfg.spellID
+    if not sid or sid <= 0 then return nil end
+    -- Saved form currently overridden by a talent: show the override's icon.
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local ov = C_Spell.GetOverrideSpell(sid)
+        if type(ov) == "number" and ov > 0 and ov ~= sid then return ov end
+    end
+    -- Saved the override form, now untalented: the saved form is no longer a
+    -- known spell but its captured base is -- show the base form's icon.
+    if cfg.baseSpellID and cfg.baseSpellID > 0 and IsPlayerSpell
+       and not IsPlayerSpell(sid) and IsPlayerSpell(cfg.baseSpellID) then
+        return cfg.baseSpellID
+    end
+    return sid
+end
+
+-- Mirror the 12.1 engine-written decimal timer string (hidden FS on the aura
+-- slot button; see EllesmereUICdmTbbDecimals.lua) onto the bar's timer FS.
+-- SECRET RULES (field-hit): the slot button's IsShown() is a SECRET BOOLEAN
+-- (aura presence) -- never test it in Lua; route it through the engine-side
+-- SetAlphaFromBoolean instead (present -> alpha 1, gone -> alpha 0), so a
+-- stale string can never be VISIBLE even if a filter miss leaves old text in
+-- the hidden FS. The engine string itself may be secret: nil-check via the
+-- type tag only, and SetText accepts secret strings. Returns true only when
+-- a string was written AND the alpha gate applied; callers fall back to
+-- their existing timer source on false, so failure can only ever degrade
+-- precision, never accuracy. bar._tbbAlphaGated tracks the alpha gate so the
+-- fallback path never inherits a stuck alpha-0 FontString.
+local function MirrorEngineTimer(bar, cfg)
+    local engBtn = bar._tbbEngineText
+    if not engBtn then return false end
+    local out = bar._timerText
+    local engFS = bar._tbbEngineFS
+    local wrote = false
+    if cfg.showTimer and out and engFS then
+        local ok, txt = pcall(engFS.GetText, engFS)
+        if ok and type(txt) ~= "nil" then
+            wrote = (pcall(out.SetText, out, txt))
+        end
+    end
+    -- Alpha gate is best-effort: every mirror call site has already
+    -- established aura presence (viewer isActive / a live aura read), so a
+    -- missing setter must not disable the mirror itself.
+    if wrote and out.SetAlphaFromBoolean then
+        pcall(out.SetAlphaFromBoolean, out, engBtn:IsShown(), 1, 0)
+        bar._tbbAlphaGated = true
+    elseif bar._tbbAlphaGated then
+        if out then out:SetAlpha(1) end
+        bar._tbbAlphaGated = nil
+    end
+    return wrote
+end
+
 --- Check if a TBB config has a matching frame in BuffBarCooldownViewer.
 --- Uses FindChild (frame-based matching via MatchFrameToConfig) instead
 --- of spell-ID cache lookups. Robust against ID mismatches.
@@ -2508,8 +2918,15 @@ local function _ensureLustListener(enable)
                 local present = _playerHasSated()
                 -- Arm ONLY on a genuine incremental application: not a full aura
                 -- refresh (zone/login resends every aura), and not inside the
-                -- post-zone grace window.
-                local isFull = updateInfo and updateInfo.isFullUpdate
+                -- post-zone grace window. 12.1: the UNIT_AURA payload (and its
+                -- fields) can be SECRET in combat -- a secret payload is treated
+                -- as incremental (full refreshes come from zone/login, which the
+                -- zone guard already covers; boolean use of a secret errors).
+                local isFull = false
+                if updateInfo and not issecretvalue(updateInfo) then
+                    local v = updateInfo.isFullUpdate
+                    if not issecretvalue(v) and v then isFull = true end
+                end
                 if present and not _satedPresent and not isFull
                     and GetTime() >= _lustZoneGuard then
                     _lustExpiry = GetTime() + 40  -- rising edge: lust just went out
@@ -2951,32 +3368,64 @@ function ns.UpdateTrackedBuffBarTimers()
                             bar._nameSet = true
                         end
                     end
-                    -- Timer: passthrough from Blizzard's FontString (changes constantly)
-                    local _, blizzTimerFS = GetBlizzBarFontStrings(blizzBar)
-                    -- Timer: passthrough every frame (changes constantly)
-                    if cfg.showTimer and bar._timerText and blizzTimerFS then
-                        bar._timerText:SetText(blizzTimerFS:GetText())
+                    -- Timer: engine-bound decimal mirror first (12.1 Decimals:
+                    -- the engine formats the secret remaining time into a
+                    -- hidden FS we copy -- same passthrough mechanics as the
+                    -- fallback, decimal source). Fallback: passthrough from
+                    -- Blizzard's FontString every frame (changes constantly).
+                    if MirrorEngineTimer(bar, cfg) then
                         bar._timerText:Show()
-                    elseif bar._timerText then
-                        bar._timerText:Hide()
+                    else
+                        local _, blizzTimerFS = GetBlizzBarFontStrings(blizzBar)
+                        if cfg.showTimer and bar._timerText and blizzTimerFS then
+                            bar._timerText:SetText(blizzTimerFS:GetText())
+                            bar._timerText:Show()
+                        elseif bar._timerText then
+                            bar._timerText:Hide()
+                        end
                     end
 
-                    -- Icon: read from the live aura data so dynamic buffs
-                    -- (Roll the Bones) show the actual rolled buff icon.
-                    -- Fall back to cfg.spellID for non-dynamic buffs.
+                    -- Icon source priority:
+                    --   1. Blizzard's icon texture on the bound frame. Its
+                    --      SetBarContent already resolved the override/variant
+                    --      form, so mirroring the file can never disagree with
+                    --      Blizzard's own CDM. Mirrored every tick like the
+                    --      fill color; the file value passes through even when
+                    --      secret (truthy; SetTexture accepts secret values).
+                    --   2. Live aura data (frames without an icon region), so
+                    --      dynamic buffs (Roll the Bones) show the rolled buff.
+                    --   3. Effective config spell (override-resolved saved id).
+                    -- Every non-config write clears _lastIconSID so the config
+                    -- fallback can never skip its SetTexture against a stale
+                    -- cache and strand another source's icon on the bar.
                     if bar._icon and bar._icon:IsShown() then
                         local gotIcon = false
-                        if blzChild and blzChild.auraInstanceID and blzChild.auraDataUnit then
+                        if bar._cachedBlizzIconOwner ~= blzChild then
+                            local iconRegion = blzChild.Icon
+                            bar._cachedBlizzIconTex = (iconRegion and iconRegion.Icon) or false
+                            bar._cachedBlizzIconOwner = blzChild
+                        end
+                        local blzIconTex = bar._cachedBlizzIconTex
+                        if blzIconTex then
+                            local file = blzIconTex:GetTexture()
+                            if file then
+                                bar._icon._tex:SetTexture(file)
+                                bar._lastIconSID = nil
+                                gotIcon = true
+                            end
+                        end
+                        if not gotIcon and blzChild.auraInstanceID and blzChild.auraDataUnit then
                             local ok, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID,
                                 blzChild.auraDataUnit, blzChild.auraInstanceID)
                             if ok and ad and ad.icon then
                                 bar._icon._tex:SetTexture(ad.icon)
+                                bar._lastIconSID = nil
                                 gotIcon = true
                             end
                         end
                         if not gotIcon then
-                            local iconSID = cfg.spellID
-                            if iconSID and iconSID > 0 and iconSID ~= bar._lastIconSID then
+                            local iconSID = EffectiveIconSpellID(cfg)
+                            if iconSID and iconSID ~= bar._lastIconSID then
                                 local spInfo = C_Spell.GetSpellInfo(iconSID)
                                 if spInfo and spInfo.iconID then
                                     bar._icon._tex:SetTexture(spInfo.iconID)
@@ -3057,7 +3506,11 @@ function ns.UpdateTrackedBuffBarTimers()
                             sb:SetValue(remaining)
                         end
                         if cfg.showTimer and bar._timerText then
-                            bar._timerText:SetText(FormatTime(remaining))
+                            -- Engine-bound decimal mirror first (12.1); the
+                            -- clean local format is the fallback.
+                            if not MirrorEngineTimer(bar, cfg) then
+                                bar._timerText:SetText(FormatTime(remaining))
+                            end
                             bar._timerText:Show()
                         elseif bar._timerText then
                             bar._timerText:Hide()
@@ -3067,9 +3520,31 @@ function ns.UpdateTrackedBuffBarTimers()
                         -- full bar with no countdown.
                         sb:SetMinMaxValues(0, 1)
                         sb:SetValue(1)
-                        if bar._timerText then bar._timerText:Hide() end
+                        if bar._timerText then
+                            -- Engine-bound decimal mirror (12.1) can render the
+                            -- secret remaining time we cannot; otherwise no
+                            -- readable time -> no text.
+                            bar._timerText:SetShown(MirrorEngineTimer(bar, cfg))
+                        end
                     end
                     if cfg.showSpark and bar._spark then bar._spark:Show() end
+                end
+                -- Icon/name from the aura data itself. This branch fires
+                -- exactly when the frame mirror is unavailable, and for
+                -- override/variant spells the saved-form icon seeded at build
+                -- time can be the wrong form -- the live aura is the truth
+                -- here. The icon passes through even when secret (truthy;
+                -- SetTexture accepts secret values); the name only applies on
+                -- a clean read (font strings need a plain string).
+                if bar._icon and bar._icon:IsShown() and fbAura.icon then
+                    bar._icon._tex:SetTexture(fbAura.icon)
+                    bar._lastIconSID = nil
+                end
+                local fbName = fbAura.name
+                if bar._nameText and bar._nameText:IsShown() and fbName
+                   and not (isSec and isSec(fbName)) then
+                    bar._nameText:SetText(fbName)
+                    bar._nameSet = true
                 end
                 -- Keep the extras quiet in fallback mode: no Blizzard child to
                 -- read stacks/pandemic state from.
@@ -3080,6 +3555,9 @@ function ns.UpdateTrackedBuffBarTimers()
                 -- Inactive: clear transient state
                 bar._cachedBlizzFillTex = nil
                 bar._cachedOurFillTex = nil
+                bar._cachedBlizzIconTex = nil
+                bar._cachedBlizzIconOwner = nil
+                bar._lastIconSID = nil
                 if _anyPandemic and bar._pandemicGlowActive then ClearPandemic(bar) end
                 if bar._stacksText then bar._stacksText:Hide() end
                 bar._stackCount = 0
@@ -3226,7 +3704,11 @@ function ns.BuildTrackedBuffBars()
             if cfg.popularKey == "bloodlust" then anyLust = true end
             ApplyTrackedBuffBarSettings(bar, cfg)
 
-            -- Icon texture
+            -- Icon texture: preset icon, else the EFFECTIVE form of the saved
+            -- spell (override-resolved), not the raw saved id -- a bar saved
+            -- for a base form seeds the talented override's icon and vice
+            -- versa. The live tick re-derives from the bound frame/aura and
+            -- overwrites this seed whenever better data exists.
             if bar._icon and bar._icon._tex then
                 local iconID
                 if cfg.popularKey then
@@ -3234,11 +3716,20 @@ function ns.BuildTrackedBuffBars()
                         if pe.key == cfg.popularKey then iconID = pe.icon; break end
                     end
                 end
-                if not iconID and cfg.spellID and cfg.spellID > 0 then
-                    local spInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(cfg.spellID)
-                    if spInfo then iconID = spInfo.iconID end
+                if not iconID then
+                    local effSID = EffectiveIconSpellID(cfg)
+                    if effSID then
+                        local spInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(effSID)
+                        if spInfo then iconID = spInfo.iconID end
+                    end
                 end
                 if iconID then bar._icon._tex:SetTexture(iconID) end
+                -- Rebuilds can re-pair bar index <-> config (add/remove shifts
+                -- indices): reset per-bar icon source state so the next tick
+                -- re-derives from scratch instead of trusting stale caches.
+                bar._lastIconSID = nil
+                bar._cachedBlizzIconTex = nil
+                bar._cachedBlizzIconOwner = nil
             end
 
             -- Name text
@@ -3278,11 +3769,21 @@ function ns.BuildTrackedBuffBars()
                     bar:SetPoint("TOP", prevInGroup, "BOTTOM", 0, -spacing)
                 end
             else
-                -- Independent positioning (group anchors and ungrouped bars)
+                -- Independent positioning (group anchors and ungrouped bars).
+                -- A global group's anchor reads the shared registry position
+                -- and its anchored-ness through the group's stable TBBG_ key.
+                local gkeyPos = gid ~= 0 and ns.TBBGroupGlobalKey and ns.TBBGroupGlobalKey(gid) or nil
                 local posKey = tostring(i)
-                local pos = _tbbPos[posKey]
+                local pos, unlockKey
+                if gkeyPos then
+                    local entry = ns.TBBGlobalGroup(gkeyPos)
+                    pos = entry and entry.pos
+                    unlockKey = "TBBG_" .. gkeyPos
+                else
+                    pos = _tbbPos[posKey]
+                    unlockKey = "TBB_" .. posKey
+                end
                 if pos and pos.point then
-                    local unlockKey = "TBB_" .. posKey
                     local anchored = EllesmereUI.IsUnlockAnchored and EllesmereUI.IsUnlockAnchored(unlockKey)
                     if not anchored or not bar:GetLeft() then
                         bar:ClearAllPoints()
@@ -3290,8 +3791,11 @@ function ns.BuildTrackedBuffBars()
                         bar:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
                     end
                 else
-                    bar:ClearAllPoints()
-                    bar:SetPoint("CENTER", UIParent, "CENTER", 0, 200 - (i - 1) * ((cfg.height or 24) + 4))
+                    local anchored = EllesmereUI.IsUnlockAnchored and EllesmereUI.IsUnlockAnchored(unlockKey)
+                    if not anchored or not bar:GetLeft() then
+                        bar:ClearAllPoints()
+                        bar:SetPoint("CENTER", UIParent, "CENTER", 0, 200 - (i - 1) * ((cfg.height or 24) + 4))
+                    end
                 end
             end
 
@@ -3329,6 +3833,9 @@ function ns.BuildTrackedBuffBars()
 
     -- Unlock mode
     if ns.RegisterTBBUnlockElements then ns.RegisterTBBUnlockElements() end
+
+    -- 12.1 engine-driven decimal timer text (nil on 12.0: module self-gates)
+    if ns.TBBDecimals_Sync then ns.TBBDecimals_Sync() end
 end
 
 -------------------------------------------------------------------------------
@@ -3343,8 +3850,11 @@ function ns.RegisterTBBUnlockElements()
     -- Instead, just overwrite registrations. The isHidden callback handles
     -- hiding movers for bars that don't exist in the current spec.
     local tbb = ns.GetTrackedBuffBars()
-    local bars = tbb and tbb.bars
-    if not bars or #bars == 0 then return end
+    local bars = (tbb and tbb.bars) or {}
+
+    -- Membership / grow / spec may have changed: growth-edge extent watch
+    -- re-derives lazily on next use.
+    ns._tbbExtentWatch = nil
 
     -- Each group's anchor (first enabled member) owns that group's mover; the
     -- other members hide theirs. Computed per build so it tracks group edits.
@@ -3380,6 +3890,9 @@ function ns.RegisterTBBUnlockElements()
                     -- Independent bars always show their own mover.
                     local gid = ns.TBBBarGroupID(c)
                     if gid == 0 then return false end
+                    -- Global group: the stable TBBG_ mover owns the whole
+                    -- group -- every member's own mover hides, anchor included.
+                    if ns.TBBGroupGlobalKey and ns.TBBGroupGlobalKey(gid) then return true end
                     -- Grouped bars: only the group's anchor shows a mover (it
                     -- moves the whole group). Hide every other member -- enabled
                     -- OR disabled (a disabled member re-enables straight into the
@@ -3393,12 +3906,17 @@ function ns.RegisterTBBUnlockElements()
                 -- them -- otherwise a cascade/override SetPoint severs the chain
                 -- (e.g. in combat via a stale per-member anchor link). A group
                 -- ANCHOR returns false, so it stays fully element-anchorable.
+                -- Global-group members are ALL addon-owned (anchor included):
+                -- the anchor's position comes from the registry via
+                -- BuildTrackedBuffBars, and the TBBG_ element carries the
+                -- group's anchorable identity instead.
                 isAnchored = function()
                     local t = ns.GetTrackedBuffBars()
                     local b = t and t.bars
                     local c = b and b[idx]
                     local gid = c and ns.TBBBarGroupID(c) or 0
                     if gid == 0 then return false end
+                    if ns.TBBGroupGlobalKey and ns.TBBGroupGlobalKey(gid) then return true end
                     return idx ~= ns.TBBGroupAnchorIndex(gid)
                 end,
                 getFrame = function()
@@ -3501,8 +4019,127 @@ function ns.RegisterTBBUnlockElements()
         end
     end
 
+    -- Global groups: one stable mover per registry entry, registered even
+    -- when the active spec has no member bars (never unregister -- links
+    -- must survive; isHidden/getFrame nil keep empty groups inert). The
+    -- mover reads/writes the shared registry position, so one drag places
+    -- the group for every spec.
+    local reg = ns.GetTBBGlobalGroups and ns.GetTBBGlobalGroups()
+    if reg then
+        -- Alias map: the anchor bar's frame carries the move/resize hooks
+        -- under its per-bar TBB_ key; children anchored to the group's
+        -- stable TBBG_ key need those notifications too. Rebuilt each
+        -- registration pass (anchor index shifts on edits/deletes).
+        local aliases = EllesmereUI._unlockKeyAliases
+        if not aliases then
+            aliases = {}
+            EllesmereUI._unlockKeyAliases = aliases
+        end
+        for k, v in pairs(aliases) do
+            if type(v) == "string" and v:find("^TBBG_") then aliases[k] = nil end
+        end
+        for gkey, entry in pairs(reg) do
+            local gk = gkey
+            local lgid = ns.TBBLocalGidForGlobal(gk)
+            local anchorIdx = lgid and ns.TBBGroupAnchorIndex(lgid)
+            if anchorIdx then
+                aliases["TBB_" .. anchorIdx] = "TBBG_" .. gk
+            end
+            elements[#elements + 1] = MK({
+                key   = "TBBG_" .. gk,
+                label = EllesmereUI.Lf("Tracking Bars: %1$s", entry.name or gk),
+                group = "Cooldown Manager",
+                order = 651,
+                noResize = true,
+                allowMatchSource  = true,
+                noSizeMatchTarget = true,
+                isHidden = function()
+                    local gid = ns.TBBLocalGidForGlobal(gk)
+                    return not gid or not ns.TBBGroupAnchorIndex(gid)
+                end,
+                isAnchored = function() return false end,
+                getFrame = function()
+                    -- Nil when the active spec has no member bars: anchors
+                    -- involving this key stay dormant (or take their stored
+                    -- fallback) instead of gluing to a stale frame.
+                    local gid = ns.TBBLocalGidForGlobal(gk)
+                    local ai = gid and ns.TBBGroupAnchorIndex(gid)
+                    return ai and tbbFrames[ai] or nil
+                end,
+                getSize = function()
+                    local gid = ns.TBBLocalGidForGlobal(gk)
+                    local ai = gid and ns.TBBGroupAnchorIndex(gid)
+                    local t = ns.GetTrackedBuffBars()
+                    local c = ai and t.bars and t.bars[ai]
+                    local PPg = EllesmereUI and EllesmereUI.PP
+                    local sn = PPg and PPg.Snap or function(v) return v end
+                    if c then
+                        return sn(c.width or 270), sn(c.height or 24)
+                    end
+                    return 270, 24
+                end,
+                setWidth = function(_, w)
+                    local gid = ns.TBBLocalGidForGlobal(gk)
+                    local ai = gid and ns.TBBGroupAnchorIndex(gid)
+                    local t = ns.GetTrackedBuffBars()
+                    local c = ai and t.bars and t.bars[ai]
+                    if not c then return end
+                    local f = tbbFrames[ai]
+                    local PPt = EllesmereUI and EllesmereUI.PP
+                    w = PPt and PPt.Snap(w) or math.floor(w + 0.5)
+                    if EllesmereUI._unlockActive or EllesmereUI._propagatingMatch then
+                        c.width = w
+                        ns.PropagateTBBGroupSize(ai, "width", w)
+                    end
+                    if f then f:SetWidth(w) end
+                end,
+                setHeight = function(_, h)
+                    local gid = ns.TBBLocalGidForGlobal(gk)
+                    local ai = gid and ns.TBBGroupAnchorIndex(gid)
+                    local t = ns.GetTrackedBuffBars()
+                    local c = ai and t.bars and t.bars[ai]
+                    if not c then return end
+                    local f = tbbFrames[ai]
+                    local PPt = EllesmereUI and EllesmereUI.PP
+                    h = PPt and PPt.Snap(h) or math.floor(h + 0.5)
+                    if EllesmereUI._unlockActive or EllesmereUI._propagatingMatch then
+                        c.height = h
+                        ns.PropagateTBBGroupSize(ai, "height", h)
+                    end
+                    if f then f:SetHeight(h) end
+                end,
+                savePos = function(_, point, relPoint, x, y)
+                    local e = ns.TBBGlobalGroup(gk)
+                    if not e then return end
+                    e.pos = { point = point, relPoint = relPoint, x = x, y = y }
+                    if not EllesmereUI._unlockActive then
+                        ns.BuildTrackedBuffBars()
+                    end
+                end,
+                loadPos = function()
+                    local e = ns.TBBGlobalGroup(gk)
+                    return e and e.pos
+                end,
+                clearPos = function()
+                    local e = ns.TBBGlobalGroup(gk)
+                    if e then e.pos = nil end
+                end,
+                applyPos = function()
+                    ns.BuildTrackedBuffBars()
+                end,
+            })
+        end
+    end
+
     if #elements > 0 then
         EllesmereUI:RegisterUnlockElements(elements, "EllesmereUICooldownManager")
+    end
+
+    -- Fallback anchors: bars/groups may have appeared or vanished for this
+    -- spec -- let opted-in children re-evaluate (no-op when nobody opted in,
+    -- or before the unlock module has loaded).
+    if EllesmereUI.NotifyFallbackTargetsChanged then
+        EllesmereUI.NotifyFallbackTargetsChanged()
     end
 end
 _G._ECME_RegisterTBBUnlock = ns.RegisterTBBUnlockElements

@@ -1065,15 +1065,43 @@ function ns.ResolveCustomActiveKey(frameKey)
     return frameKey
 end
 
+-- EFFECTIVE Custom Active State for an icon identity token -- READ paths only.
+-- Non-trinket tokens resolve their own entry directly. Trinket SLOTS (-13/-14)
+-- resolve the EQUIPPED item's own entry (per-trinket settings, the key the
+-- per-spell menu writes via ResolveCustomActiveKey) chained per-key over the
+-- SLOT entry -- the "Apply to Bar" stamp, slot-keyed so ONE bar application
+-- covers whatever trinket is equipped, without minting an entry per item.
+-- The chain is re-asserted lazily on every resolve (metatables never
+-- serialize), mirroring ResolveSpellSettings. An explicit false own value is
+-- render-equivalent to nil but BLOCKS the slot value showing through (the
+-- per-trinket "None" exclusion); nil-off consumers are all falsy-safe, and
+-- cdStateEffect consumers normalize false to nil explicitly.
+function ns.GetEffectiveCustomActiveState(frameKey)
+    local store = ns.GetCustomActiveStates()
+    if not store then return nil end
+    if frameKey == -13 or frameKey == -14 then
+        local slotE = store[frameKey]
+        local itemID = GetInventoryItemID("player", -frameKey)
+        local itemE = itemID and store[-itemID] or nil
+        if itemE then
+            ns.ChainSettings(itemE, slotE)
+            return itemE
+        end
+        return slotE
+    end
+    return store[frameKey]
+end
+
 -- Does this icon have a custom Cooldown State Effect (preset cd-state)? Used by
 -- the appearance refresh so it doesn't clear a preset's _cdStateHidden flag --
 -- presets store cdState in customActiveStates, not per-bar spellSettings.
 function ns.PresetHasCdState(frame)
     local fc = ns._ecmeFC and ns._ecmeFC[frame]
     if not fc or not fc.spellID then return false end
-    local key = ns.ResolveCustomActiveKey(fc.spellID)
-    local cas = ns.GetCustomActiveState(key)
-    return (cas and cas.cdStateEffect ~= nil) or false
+    local cas = ns.GetEffectiveCustomActiveState(fc.spellID)
+    local eff = cas and cas.cdStateEffect
+    if eff == false then eff = nil end  -- blocking-false = no effect
+    return eff ~= nil
 end
 
 -- Max Stacks Glow gate: set ns._cdmAnyMaxStacksGlow once if any saved spell (any
@@ -1269,6 +1297,36 @@ function ns.RescanReverseSwipeFlag()
             if e then
                 if e.reverseSwipe then ns._cdmAnyReverseSwipe = true end
                 if e.hideCDSwipe then ns._cdmAnyHideCDSwipe = true end
+            end
+        end
+    end
+end
+
+-- Threshold Text gate: set ns._cdmAnyThresholdText once if any saved spell (any
+-- spec) has Threshold Seconds armed -- per-spell family stores, bar tiers, or
+-- preset/custom customActiveStates entries. The formatter attach in
+-- RefreshCDMIconAppearance (and the fake-active / custom-buff attach sites) is
+-- skipped entirely for anyone who never uses the feature. Monotonic,
+-- scanned-once contract identical to the flags above (the options setters flip
+-- the flag live on enable).
+function ns.RescanThresholdTextFlag()
+    if ns._cdmAnyThresholdText or ns._thresholdTextFlagScanned then return end
+    if not EllesmereUIDB then return end
+    ns._thresholdTextFlagScanned = true
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if (tonumber(ss.thresholdSeconds) or 0) > 0 then
+            ns._cdmAnyThresholdText = true
+            return true
+        end
+    end)
+    if not ns._cdmAnyThresholdText then
+        local cas = ns.GetCustomActiveStates and ns.GetCustomActiveStates()
+        if cas then
+            for _, e in pairs(cas) do
+                if type(e) == "table" and (tonumber(e.thresholdSeconds) or 0) > 0 then
+                    ns._cdmAnyThresholdText = true
+                    break
+                end
             end
         end
     end
@@ -4215,6 +4273,17 @@ LayoutCDMBar = function(barKey)
     if not skipResize then
         local oldW = frame:GetWidth() or 0
         local oldH = frame:GetHeight() or 0
+        -- Pre-resize center in UIParent space, captured BEFORE SetSize (an
+        -- edge-pointed frame moves its center when resized). The anchor offset
+        -- upkeep below validates against it.
+        local oldCX, oldCY
+        do
+            local c1, c2 = frame:GetCenter()
+            if c1 and c2 then
+                local r = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                oldCX, oldCY = c1 * r, c2 * r
+            end
+        end
         EllesmereUI._layoutBarResizing = unlockKey
         pcall(frame.SetSize, frame, totalW, totalH)
         EllesmereUI._layoutBarResizing = nil
@@ -4223,6 +4292,16 @@ LayoutCDMBar = function(barKey)
         -- Adjust the center-based anchor offset so the relationship stays
         -- consistent on /reload.
         -- This is NOT a position write (positions are only saved by Save & Exit).
+        -- Self-validating gate: the compensation is only correct when the bar's
+        -- PRE-resize center actually sat at the anchor-derived position (target
+        -- center + stored offset on the compensated axis). During a profile
+        -- apply the bar still holds the OUTGOING profile's position while
+        -- unlockAnchors already carries the INCOMING profile's offsets;
+        -- compensating that mismatch corrupts the offsets cumulatively on every
+        -- swap. Layout passes can land before, inside, or after any suppression
+        -- window, so the position check is the only ordering-proof guard. A
+        -- falsely-skipped legit compensation (bar momentarily off its anchor)
+        -- costs at most a one-time dw/2 nudge corrected by the next reapply.
         local grow = barData.growDirection
         if grow and grow ~= "CENTER"
            and not EllesmereUI._unlockActive
@@ -4234,9 +4313,26 @@ LayoutCDMBar = function(barKey)
                 local side = ai.side
                 local PPo = EllesmereUI and EllesmereUI.PP
                 local uiES = PPo and UIParent:GetEffectiveScale()
+                local tCX, tCY
+                if EllesmereUI.GetAnchorTargetCenterUI then
+                    tCX, tCY = EllesmereUI.GetAnchorTargetCenterUI(unlockKey)
+                end
+                local TOL = 2  -- UI px; pixel-snap noise stays well under 1
+                -- Width/height-matched bars: the match owns that axis, so the
+                -- bar's size never legitimately self-changes there. Any resize
+                -- on a matched axis is the match (re)asserting the target's
+                -- size -- the saved offset already corresponds to it, and
+                -- compensating corrupts the offset (profile swap: the late
+                -- width-match apply resizes the bar AT its correct anchor spot
+                -- from the outgoing profile's width, dw/2 per swap).
+                local wMatched = EllesmereUIDB.unlockWidthMatch and EllesmereUIDB.unlockWidthMatch[unlockKey]
+                local hMatched = EllesmereUIDB.unlockHeightMatch and EllesmereUIDB.unlockHeightMatch[unlockKey]
                 -- Horizontal growth (LEFT/RIGHT): adjust offsetX on TOP/BOTTOM anchors
                 local dw = totalW - oldW
-                if math.abs(dw) > 0.1 and (side == "TOP" or side == "BOTTOM") then
+                if math.abs(dw) > 0.1 and (side == "TOP" or side == "BOTTOM")
+                   and not wMatched
+                   and oldCX and tCX
+                   and math.abs(oldCX - (tCX + (ai.offsetX or 0))) <= TOL then
                     if grow == "RIGHT" then
                         ai.offsetX = ai.offsetX + dw / 2
                     elseif grow == "LEFT" then
@@ -4246,7 +4342,10 @@ LayoutCDMBar = function(barKey)
                 end
                 -- Vertical growth (UP/DOWN): adjust offsetY on LEFT/RIGHT anchors
                 local dh = totalH - oldH
-                if math.abs(dh) > 0.1 and (side == "LEFT" or side == "RIGHT") then
+                if math.abs(dh) > 0.1 and (side == "LEFT" or side == "RIGHT")
+                   and not hMatched
+                   and oldCY and tCY
+                   and math.abs(oldCY - (tCY + (ai.offsetY or 0))) <= TOL then
                     if grow == "DOWN" then
                         ai.offsetY = ai.offsetY - dh / 2
                     elseif grow == "UP" then
@@ -4725,146 +4824,144 @@ function ns.StyleOverlayCooldownText(oCd, barData, ssb, iconScale)
     end
 end
 
--- "Custom Active State Decimals": style OUR OWN countdown FontString on a
--- fake-active overlay to match the icon's Duration Text (Blizzard's cooldown
--- numbers can't render a 1-decimal countdown). Mirrors StyleOverlayCooldownText's
--- font/size/colour/position resolution. Returns true when Duration Text is on for
--- this icon (so the caller knows whether to show the text at all).
-function ns.StyleOverlayDecimalText(fs, barData, ssb, iconScale)
-    if not fs then return false end
-    iconScale = iconScale or 1
-    if iconScale < 0.01 then iconScale = 1 end
-    local fontScale = 1 / iconScale
-    local showCD = barData and barData.showCooldownText
-    if ssb and ssb.showCooldownText ~= nil then showCD = ssb.showCooldownText end
-    if not showCD then return false end
-    local cdFont = GetCDMFont()
-    local cdSize = ((ssb and ssb.cooldownFontSize) or (barData and barData.cooldownFontSize) or 12) * fontScale
-    local cdR = (ssb and ssb.cooldownTextR) or (barData and barData.cooldownTextR) or 1
-    local cdG = (ssb and ssb.cooldownTextG) or (barData and barData.cooldownTextG) or 1
-    local cdB = (ssb and ssb.cooldownTextB) or (barData and barData.cooldownTextB) or 1
-    local cdX = (ssb and ssb.cooldownTextX) or (barData and barData.cooldownTextX) or 0
-    local cdY = (ssb and ssb.cooldownTextY) or (barData and barData.cooldownTextY) or 0
-    EllesmereUI.ApplyIconTextFont(fs, cdFont, cdSize, "cdm")
-    fs:SetTextColor(cdR, cdG, cdB)
-    fs:ClearAllPoints()
-    fs:SetPoint("CENTER", fs:GetParent(), "CENTER", cdX, cdY)
-    return true
-end
-
 -------------------------------------------------------------------------------
---  Shared decimal countdown ("Custom Active State Decimals")
+--  Per-spell Threshold Text (engine countdown formatters)
 --
---  Renders a HARDCODED-duration cooldown's remaining time on OUR OWN FontString
---  with a 1-decimal format under a threshold (Blizzard's cooldown numbers can't).
---  ONLY for durations we control -- fake-active windows (cd/utility active states)
---  and custom-buff cast timers (buff bars) -- so the remaining time is exact and
---  the threshold crossing is reliable. Off by default = no entries = the ticker
---  never runs (zero cost). Keyed by the Cooldown widget so each icon has one.
+--  "Threshold Seconds" arms the feature per spell; below that many seconds
+--  remaining the countdown can show one decimal ("2.7") and/or change color.
+--  Rendering is a NumericRuleFormatter attached to the icon's Cooldown widget
+--  via SetCountdownFormatter: the ENGINE formats the number (no OnUpdate, no
+--  per-tick Lua), it covers whatever the widget displays (cooldown, recharge,
+--  aura duration, fake-active window), and it evaluates engine-side, so secret
+--  durations format fine. The color change rides IN the format string (color
+--  escape wrap), so no text-color swapping happens at the threshold edge.
+--  Formatters are immutable per config and shared: one instance per distinct
+--  (seconds, decimals, color) tuple, attached to any number of cooldowns.
 -------------------------------------------------------------------------------
 do
-    local DC = {}
-    ns.DecimalCountdown = DC
-    local entries = {}   -- [cd] = { fs = FontString, expiry = t, threshold = n }
-    local ticker
+    local formatters = {}       -- [signature] = engine formatter object
+    local formatterCount = 0
+    local unsupported = false   -- API probe failed once -> feature stays inert
+    -- Which formatter a cooldown currently has attached, so the refresh pass
+    -- only touches widgets it actually manages (the all-off common case is one
+    -- weak-table read). Weak keys: pooled frames drop out on their own. State
+    -- lives here, never on the frames (many are Blizzard-owned).
+    local attached = setmetatable({}, { __mode = "k" })
 
-    local function EnsureTicker()
-        if not ticker then
-            ticker = CreateFrame("Frame")
-            ticker:Hide()
-            ticker._acc = 0
-            ticker:SetScript("OnUpdate", function(self, elapsed)
-                self._acc = self._acc + elapsed
-                if self._acc < 0.1 then return end
-                self._acc = 0
-                local now = GetTime()
-                local any = false
-                for _, e in pairs(entries) do
-                    local rem = e.expiry - now
-                    if rem <= 0 then
-                        e.fs:SetText("")
-                    else
-                        any = true
-                        local thr = e.threshold or 5
-                        -- The decimal "zone": the final seconds where 1-decimal
-                        -- shows. The optional colour change fires on the SAME edge.
-                        local inZone = rem < thr
-                        if rem >= 60 then
-                            e.fs:SetText(("%d:%02d"):format(math.floor(rem / 60), math.floor(rem % 60)))
-                        elseif inZone then
-                            e.fs:SetText(("%.1f"):format(rem))
-                        else
-                            e.fs:SetText(("%d"):format(math.ceil(rem)))
-                        end
-                        if e.colorOn then
-                            if inZone then
-                                e.fs:SetTextColor(e.cR, e.cG, e.cB)
-                            else
-                                e.fs:SetTextColor(e.nR, e.nG, e.nB)
-                            end
-                        end
-                    end
-                end
-                if not any then self:Hide() end
-            end)
+    local function BuildFormatter(seconds, dec, col, r, g, b)
+        if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter
+            and Enum.NumericRuleFormatRounding) then
+            return nil
         end
-        ticker:Show()
+        local Up = Enum.NumericRuleFormatRounding.Up
+        local Nearest = Enum.NumericRuleFormatRounding.Nearest
+        local function Wrap(fmt)
+            if not col then return fmt end
+            return CreateColor(r, g, b, 1):WrapTextInColorCode(fmt)
+        end
+        local points = {}
+        if dec then
+            -- One decimal below the threshold, whole seconds above it.
+            points[#points + 1] = { threshold = 0, format = Wrap("%.1f"), rounding = Nearest }
+        else
+            -- Color-only: same whole-second text, wrapped below the threshold.
+            points[#points + 1] = { threshold = 0, format = Wrap("%d"), rounding = Up, step = 1 }
+        end
+        points[#points + 1] = { threshold = seconds, format = "%d", rounding = Up, step = 1 }
+        -- Larger units. Thresholds sit just above the unit boundary so an
+        -- UP-rounded value in (59, 60] routes into the m:ss breakpoint instead
+        -- of reading "60" for a moment (same for hours and days).
+        points[#points + 1] = {
+            threshold = 59.0001, format = "%d:%02d", rounding = Up, step = 1,
+            components = { { div = 60 }, { mod = 60 } },
+        }
+        points[#points + 1] = {
+            threshold = 3599.0001, format = "%dh", rounding = Up, step = 1,
+            components = { { div = 3600 } },
+        }
+        points[#points + 1] = {
+            threshold = 86399.0001, format = "%dd", rounding = Up, step = 1,
+            components = { { div = 86400 } },
+        }
+        local f = C_StringUtil.CreateNumericRuleFormatter()
+        local ok = pcall(f.SetBreakpoints, f, points)
+        if not ok then return nil end
+        return f
     end
 
-    -- Attach to a Cooldown widget for a [start, start+dur] window. styleFn(fs)
-    -- styles the text (font/size/colour/position). Hides Blizzard's numbers.
-    -- colorOpts (optional) = { on, r, g, b }: recolour the text to r,g,b while in
-    -- the decimal zone (same edge the decimals start), restoring the styled colour
-    -- above it.
-    function DC.Attach(cd, start, dur, threshold, styleFn, colorOpts)
-        if not cd then return end
-        local e = entries[cd]
-        if not e then
-            e = { fs = cd:CreateFontString(nil, "OVERLAY") }
-            entries[cd] = e
+    -- Resolve a settings block's threshold config to a shared formatter, or nil
+    -- when the feature is off for it. ss may be a per-spell family entry
+    -- (tier-chained), a customActiveStates entry, or nil. Explicit false values
+    -- (tier blocking) read as off through the tonumber/== true checks.
+    local function FormatterFor(ss)
+        if not ss then return nil end
+        local seconds = tonumber(ss.thresholdSeconds) or 0
+        if seconds <= 0 then return nil end
+        if seconds > 59 then seconds = 59 end
+        local dec = ss.thresholdDecimals == true
+        local col = ss.thresholdColorEnabled == true
+        if not (dec or col) then return nil end
+        local r, g, b = 1, 0.2, 0.2
+        if col then
+            r = ss.thresholdColorR or 1
+            g = ss.thresholdColorG or 0.2
+            b = ss.thresholdColorB or 0.2
         end
-        if styleFn then styleFn(e.fs) end
-        -- Capture the styled ("normal") colour so the ticker can restore it above
-        -- the threshold (styleFn set it, e.g. the icon's Duration Text colour).
-        e.nR, e.nG, e.nB = e.fs:GetTextColor()
-        if colorOpts and colorOpts.on then
-            e.colorOn = true
-            e.cR = colorOpts.r or 1
-            e.cG = colorOpts.g or 0.2
-            e.cB = colorOpts.b or 0.2
-        else
-            e.colorOn = false
-        end
-        e.expiry = (start or GetTime()) + (dur or 0)
-        e.threshold = threshold or 5
-        -- Apply the in-zone colour right now so a re-attach mid-zone (e.g. a buff
-        -- reanchor) doesn't flash the normal colour for one tick.
-        if e.colorOn then
-            local rem = e.expiry - GetTime()
-            if rem > 0 and rem < e.threshold then
-                e.fs:SetTextColor(e.cR, e.cG, e.cB)
+        local sig = string.format("%d|%s|%s", seconds, dec and "1" or "0",
+            col and string.format("%.3f,%.3f,%.3f", r, g, b) or "0")
+        local f = formatters[sig]
+        if f == nil and not unsupported then
+            -- Live color-picker drags mint a config per tick; cap the lookup so
+            -- a long picker session can't grow it unbounded. Attached widgets
+            -- keep their instances alive; evicted configs rebuild on demand.
+            if formatterCount > 64 then
+                formatters = {}
+                formatterCount = 0
+            end
+            f = BuildFormatter(seconds, dec, col, r, g, b)
+            if f then
+                formatters[sig] = f
+                formatterCount = formatterCount + 1
+            else
+                unsupported = true
             end
         end
-        cd:SetHideCountdownNumbers(true)
-        e.fs:Show()
-        EnsureTicker()
+        return f
     end
 
-    -- Remove our text. Acts ONLY if this cd was actually attached (so the common
-    -- faDecimals-off case never touches a countdown we never managed). Restores
-    -- Blizzard's numbers we hid on Attach -- shown unless the caller says Duration
-    -- Text is off (showNumbers == false).
-    function DC.Detach(cd, showNumbers)
-        local e = cd and entries[cd]
-        if not e then return end
-        e.fs:Hide()
-        entries[cd] = nil
-        -- Restore Blizzard's numbers only when the caller asks (showNumbers non-nil).
-        -- Callers that re-style the numbers themselves each pass (fake-active ->
-        -- StyleOverlayCooldownText) pass nothing and leave them alone.
-        if showNumbers ~= nil and cd.SetHideCountdownNumbers then
-            cd:SetHideCountdownNumbers(showNumbers == false)
+    -- Attach or clear the resolved formatter on one Cooldown widget. Only
+    -- touches the widget when its managed state changes, and never touches a
+    -- widget it never managed.
+    function ns.ApplyThresholdFormatter(cd, ss)
+        if not (cd and cd.SetCountdownFormatter) then return end
+        local f = FormatterFor(ss)
+        if f then
+            if attached[cd] ~= f then
+                attached[cd] = f
+                cd:SetCountdownFormatter(f)
+            end
+        elseif attached[cd] then
+            attached[cd] = nil
+            cd:SetCountdownFormatter(nil)
         end
+    end
+
+    -- Effective threshold config for a frame's spell: the per-spell family
+    -- store (tier-chained) first, then the preset/custom customActiveStates
+    -- entry -- the same two homes Reverse Swipe reads. Returns the block that
+    -- arms the feature, or nil.
+    function ns.ResolveThresholdTextSettings(frame, sid, sd, barKey)
+        if not sid then return nil end
+        local ss
+        if ns.ResolveSpellSettings then
+            ss = ns.ResolveSpellSettings(frame, sid, sd, barKey)
+        end
+        if ss and (tonumber(ss.thresholdSeconds) or 0) > 0 then return ss end
+        if ns.GetEffectiveCustomActiveState then
+            local cas = ns.GetEffectiveCustomActiveState(sid)
+            if cas and (tonumber(cas.thresholdSeconds) or 0) > 0 then return cas end
+        end
+        return nil
     end
 end
 
@@ -4874,6 +4971,39 @@ end
 -- (UpdateAllCDMBars tick loop removed -- replaced by event-driven hooks)
 
 -- Refresh visual properties of existing icons (called when settings change)
+-- Styles the custom-spell "Show Charges" count text (created lazily by the
+-- CdmHooks ticker) to match the bar's native stack/charge text: same font,
+-- size, color, anchor position and X/Y offset. Called at creation time and
+-- from every RefreshCDMIconAppearance pass so option changes apply live.
+-- With no bar data the defaults resolve to the historical hardcoded look
+-- (size 11, bottom-right, +2 nudge).
+function ns.StyleCustomChargeText(icon, barKey)
+    local fs = icon and icon._castCountText
+    if not fs then return end
+    local barData = (barKey and barDataByKey[barKey]) or {}
+    -- Fonts render at the frame's native scale; compensate like the main pass.
+    local iconScale = icon:GetScale() or 1
+    if iconScale < 0.01 then iconScale = 1 end
+    local scSize = (barData.stackCountSize or 11) / iconScale
+    local scX = barData.stackCountX or 0
+    local scY = barData.stackCountY or 0
+    local scPoint = barData.stackCountPosition or "bottomright"
+    if scPoint == "bottomleft" then scPoint = "BOTTOMLEFT"; scY = scY + 2
+    elseif scPoint == "topright" then scPoint = "TOPRIGHT"
+    elseif scPoint == "topleft" then scPoint = "TOPLEFT"
+    elseif scPoint == "center" then scPoint = "CENTER"
+    else scPoint = "BOTTOMRIGHT"; scY = scY + 2 end
+    SetBlizzCDMFont(fs, GetCDMFont(), scSize,
+        barData.stackCountR or 1, barData.stackCountG or 1, barData.stackCountB or 1)
+    -- Parent onto the text overlay so it renders above the border, like the
+    -- item count text does.
+    local fd = _getFD(icon)
+    local txOverlay = (fd and fd.textOverlay) or icon._textOverlay
+    if txOverlay then fs:SetParent(txOverlay) end
+    fs:ClearAllPoints()
+    fs:SetPoint(scPoint, txOverlay or icon, scPoint, scX, scY)
+end
+
 local function RefreshCDMIconAppearance(barKey)
     local icons = cdmBarIcons[barKey]
     if not icons then return end
@@ -5031,10 +5161,10 @@ local function RefreshCDMIconAppearance(barKey)
                         local rfSs = ns.ResolveSpellSettings(icon, rfSid, ns.GetBarSpellData(barKey))
                         rev = rfSs and rfSs.reverseSwipe
                     end
-                    -- Preset / custom cd-utility spell setting (profile customActiveStates).
-                    if not rev and ns.GetCustomActiveState then
-                        local casKey = (ns.ResolveCustomActiveKey and ns.ResolveCustomActiveKey(rfSid)) or rfSid
-                        local cas = ns.GetCustomActiveState(casKey)
+                    -- Preset / custom cd-utility spell setting (profile customActiveStates;
+                    -- trinket slots resolve item-over-slot via the effective view).
+                    if not rev and ns.GetEffectiveCustomActiveState then
+                        local cas = ns.GetEffectiveCustomActiveState(rfSid)
                         rev = cas and cas.reverseSwipe
                     end
                     if rev then rfReverse = not rfBuff end
@@ -5059,9 +5189,8 @@ local function RefreshCDMIconAppearance(barKey)
                             local hsSs = ns.ResolveSpellSettings(icon, hsSid, ns.GetBarSpellData(barKey))
                             hideSw = hsSs and hsSs.hideCDSwipe
                         end
-                        if not hideSw and ns.GetCustomActiveState then
-                            local casKey = (ns.ResolveCustomActiveKey and ns.ResolveCustomActiveKey(hsSid)) or hsSid
-                            local casH = ns.GetCustomActiveState(casKey)
+                        if not hideSw and ns.GetEffectiveCustomActiveState then
+                            local casH = ns.GetEffectiveCustomActiveState(hsSid)
                             hideSw = casH and casH.hideCDSwipe
                         end
                     end
@@ -5070,6 +5199,21 @@ local function RefreshCDMIconAppearance(barKey)
                     cd:SetDrawSwipe(not hideSw)
                     if fd then fd._isProcessingOverride = false end
                 end
+            end
+            -- Per-spell Threshold Text: attach the engine countdown formatter
+            -- that renders decimals / a color change below the spell's Threshold
+            -- Seconds. Gated by the session flag, so zero cost / zero behavior
+            -- change unless at least one spell arms it. Resolution order matches
+            -- Reverse Swipe above: family store (variant-aware via the frame)
+            -- first, then the preset/custom customActiveStates entry.
+            if ns._cdmAnyThresholdText and ns.ApplyThresholdFormatter then
+                local ttFc = _ecmeFC[icon]
+                local ttSid = ttFc and ttFc.spellID
+                local tt
+                if ttSid and ns.ResolveThresholdTextSettings then
+                    tt = ns.ResolveThresholdTextSettings(icon, ttSid, ns.GetBarSpellData(barKey), barKey)
+                end
+                ns.ApplyThresholdFormatter(cd, tt)
             end
             -- Per-spell "Hide CD Text (Charges)" can additionally hide the recharge
             -- numbers while a charge is in hand; the font block below still styles
@@ -5167,6 +5311,11 @@ local function RefreshCDMIconAppearance(barKey)
             icon._itemCountText:ClearAllPoints()
             icon._itemCountText:SetPoint(scPoint, txOverlay or icon, scPoint, scX, scY)
             if showItemCount then icon._itemCountText:Show() else icon._itemCountText:Hide() end
+        end
+        -- Custom-spell "Show Charges" count text (our own lazy fontstring from
+        -- the CdmHooks ticker) follows the same stack/charge text settings.
+        if icon._castCountText then
+            ns.StyleCustomChargeText(icon, barKey)
         end
 
         -- Update keybind text style
@@ -6563,6 +6712,7 @@ BuildAllCDMBars = function()
     ns.RescanCustomItemFlag()     -- set the custom-item buff-injection gate (once)
     ns.RescanCustomForceCountFlag() -- set the "Show Charges" custom-spell gate (once)
     ns.RescanReverseSwipeFlag()   -- set the Reverse Swipe gate (once) before refresh
+    ns.RescanThresholdTextFlag()  -- set the Threshold Text gate (once) before refresh
 
     local p = ECME.db.profile
 

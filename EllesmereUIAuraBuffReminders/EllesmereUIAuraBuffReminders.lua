@@ -341,6 +341,10 @@ local function SnapshotPlayerAuras()
     end
     -- Also snapshot non-whitelisted auras (e.g. Devotion Aura) that become
     -- secret when a party member enters combat before the local player does.
+    -- 12.1: the index scan hard-errors under aura restrictions (M+/raid,
+    -- even out of combat); the whitelisted lookups above still work and the
+    -- extras are simply skipped there.
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return end
     for i = 1, AURA_SCAN_LIMIT do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then break end
@@ -383,6 +387,8 @@ function _AC.ensureNames()
     _AC.nameScanned = true
     wipe(_AC.byName)
     if InCombat() then return end
+    -- 12.1: index scans hard-error under restrictions even out of combat.
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return end
     for i = 1, AURA_SCAN_LIMIT do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then break end
@@ -444,8 +450,13 @@ local function PlayerHasAuraByID(spellIDs)
             -- secret values, but non-nil means the aura exists)
             local ok, result = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
             if ok and result ~= nil then
-                if IsUnderDuration(result.duration, result.expirationTime) then
-                    return false
+                -- 12.1: fields can be secret in restricted content even OOC;
+                -- math on secrets errors, so presence alone counts then.
+                local dur, exp = result.duration, result.expirationTime
+                if dur ~= nil and exp ~= nil and not isSecret(dur) and not isSecret(exp) then
+                    if IsUnderDuration(dur, exp) then
+                        return false
+                    end
                 end
                 return true
             end
@@ -469,6 +480,11 @@ local function GetStanceState(stanceSpellID)
     end
     return false, false
 end
+
+-- 12.1: aura restrictions apply in M+/raids even OUT of combat, and index
+-- scans HARD-ERROR there (not just secret results). Every "OOC only" scan
+-- also checks EllesmereUI.AuraKit.AurasRestricted() inline (no file-scope
+-- helper: this chunk sits at the Lua 5.1 200-local cap).
 
 -- Shared helpers for group aura scanning (hoisted to avoid per-call closure allocation)
 local function _unitOk(u) return UnitExists(u) and UnitIsConnected(u) and not UnitIsDeadOrGhost(u) end
@@ -501,9 +517,11 @@ local function _unitHasBuff(u, spellIDs)
             end
         end
     end
-    -- Iterate auras for non-whitelisted IDs (only works out of combat)
+    -- Iterate auras for non-whitelisted IDs (only works out of combat AND
+    -- outside restricted content -- the scan errors under restriction)
     -- Skip iteration for player (GetPlayerAuraBySpellID above covers all IDs)
-    if not inCombat and not UnitIsUnit(u, "player") then
+    if not inCombat and not UnitIsUnit(u, "player")
+        and not (EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted()) then
         for i = 1, AURA_SCAN_LIMIT do
             local aura = C_UnitAuras.GetAuraDataByIndex(u, i, "HELPFUL")
             if not aura then break end
@@ -541,7 +559,7 @@ local function _unitHasBuffFromPlayer(u, spellIDs)
                 end
             end
         end
-        if not inCombat then
+        if not inCombat and not (EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted()) then
             for i = 1, AURA_SCAN_LIMIT do
                 local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
                 if not aura then break end
@@ -577,6 +595,8 @@ local function _unitHasBuffFromPlayer(u, spellIDs)
         end
     end
     if not needScan then return false end
+    -- Scan errors under restriction; skip (caller falls back to snapshot).
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return false end
     -- Fallback: full scan for non-whitelisted IDs only
     for i = 1, AURA_SCAN_LIMIT do
         local aura = C_UnitAuras.GetAuraDataByIndex(u, i, "HELPFUL")
@@ -1124,6 +1144,10 @@ local INKY_BLACK_BUFF = 185394  -- "Inky Blackness" buff (icon 136122); detected
 --  Helpers: Well Fed / Flask buff detection (by name, not spell ID secret)
 -------------------------------------------------------------------------------
 local function PlayerHasBuffByName(buffName)
+    -- 12.1: name scans are impossible under aura restrictions (the index
+    -- API errors; names are secret anyway). Cannot verify -> treat as
+    -- present so the reminder never false-fires in restricted content.
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return true end
     if _AC.valid then
         _AC.ensureNames()
         return _AC.byName[buffName] or false
@@ -1141,6 +1165,8 @@ local function PlayerHasWellFed()
     if InCombat() then return true end  -- never show food reminder in combat
     if InMythicPlusKey() then return true end  -- can't act on it during M+, suppress
     if InPvPInstance() then return true end  -- food not trackable in PvP, suppress
+    -- 12.1: any other restricted content (raid instances OOC) -- suppress.
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return true end
     for i = 1, AURA_SCAN_LIMIT do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then break end
@@ -1159,6 +1185,9 @@ local function PlayerHasFlaskBuff()
     -- Aura API is restricted in PvP and M+ keystones; suppress since player can't act on it.
     if InPvPInstance() then return true end
     if InMythicPlusKey() then return true end
+    -- 12.1: any other restricted content -- the name fallback below cannot
+    -- populate there, so suppress instead of false-reminding.
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return true end
     -- Direct ID lookup for known flask buff IDs (zero allocation)
     for id in pairs(FLASK_BUFF_ID_SET) do
         local ok, result = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
@@ -1184,6 +1213,7 @@ local function PlayerHasInkyBlackness()
     -- can't be read there and the player can't act on it mid-key (mirrors flask/food).
     if InPvPInstance() then return true end
     if InMythicPlusKey() then return true end
+    if EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted() then return true end
     for i = 1, AURA_SCAN_LIMIT do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then break end
@@ -3875,6 +3905,31 @@ mainFrame:RegisterEvent("PET_BAR_UPDATE")
 do
     local warnFrame, warnFS, warnTimer, warnCurve
 
+    -- Helpers hang on EABR, NOT block locals: this file's main chunk sits at
+    -- Lua 5.1's 200-local cap, so new file-scope locals here fail to load.
+    -- Settings slice = db.profile.consumables (options: "Ready Check Mana
+    -- Warning" row), fetched inline per helper for the same reason.
+
+    -- Default ON: the warning predates its toggle, so a missing key = enabled.
+    function EABR.RCWEnabled()
+        local p = db and db.profile
+        local c = p and p.consumables
+        return not c or c.rcManaWarn ~= false
+    end
+
+    -- Custom swatch color, or the brightened mana color (the original look).
+    function EABR.RCWColor()
+        local p = db and db.profile
+        local c = p and p.consumables
+        local col = c and c.rcManaWarnColor
+        if col and col.r then return col.r, col.g, col.b end
+        local mc = EllesmereUI.GetPowerColor and EllesmereUI.GetPowerColor("MANA")
+        if mc then
+            return math.min(mc.r * 1.5, 1), math.min(mc.g * 1.5, 1), math.min(mc.b * 1.5, 1)
+        end
+        return 0, 0.825, 1
+    end
+
     local function HideWarning()
         if warnFrame then
             if warnFrame._breathe then warnFrame._breathe:Stop() end
@@ -3883,21 +3938,51 @@ do
         if warnTimer then warnTimer:Cancel(); warnTimer = nil end
     end
 
+    -- Push position/size/color settings onto the built frame. The color curve
+    -- is rebuilt here because its colors are baked in at AddPoint time; an
+    -- already-visible warning/preview is re-tinted so edits show live.
+    function EABR.RCWApplySettings()
+        if not warnFrame then return end
+        local p = db and db.profile
+        local c = p and p.consumables
+        warnFrame:ClearAllPoints()
+        warnFrame:SetPoint("CENTER", UIParent, "CENTER",
+            (c and c.rcManaWarnX) or 0, 75 + ((c and c.rcManaWarnY) or 0))
+        local font = ResolveFontPath()
+        local outline = GetABROutline()
+        if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(warnFS, outline == "" and GetABRUseShadow()) end
+        warnFS:SetFont(font, (c and c.rcManaWarnSize) or 48, outline)
+        -- Explicit white instance color. This string is tinted purely via
+        -- SetVertexColor (curve result), and with no instance color set the
+        -- string inherits the primed shadow FontObject's color -- which
+        -- resolves BLACK on 12.0.7, rendering the warning black. White base
+        -- restores the pre-12.0.7 default so the vertex tint shows true.
+        warnFS:SetTextColor(1, 1, 1, 1)
+        local r, g, b = EABR.RCWColor()
+        -- Curve: alpha 1 at/below 80%, alpha 0 above.
+        -- The curve colors the FontString directly via SetVertexColor,
+        -- using alpha to control visibility -- no secret value reads.
+        if C_CurveUtil and C_CurveUtil.CreateColorCurve then
+            warnCurve = C_CurveUtil.CreateColorCurve()
+            warnCurve:AddPoint(0.0,    CreateColor(r, g, b, 1))
+            warnCurve:AddPoint(0.80,   CreateColor(r, g, b, 1))
+            warnCurve:AddPoint(0.8001, CreateColor(r, g, b, 0))
+            warnCurve:AddPoint(1.0,    CreateColor(r, g, b, 0))
+        end
+        if warnFrame:IsShown() then
+            warnFS:SetVertexColor(r, g, b, 1)
+        end
+    end
+
     local function BuildWarnFrame()
         if warnFrame then return end
         warnFrame = CreateFrame("Frame", nil, UIParent)
         warnFrame:SetSize(600, 60)
-        warnFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 75)
         warnFrame:SetFrameStrata("FULLSCREEN")
         warnFrame:SetFrameLevel(100)
         warnFrame:Hide()
         warnFS = warnFrame:CreateFontString(nil, "OVERLAY")
-        local font = ResolveFontPath()
-        local outline = GetABROutline()
-        if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(warnFS, outline == "" and GetABRUseShadow()) end
-        warnFS:SetFont(font, 48, outline)
         warnFS:SetPoint("CENTER")
-        warnFS:SetText("LOW MANA")
         -- Breathe animation: fade between 60% and 100% alpha
         local ag = warnFrame:CreateAnimationGroup()
         local fadeOut = ag:CreateAnimation("Alpha")
@@ -3914,20 +3999,8 @@ do
         fadeIn:SetSmoothing("IN_OUT")
         ag:SetLooping("REPEAT")
         warnFrame._breathe = ag
-        -- Curve: alpha 1 at/below 80%, alpha 0 above.
-        -- The curve colors the FontString directly via SetVertexColor,
-        -- using alpha to control visibility -- no secret value reads.
-        if C_CurveUtil and C_CurveUtil.CreateColorCurve then
-            warnCurve = C_CurveUtil.CreateColorCurve()
-            local mc = EllesmereUI.GetPowerColor("MANA")
-            local r = math.min(mc.r * 1.5, 1)
-            local g = math.min(mc.g * 1.5, 1)
-            local b = math.min(mc.b * 1.5, 1)
-            warnCurve:AddPoint(0.0,    CreateColor(r, g, b, 1))
-            warnCurve:AddPoint(0.80,   CreateColor(r, g, b, 1))
-            warnCurve:AddPoint(0.8001, CreateColor(r, g, b, 0))
-            warnCurve:AddPoint(1.0,    CreateColor(r, g, b, 0))
-        end
+        EABR.RCWApplySettings()
+        warnFS:SetText("LOW MANA")
     end
 
     -- Only listen for READY_CHECK when out of combat AND in a raid.
@@ -3937,7 +4010,7 @@ do
     local _inRaid = false
 
     local function UpdateReadyCheckRegistration()
-        local shouldListen = _inRaid and not InCombatLockdown()
+        local shouldListen = _inRaid and not InCombatLockdown() and EABR.RCWEnabled()
         if shouldListen then
             rcFrame:RegisterEvent("READY_CHECK")
         else
@@ -3963,12 +4036,14 @@ do
             return
         end
         -- READY_CHECK (only fires when out of combat AND in raid)
+        if not EABR.RCWEnabled() then return end
         local spec = GetSpecialization and GetSpecialization()
         if not spec then return end
         local role = GetSpecializationRole(spec)
         if role ~= "HEALER" then return end
         if not UnitPowerPercent then return end
         BuildWarnFrame()
+        EABR.RCWApplySettings()
         if not warnCurve then return end
         -- Let WoW's C side evaluate mana % against the curve.
         -- Result: mana color at full alpha if below 80%, zero alpha if above.
@@ -3983,5 +4058,26 @@ do
         if warnTimer then warnTimer:Cancel() end
         warnTimer = C_Timer.NewTimer(10, HideWarning)
     end)
+
+    -- Options hooks (Consumables -> Ready Check Mana Warning row).
+    _G._EABR_RCWarnApply = function()
+        BuildWarnFrame()
+        EABR.RCWApplySettings()
+    end
+    -- Preview bypasses the curve: it must be visible at any mana level, so it
+    -- tints with the plain configured color (readable constants, no secrets).
+    _G._EABR_RCWarnPreview = function()
+        BuildWarnFrame()
+        EABR.RCWApplySettings()
+        if warnTimer then warnTimer:Cancel(); warnTimer = nil end
+        local r, g, b = EABR.RCWColor()
+        warnFS:SetVertexColor(r, g, b, 1)
+        warnFrame:Show()
+        if warnFrame._breathe and not warnFrame._breathe:IsPlaying() then
+            warnFrame._breathe:Play()
+        end
+    end
+    _G._EABR_RCWarnHidePreview = HideWarning
+    _G._EABR_RCWarnUpdateReg = UpdateReadyCheckRegistration
 end
 

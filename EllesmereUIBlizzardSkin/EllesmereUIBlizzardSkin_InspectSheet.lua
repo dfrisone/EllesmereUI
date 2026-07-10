@@ -660,7 +660,8 @@ local function SkinInspectSheet()
 
             -- Crop icon
             if slot.icon then
-                slot.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                local z = (EllesmereUIDB and EllesmereUIDB.charSheetIconZoom) or 0.07
+                slot.icon:SetTexCoord(z, 1 - z, z, 1 - z)
             end
 
             local normalTexture = _G[slotName .. "NormalTexture"]

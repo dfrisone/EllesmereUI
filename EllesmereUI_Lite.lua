@@ -8,6 +8,11 @@ local ADDON_NAME, ns = ...
 
 local EUILite = {}
 EllesmereUI = EllesmereUI or {}
+-- TEMPORARY 12.1 compatibility flag. At 12.1 launch the live build reports
+-- 120100+, this flips true automatically, and a post-launch cleanup pass
+-- deletes the legacy branches and this flag. Documented exception to the
+-- CLAUDE.md "no version branches" rule for the dual-client window.
+EllesmereUI.IS_121 = (select(4, GetBuildInfo()) or 0) >= 120100
 EllesmereUI.Lite = EUILite
 
 -- Lua APIs

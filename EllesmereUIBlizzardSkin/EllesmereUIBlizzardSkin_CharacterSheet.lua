@@ -665,7 +665,8 @@ local function PreSkinCharacterSheet()
             end
             local iconTexture = _G[slotName .. "IconTexture"]
             if iconTexture then
-                iconTexture:SetTexCoord(.07,.07,.07,.93,.93,.07,.93,.93)
+                local z = (EllesmereUIDB and EllesmereUIDB.charSheetIconZoom) or 0.07
+                iconTexture:SetTexCoord(z, z, z, 1 - z, 1 - z, z, 1 - z, 1 - z)
             end
             local normalTexture = _G[slotName .. "NormalTexture"]
             if normalTexture then
@@ -2657,7 +2658,8 @@ local function SkinCharacterSheet()
 
         -- Crop icon inward
         if slot.icon then
-            slot.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+            local z = (EllesmereUIDB and EllesmereUIDB.charSheetIconZoom) or 0.07
+            slot.icon:SetTexCoord(z, 1 - z, z, 1 - z)
         end
 
         -- Hide NormalTexture
@@ -5035,6 +5037,21 @@ function EllesmereUI._refreshCharacterSheetColors()
             if stat.value then
                 stat.value:SetTextColor(newColor.r, newColor.g, newColor.b, 1)
             end
+        end
+    end
+end
+
+-- Re-apply the equipment-icon crop when the Icon Zoom option changes. The
+-- texcoord persists across item swaps, so only slider changes need this.
+function EllesmereUI._refreshCharSheetIconZoom()
+    -- Only the themed sheet crops its slot icons; if it is off the slots show
+    -- Blizzard's default icons, which we must not re-crop.
+    if EllesmereUIDB and EllesmereUIDB.themedCharacterSheet == false then return end
+    local z = (EllesmereUIDB and EllesmereUIDB.charSheetIconZoom) or 0.07
+    for _, slotName in ipairs(EUI_ALL_SLOTS) do
+        local slot = _G[slotName]
+        if slot and slot.icon then
+            slot.icon:SetTexCoord(z, 1 - z, z, 1 - z)
         end
     end
 end
