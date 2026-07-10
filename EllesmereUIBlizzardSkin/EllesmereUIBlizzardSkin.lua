@@ -179,7 +179,7 @@ end
     -- Mount-name cache. Short TTL: mount state changes often, but this only
     -- needs to survive a single hover's refresh ticks so an unmounted player
     -- is scanned once, not once per tick. name = false means "scanned, none".
-    local _mountCache = {}      -- guid -> { name = string|false, time = GetTime() }
+    local _mountCache = {}      -- guid -> { name = string|false, collected = bool|nil, time = GetTime() }
     local _mountCacheTTL = 3
     local _inspectPendingGUID = nil
     local _userInspectUntil = 0
@@ -204,6 +204,10 @@ end
         return false
     end
 
+    -- Returns the mount name shown on a unit and whether the LOCAL player has
+    -- that mount collected (true/false, or nil when unknown -- e.g. the name
+    -- could only be read from the aura, not MountJournal). Collection state is
+    -- the 11th return of GetMountInfoByID, which is per-character.
     local function _getMountedAuraName(unit)
         if not unit or (_isSecret and _isSecret(unit)) then return nil end
         if not UnitExists(unit) or not UnitIsPlayer(unit) then return nil end
@@ -217,11 +221,13 @@ end
             if spellID and not (_isSecret and _isSecret(spellID)) then
                 local mountID = C_MountJournal.GetMountFromSpell(spellID)
                 if mountID and not (_isSecret and _isSecret(mountID)) and mountID > 0 then
-                    local name
+                    local name, collected
                     if C_MountJournal.GetMountInfoByID then
-                        local mountName = C_MountJournal.GetMountInfoByID(mountID)
+                        local mountName, _, _, _, _, _, _, _, _, _, isCollected =
+                            C_MountJournal.GetMountInfoByID(mountID)
                         if mountName and not (_isSecret and _isSecret(mountName)) then
                             name = mountName
+                            if type(isCollected) == "boolean" then collected = isCollected end
                         end
                     end
                     if not name then
@@ -230,7 +236,7 @@ end
                             name = auraName
                         end
                     end
-                    if name and name ~= "" then return name end
+                    if name and name ~= "" then return name, collected end
                 end
             end
         end
@@ -457,16 +463,27 @@ end
         -- Opt-in (default off). Per-GUID cached so refresh ticks on an
         -- unmounted player never re-walk the whole aura list.
         if unit and guid and db and db.tooltipShowMount and not _tipHasLine(tt, "Mount:") then
-            local mountName
+            local mountName, mountCollected
             local cached = _mountCache[guid]
             if cached and (GetTime() - cached.time) < _mountCacheTTL then
                 mountName = cached.name
+                mountCollected = cached.collected
             else
-                mountName = _getMountedAuraName(unit) or false
-                _mountCache[guid] = { name = mountName, time = GetTime() }
+                local nm, col = _getMountedAuraName(unit)
+                mountName = nm or false
+                mountCollected = col
+                _mountCache[guid] = { name = mountName, collected = mountCollected, time = GetTime() }
             end
             if mountName then
-                tt:AddDoubleLine("Mount:", mountName, 1, 1, 1, 1, 1, 1)
+                -- Append a green check / red X for whether YOU own this mount
+                -- (nil = unknown, so no marker), like TipTac's collected flag.
+                local valText = mountName
+                if mountCollected == true then
+                    valText = mountName .. " |TInterface\\RaidFrame\\ReadyCheck-Ready:0|t"
+                elseif mountCollected == false then
+                    valText = mountName .. " |TInterface\\RaidFrame\\ReadyCheck-NotReady:0|t"
+                end
+                tt:AddDoubleLine("Mount:", valText, 1, 1, 1, 1, 1, 1)
             end
         end
         -- Item Level. Cache is keyed strictly by the authoritative GUID so a

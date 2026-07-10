@@ -298,6 +298,7 @@ initFrame:SetScript("OnEvent", function(self)
                           EllesmereUIDB.tooltipMythicScore = v
                       end },
                     { type="toggle", label="Show Mount",
+                      tooltip="Adds the mount a player is riding to their tooltip, with a green check if you own it or a red X if you don't.",
                       disabled=ttReskinOff, disabledTooltip="Reskin Tooltip",
                       get=function()
                           return EllesmereUIDB and EllesmereUIDB.tooltipShowMount or false
