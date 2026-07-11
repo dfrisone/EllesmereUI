@@ -4611,6 +4611,76 @@ function EAB:ApplyFonts()
     self:ApplyCooldownFonts()
 end
 
+-- Blizzard's ActionBarActionButtonMixin resets HotKey's color on native
+-- refreshes -- UpdateHotkeys() (target change, combat enter/exit), Update()/
+-- UpdateAction() (dragging a new spell onto a slot changes what's assigned
+-- without touching the keybind, so UpdateHotkeys alone never fired for that
+-- case), and UpdateUsable() (fires on target change too -- specifically
+-- recolors the hotkey text WHITE when a spell becomes usable again, which is
+-- what caused custom colors to revert on target-select even for abilities
+-- untouched by the other three). ApplyFontsForBar only set our custom color
+-- once, so it visibly reverted to Blizzard's default the next time any of
+-- these ran, only "returning" whenever something else in this addon happened
+-- to call ApplyFontsForBar again (e.g. combat ending). Re-apply after all
+-- four so the custom color always wins regardless of which refresh path
+-- fired; SetTextColor is cheap enough that hooking all four costs nothing
+-- even on Update's hot path.
+do
+    local function ReapplyHotkeyColor(self)
+        local hk = self.HotKey
+        if not hk then return end
+        local barKey = EFD(self).barKey
+        local s = barKey and EAB.db and EAB.db.profile.bars[barKey]
+        if not s then return end
+        local kbColor = s.keybindFontColor or { r = 1, g = 1, b = 1 }
+        hk:SetTextColor(kbColor.r, kbColor.g, kbColor.b)
+    end
+    if ActionBarActionButtonMixin then
+        if ActionBarActionButtonMixin.UpdateHotkeys then
+            hooksecurefunc(ActionBarActionButtonMixin, "UpdateHotkeys", ReapplyHotkeyColor)
+        end
+        if ActionBarActionButtonMixin.Update then
+            hooksecurefunc(ActionBarActionButtonMixin, "Update", ReapplyHotkeyColor)
+        end
+        if ActionBarActionButtonMixin.UpdateAction then
+            hooksecurefunc(ActionBarActionButtonMixin, "UpdateAction", ReapplyHotkeyColor)
+        end
+        if ActionBarActionButtonMixin.UpdateUsable then
+            hooksecurefunc(ActionBarActionButtonMixin, "UpdateUsable", ReapplyHotkeyColor)
+        end
+    end
+
+    -- Backstop: some buttons stay persistently white (observed on specific
+    -- slots, out of combat, unrelated to any discrete trigger above) --
+    -- something keeps re-touching HotKey color on a per-frame or otherwise
+    -- untraceable cadence that no single hooked function/event reliably
+    -- catches. Rather than keep chasing individual Blizzard internals,
+    -- enforce the configured color on a lightweight poll: cheap (a color
+    -- comparison + conditional SetTextColor per button) and guarantees
+    -- eventual correctness regardless of what's resetting it. The hooks
+    -- above still handle the common cases immediately (no visible flash);
+    -- this only has to correct whatever they miss, within one tick.
+    local function EnforceHotkeyColors()
+        for barKey, buttons in pairs(barButtons) do
+            local s = EAB.db and EAB.db.profile.bars[barKey]
+            if s and buttons then
+                local kbColor = s.keybindFontColor or { r = 1, g = 1, b = 1 }
+                for i = 1, #buttons do
+                    local btn = buttons[i]
+                    local hk = btn and btn.HotKey
+                    if hk then
+                        local r, g, b = hk:GetTextColor()
+                        if r ~= kbColor.r or g ~= kbColor.g or b ~= kbColor.b then
+                            hk:SetTextColor(kbColor.r, kbColor.g, kbColor.b)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    C_Timer.NewTicker(0.2, EnforceHotkeyColors)
+end
+
 -------------------------------------------------------------------------------
 --  Cooldown Countdown Font Override
 -------------------------------------------------------------------------------
@@ -9230,6 +9300,11 @@ function EAB:FinishSetup()
         C_Timer.After(0, function()
             ImmediateSoftTargetCheck()
             self:UpdateHousingVisibility()
+            -- Blizzard's own usable-state recheck on target change recolors
+            -- HotKey text back to white for now-castable abilities, undoing
+            -- the custom keybind color -- the ActionBarActionButtonMixin
+            -- hooks alone don't fully cover this. Re-apply here too.
+            self:ApplyFonts()
         end)
     end)
     self:RegisterEvent("PLAYER_SOFT_INTERACT_CHANGED", function()
@@ -9385,10 +9460,33 @@ function EAB:FinishSetup()
         end)
     end)
 
-    -- Slot changed: update visibility when a spell is placed/removed from a slot.
-    -- This can fire per-slot (12+ times during a bar page swap), so use the
-    -- shared debounced visibility queue.
-    self:RegisterEvent("ACTIONBAR_SLOT_CHANGED", QueueAlwaysShowButtonsRefresh)
+    -- Dragging a spell onto/between slots resets HotKey's color (observed:
+    -- the ActionBarActionButtonMixin hooks above don't cover this specific
+    -- drag interaction, so the custom keybind color reverts to white and
+    -- stays that way until something else re-triggers ApplyFontsForBar).
+    -- Debounced independently of the visibility queue below -- the visibility
+    -- queue early-returns while _gridState.shown (mid-drag), which is exactly
+    -- when this needs to run, so it can't share that function's early-out.
+    local _hotkeyColorPending = false
+    local function QueueHotkeyColorRefresh()
+        if _hotkeyColorPending then return end
+        _hotkeyColorPending = true
+        C_Timer_After(0, function()
+            _hotkeyColorPending = false
+            self:ApplyFonts()
+        end)
+    end
+
+    -- Slot changed: update visibility when a spell is placed/removed from a
+    -- slot, and re-apply the custom hotkey color reset by the drag itself.
+    -- Slot changes can fire per-slot (12+ times during a bar page swap), so
+    -- both queues are debounced. EAB:RegisterEvent only keeps one handler
+    -- per event name, so both calls are combined into a single registration
+    -- here rather than registering ACTIONBAR_SLOT_CHANGED twice.
+    self:RegisterEvent("ACTIONBAR_SLOT_CHANGED", function()
+        QueueAlwaysShowButtonsRefresh()
+        QueueHotkeyColorRefresh()
+    end)
 
     -- Pet bar: re-layout and refresh visibility when the pet's action bar
     -- changes. PET_BAR_UPDATE covers ability changes; PET_UI_UPDATE covers
