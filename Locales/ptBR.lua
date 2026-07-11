@@ -131,3 +131,7 @@ L["Quest Tracker"]     = "Rastreador de missões"
 L["Minimap"]           = "Minimapa"
 L["Chat"]              = true
 L["Damage Meters"]     = "Medidor de dano"
+L["Colon (5:32)"] = "Dois-pontos (5:32)"
+L["Duration Format"] = "Formato de duração"
+L["Seconds (152)"] = "Segundos (152)"
+L["Standard (5m / 32)"] = "Padrão curto (5m / 32)"

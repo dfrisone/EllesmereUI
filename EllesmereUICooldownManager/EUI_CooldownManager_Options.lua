@@ -1983,7 +1983,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if sb then sb:SetFrameLevel(base + 1) end
                 if wrap._sparkOverlay and sb then wrap._sparkOverlay:SetFrameLevel(sb:GetFrameLevel() + 2) end
                 if wrap._textOverlay and sb then wrap._textOverlay:SetFrameLevel(sb:GetFrameLevel() + 6) end
-                if wrap._pandemicGlowOverlay then wrap._pandemicGlowOverlay:SetFrameLevel(base + 6) end
+                if wrap._pandemicGlowOverlay then wrap._pandemicGlowOverlay:SetFrameLevel(base + 7) end
                 _tbbPopoutBars[n] = wrap
             end
             ns.ApplyTBBBarSettings(wrap, e.cfg)
@@ -13624,66 +13624,31 @@ initFrame:SetScript("OnEvent", function(self)
             local trackedCd
             pf._buffDispGroups = nil
             if bd.key == "buffs" then
-                -- Build exclusion set: spells claimed by other buff bars OR hosted
-                -- on a CD/utility bar. A buff moved to either place is diverted off
-                -- the default buffs bar live (the route map), so its preview must
-                -- leave the default too -- otherwise it would show on both previews.
-                local diverted = {}
-                local pp = DB()
-                if pp and pp.cdmBars and pp.cdmBars.bars then
-                    for _, otherBd in ipairs(pp.cdmBars.bars) do
-                        if otherBd.enabled and otherBd.key ~= "buffs" then
-                            local otherSd = ns.GetBarSpellData(otherBd.key)
-                            if otherBd.barType == "buffs" or otherBd.barType == "custom_buff" then
-                                if otherSd and otherSd.assignedSpells then
-                                    for _, sid in ipairs(otherSd.assignedSpells) do
-                                        if type(sid) == "number" and sid > 0 then
-                                            diverted[sid] = true
-                                        end
-                                    end
-                                end
-                            elseif otherSd and otherSd.hostedBuffSpellIDs then
-                                -- CD/utility bar hosting buffs (variant-keyed set).
-                                for sid in pairs(otherSd.hostedBuffSpellIDs) do
-                                    if type(sid) == "number" and sid > 0 then
-                                        diverted[sid] = true
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-                -- Enumerate all buff viewer pool spells (active + inactive)
-                local entries = ns.EnumerateCDMViewerSpells
-                    and ns.EnumerateCDMViewerSpells(true) or {}
+                if ns.ReconcileBuffDisplayOrder then ns.ReconcileBuffDisplayOrder() end
+                local entries = ns.CollectDefaultBuffTrackEntries
+                    and ns.CollectDefaultBuffTrackEntries() or {}
                 tracked = {}
                 trackedCd = {}
-                for _, e in ipairs(entries) do
-                    if not diverted[e.sid] then
+                local sdBuf = ns.GetBarSpellData("buffs")
+                local order = sdBuf and sdBuf.buffDisplayOrder
+                local byKey = {}
+                for _, e in ipairs(entries) do byKey[e.key] = e end
+                local finalKeys = {}
+                if order and #order > 0 then
+                    for _, key in ipairs(order) do finalKeys[#finalKeys + 1] = key end
+                else
+                    for _, e in ipairs(entries) do finalKeys[#finalKeys + 1] = e.key end
+                end
+                for _, key in ipairs(finalKeys) do
+                    local e = byKey[key]
+                    if e then
                         tracked[#tracked + 1] = e.sid
                         trackedCd[#tracked] = e.cdID
                     end
                 end
-                -- Also include this bar's own custom/preset buffs (cast-timer
-                -- injected) -- they aren't in the Blizzard viewer enumeration.
-                local sdSelf = ns.GetBarSpellData(bd.key)
-                if sdSelf and sdSelf.assignedSpells and sdSelf.spellDurations then
-                    for _, sid in ipairs(sdSelf.assignedSpells) do
-                        if type(sid) == "number" and sid > 0
-                           and (sdSelf.spellDurations[sid] or 0) > 0 then
-                            tracked[#tracked + 1] = sid
-                        end
-                    end
-                end
-                -- Also include this bar's custom item IDs (negative -itemID
-                -- markers) so they preview alongside buffs.
-                if sdSelf and sdSelf.assignedSpells then
-                    for _, sid in ipairs(sdSelf.assignedSpells) do
-                        if type(sid) == "number" and sid <= -100 then
-                            tracked[#tracked + 1] = sid
-                        end
-                    end
-                end
+                local snap = {}
+                for i = 1, #finalKeys do snap[i] = finalKeys[i] end
+                pf._buffTrackedOrder = snap
             else
                 local sdUpd = EnsureAssignedSpells(bd.key)
                 local raw = sdUpd and sdUpd.assignedSpells or {}
@@ -13694,67 +13659,6 @@ initFrame:SetScript("OnEvent", function(self)
                 else
                     tracked = raw
                 end
-            end
-            -- Default buffs bar: apply the persisted display order. Order lives in
-            -- a dedicated buffDisplayOrder array of STABLE keys ("c"..cooldownID /
-            -- "s"..spellID) decoupled from routing. Only active once the user has
-            -- reordered -- until then buffDisplayOrder is nil and the bar keeps
-            -- Blizzard's natural order. Reconcile each build: keep stored order for
-            -- keys still tracked, append newly-tracked keys, drop keys no longer
-            -- present. Then stash the rendered order so the first drag can seed
-            -- buffDisplayOrder from exactly what the user sees.
-            if bd.key == "buffs" then
-                local sdBuf = ns.GetBarSpellData("buffs")
-                local order = sdBuf and sdBuf.buffDisplayOrder
-                -- Drop the pre-stable-key format (raw spellID numbers) so it
-                -- re-seeds cleanly into "c"..cooldownID / "s"..spellID keys.
-                if order and type(order[1]) == "number" then
-                    sdBuf.buffDisplayOrder = nil
-                    order = nil
-                end
-                -- Map each preview slot to a STABLE key (cooldownID for Blizzard
-                -- buffs, spellID for customs) and remember its sid/cd so we can
-                -- rebuild the rendered arrays after reordering. cooldownID is stable
-                -- across active/inactive; the canonical spellID is not.
-                local present, keyByIdx = {}, {}
-                for k = 1, #tracked do
-                    local sid, cd = tracked[k], trackedCd[k]
-                    local key = (cd ~= nil) and ("c" .. cd) or ("s" .. sid)
-                    keyByIdx[k] = key
-                    if present[key] == nil then present[key] = { sid = sid, cd = cd } end
-                end
-                local finalKeys
-                if order and #order > 0 then
-                    local newOrder, seen = {}, {}
-                    for _, key in ipairs(order) do
-                        if present[key] ~= nil and not seen[key] then
-                            seen[key] = true
-                            newOrder[#newOrder + 1] = key
-                        end
-                    end
-                    for k = 1, #tracked do
-                        local key = keyByIdx[k]
-                        if not seen[key] then
-                            seen[key] = true
-                            newOrder[#newOrder + 1] = key
-                        end
-                    end
-                    sdBuf.buffDisplayOrder = newOrder
-                    local nt, ntc = {}, {}
-                    for i = 1, #newOrder do
-                        local e = present[newOrder[i]]
-                        nt[i] = e.sid
-                        ntc[i] = e.cd
-                    end
-                    tracked, trackedCd = nt, ntc
-                    finalKeys = newOrder
-                else
-                    finalKeys = keyByIdx
-                end
-                -- Stash the rendered order (stable keys) for the first-drag seed.
-                local snap = {}
-                for i = 1, #finalKeys do snap[i] = finalKeys[i] end
-                pf._buffTrackedOrder = snap
             end
             -- Tracked-but-unlearned spells (assigned or materialized) render
             -- desaturated so it's obvious they aren't currently talented.
@@ -14199,10 +14103,17 @@ initFrame:SetScript("OnEvent", function(self)
                     fkFS:SetJustifyH("CENTER")
                     fkFS:SetWordWrap(true)
                     fkFS:SetTextColor(1, 1, 1, 1)
-                    fkFS:SetText(EllesmereUI.L("This bar will always be attached to your focus target's nameplate"))
                     self._focusKickInfoText = fkFS
                 end
                 local fkFS = self._focusKickInfoText
+                -- Wording must track the "Show on Target" toggle -- otherwise this
+                -- text keeps promising focus-tracking even when the bar is
+                -- configured to follow the current target instead.
+                if bd.focusKickUseTarget then
+                    fkFS:SetText(EllesmereUI.L("This bar will always be attached to your current target's nameplate"))
+                else
+                    fkFS:SetText(EllesmereUI.L("This bar will always be attached to your focus target's nameplate"))
+                end
                 fkFS:ClearAllPoints()
                 fkFS:SetPoint("TOP", self, "TOPLEFT", self:GetWidth() / 2, -(totalH + 14))
                 fkFS:SetWidth(self:GetWidth() - 20)

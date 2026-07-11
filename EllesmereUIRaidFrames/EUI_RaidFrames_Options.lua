@@ -3943,6 +3943,16 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return CurTooltipMode() end,
               setValue=function(v) SSet("tooltipMode", v) end });  y = y - h
 
+        -- Buff/HoT aura-icon tooltips (Buff Manager). Off by default -- matches the
+        -- long-standing behavior where buff icons showed no tooltip; opt in here.
+        -- When shown, the aura tip still follows the "Show Raid Frames Tooltip"
+        -- combat-visibility mode above (mode governs when, this governs whether).
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Hide Buff Tooltips",
+              tooltip="Hide the tooltip when hovering a buff/HoT icon on a raid or party frame.",
+              getValue=function() return SVal("buffHideTooltips", true) end,
+              setValue=function(v) SSet("buffHideTooltips", v); if ns.ReloadFrames then ns.ReloadFrames() end end });  y = y - h
+
         -- Hide Blizzard Party Panel. Shares the exact same global setting and
         -- apply function as the QoL module's toggle (EllesmereUIDB.hideBlizzardPartyFrame
         -- -> EllesmereUI._applyHideBlizzardPartyFrame); the QoL toggle is disabled

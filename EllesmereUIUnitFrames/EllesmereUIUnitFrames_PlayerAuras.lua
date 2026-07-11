@@ -17,6 +17,33 @@ local function PA()
     return db and db.profile and db.profile.playerAuras
 end
 
+local function FormatCompactDuration(timeLeft, style)
+    if timeLeft >= 86400 then
+        return string.format("%dd", math.floor(timeLeft / 86400 + 0.5))
+    end
+    if style == "colon" then
+        if timeLeft >= 3600 then
+            return string.format("%d:%02d",
+                math.floor(timeLeft / 3600),
+                math.floor((timeLeft % 3600) / 60))
+        end
+        if timeLeft >= 60 then
+            return string.format("%d:%02d", math.floor(timeLeft / 60), math.floor(timeLeft % 60))
+        end
+        return string.format("%d", math.floor(timeLeft + 0.5))
+    end
+    if timeLeft >= 3600 then
+        return string.format("%dh", math.floor(timeLeft / 3600 + 0.5))
+    end
+    if style == "seconds" then
+        return string.format("%d", math.floor(timeLeft + 0.5))
+    end
+    if timeLeft >= 60 then
+        return string.format("%dm", math.floor(timeLeft / 60 + 0.5))
+    end
+    return string.format("%d", math.floor(timeLeft + 0.5))
+end
+
 -------------------------------------------------------------------------------
 --  Per-button skinning
 -------------------------------------------------------------------------------
@@ -76,6 +103,21 @@ local function SkinAuraButton(btn, isDebuff)
             if r and r.SetFont then durFS = r; break end
         end
     end
+    if durFS and durFS.SetFont and not ffd._paDurHooked
+        and type(btn.UpdateDuration) == "function" then
+        ffd._paDurHooked = true
+        local fs = durFS
+        hooksecurefunc(btn, "UpdateDuration", function(_, timeLeft)
+            local pa = PA()
+            local style = pa and pa.durationFormat
+            if not style or style == "blizzard" then return end
+            if type(timeLeft) ~= "number" then return end
+            if issecretvalue and issecretvalue(timeLeft) then return end
+            if timeLeft <= 0 then return end
+            fs:SetText(FormatCompactDuration(timeLeft, style))
+        end)
+    end
+
     if durFS and durFS.SetFont then
         if cfg.showText then
             local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("unitFrames") or STANDARD_TEXT_FONT

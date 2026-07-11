@@ -4351,7 +4351,9 @@ function EllesmereUI.GetSoulFragments()
         -- In Void Metamorphosis (1217607): stacks come from Silence the
         -- Whispers (1227702) and max is 40. Outside meta: stacks come
         -- from Dark Heart (1225789) and max is 50 (or 35 with Soul
-        -- Glutton talent 1247534).
+        -- Glutton talent 1247534). Surrender to the Void (PvP talent
+        -- 1261423) requires 50 additional souls to enter Metamorphosis,
+        -- on top of whichever base/Soul-Glutton value applies.
         local inMeta = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(1217607)
         local aura, max
         if inMeta then
@@ -4360,6 +4362,9 @@ function EllesmereUI.GetSoulFragments()
         else
             aura = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(1225789)
             max = (C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(1247534)) and 35 or 50
+            if C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(1261423) then
+                max = max + 50
+            end
         end
         return (aura and aura.applications or 0), max
     end

@@ -8367,7 +8367,7 @@ local function CreateMover(barKey)
                 lbl:SetTextColor(0.75, 0.75, 0.75, 0.9)
                 lbl:SetJustifyH("LEFT")
                 lbl:SetPoint("LEFT", rowFrame, "LEFT", 10, 0)
-                lbl:SetText(axis)
+                lbl:SetText((EllesmereUI and EllesmereUI.L and EllesmereUI.L(axis)) or axis)
 
                 local box = CreateFrame("EditBox", nil, rowFrame)
                 box:SetSize(INPUT_W, INPUT_H)

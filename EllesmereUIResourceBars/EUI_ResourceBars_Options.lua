@@ -3308,6 +3308,48 @@ initFrame:SetScript("OnEvent", function(self)
             UpdateCogDisGrad()
         end
 
+        -- Out of Combat Opacity: inline cog on the Opacity slider. Dims the Health
+        -- bar to this alpha while out of combat (100 = no fade). Applied via
+        -- ns.ResolveBarAlpha in UpdateVisibility; reacts to combat.
+        do
+            local rgn = healthBorderRow._leftRegion
+            local _, oocCogShow = EllesmereUI.BuildCogPopup({
+                title = "Out of Combat Opacity",
+                rows = {
+                    { type = "toggle", label = "Fade Out of Combat",
+                      get = function() local c = cfg(); return c and c.oocFadeEnabled == true end,
+                      set = function(v)
+                          local c = cfg(); if not c then return end
+                          c.oocFadeEnabled = v; RefreshHealth()
+                      end },
+                    { type = "slider", label = "Opacity",
+                      min = 0, max = 100, step = 1,
+                      disabled = function() local c = cfg(); return not (c and c.oocFadeEnabled) end,
+                      get = function() local c = cfg(); return math.floor(((c and c.oocAlpha) or 0.5) * 100 + 0.5) end,
+                      set = function(v)
+                          local c = cfg(); if not c then return end
+                          c.oocAlpha = v / 100; RefreshHealth()
+                      end },
+                },
+            })
+            local oocCog = MakeCogBtn(rgn, oocCogShow)
+            local oocCogDis = CreateFrame("Frame", nil, rgn)
+            oocCogDis:SetAllPoints(oocCog)
+            oocCogDis:SetFrameLevel(oocCog:GetFrameLevel() + 5)
+            oocCogDis:EnableMouse(true)
+            oocCogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(oocCog, EllesmereUI.DisabledTooltip("Health Bar"))
+            end)
+            oocCogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateOocCogDis()
+                local c = cfg()
+                if c and not c.enabled then oocCogDis:Show(); oocCog:SetAlpha(0.15) else oocCogDis:Hide(); oocCog:SetAlpha(0.4) end
+            end
+            oocCog:HookScript("OnShow", UpdateOocCogDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdateOocCogDis)
+            UpdateOocCogDis()
+        end
+
         -- Text Color disable: bar off OR Health Text is None.
         local function healthTextDis()
             local c = cfg()
@@ -4007,6 +4049,48 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:HookScript("OnShow", UpdateCogDisGrad)
             EllesmereUI.RegisterWidgetRefresh(UpdateCogDisGrad)
             UpdateCogDisGrad()
+        end
+
+        -- Out of Combat Opacity: inline cog on the Opacity slider. Dims the Power
+        -- bar to this alpha while out of combat (100 = no fade). Applied via
+        -- ns.ResolveBarAlpha in UpdateVisibility; reacts to combat.
+        do
+            local rgn = powerBorderRow._leftRegion
+            local _, oocCogShow = EllesmereUI.BuildCogPopup({
+                title = "Out of Combat Opacity",
+                rows = {
+                    { type = "toggle", label = "Fade Out of Combat",
+                      get = function() local c = cfg(); return c and c.oocFadeEnabled == true end,
+                      set = function(v)
+                          local c = cfg(); if not c then return end
+                          c.oocFadeEnabled = v; RefreshPower()
+                      end },
+                    { type = "slider", label = "Opacity",
+                      min = 0, max = 100, step = 1,
+                      disabled = function() local c = cfg(); return not (c and c.oocFadeEnabled) end,
+                      get = function() local c = cfg(); return math.floor(((c and c.oocAlpha) or 0.5) * 100 + 0.5) end,
+                      set = function(v)
+                          local c = cfg(); if not c then return end
+                          c.oocAlpha = v / 100; RefreshPower()
+                      end },
+                },
+            })
+            local oocCog = MakeCogBtn(rgn, oocCogShow)
+            local oocCogDis = CreateFrame("Frame", nil, rgn)
+            oocCogDis:SetAllPoints(oocCog)
+            oocCogDis:SetFrameLevel(oocCog:GetFrameLevel() + 5)
+            oocCogDis:EnableMouse(true)
+            oocCogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(oocCog, EllesmereUI.DisabledTooltip(powerDisTip))
+            end)
+            oocCogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateOocCogDis()
+                local c = cfg()
+                if c and not c.enabled then oocCogDis:Show(); oocCog:SetAlpha(0.15) else oocCogDis:Hide(); oocCog:SetAlpha(0.4) end
+            end
+            oocCog:HookScript("OnShow", UpdateOocCogDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdateOocCogDis)
+            UpdateOocCogDis()
         end
 
         -- Text Color disable: bar off OR Power Text is None.
@@ -4949,6 +5033,48 @@ initFrame:SetScript("OnEvent", function(self)
                     flashTargets = function() return { ctx.syncRows.classOpacity, ctx.syncRows.powerOpacity, ctx.syncRows.healthOpacity } end,
                 })
             end
+        end
+
+        -- Out of Combat Opacity: inline cog on the Opacity slider. Dims the Class
+        -- Resource bar to this alpha while out of combat (100 = no fade). Applied
+        -- via ns.ResolveBarAlpha in UpdateVisibility; reacts to combat.
+        do
+            local rgn = classBorderRow._leftRegion
+            local _, oocCogShow = EllesmereUI.BuildCogPopup({
+                title = "Out of Combat Opacity",
+                rows = {
+                    { type = "toggle", label = "Fade Out of Combat",
+                      get = function() local c = cfg(); return c and c.oocFadeEnabled == true end,
+                      set = function(v)
+                          local c = cfg(); if not c then return end
+                          c.oocFadeEnabled = v; RefreshClass()
+                      end },
+                    { type = "slider", label = "Opacity",
+                      min = 0, max = 100, step = 1,
+                      disabled = function() local c = cfg(); return not (c and c.oocFadeEnabled) end,
+                      get = function() local c = cfg(); return math.floor(((c and c.oocAlpha) or 0.5) * 100 + 0.5) end,
+                      set = function(v)
+                          local c = cfg(); if not c then return end
+                          c.oocAlpha = v / 100; RefreshClass()
+                      end },
+                },
+            })
+            local oocCog = MakeCogBtn(rgn, oocCogShow)
+            local oocCogDis = CreateFrame("Frame", nil, rgn)
+            oocCogDis:SetAllPoints(oocCog)
+            oocCogDis:SetFrameLevel(oocCog:GetFrameLevel() + 5)
+            oocCogDis:EnableMouse(true)
+            oocCogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(oocCog, EllesmereUI.DisabledTooltip("Class Resource"))
+            end)
+            oocCogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateOocCogDis()
+                local c = cfg()
+                if c and not c.enabled then oocCogDis:Show(); oocCog:SetAlpha(0.15) else oocCogDis:Hide(); oocCog:SetAlpha(0.4) end
+            end
+            oocCog:HookScript("OnShow", UpdateOocCogDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdateOocCogDis)
+            UpdateOocCogDis()
         end
 
         -- Resource Text + the bespoke threshold popup below operate purely on the

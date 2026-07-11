@@ -26,6 +26,18 @@ local AURA_SCAN_LIMIT = 255  -- Midnight supports more than the legacy 40 buff l
 local DEFAULT_GLOW_COLOR = {r=1, g=0.776, b=0.376}
 local DEFAULT_TEXT_COLOR = {r=1, g=1, b=1}
 
+local TEXT_ANCHOR_POINTS = {
+    BOTTOM = { "TOP",    "BOTTOM" },
+    TOP    = { "BOTTOM", "TOP"    },
+    CENTER = { "CENTER", "CENTER" },
+    LEFT   = { "RIGHT",  "LEFT"   },
+    RIGHT  = { "LEFT",   "RIGHT"  },
+}
+local function GetTextAnchorPoints(p)
+    local m = TEXT_ANCHOR_POINTS[(p and p.textAnchor) or "BOTTOM"] or TEXT_ANCHOR_POINTS.BOTTOM
+    return m[1], m[2]
+end
+
 -------------------------------------------------------------------------------
 --  Profiler: zero cost when off, /eabrprof to toggle. debugprofilestop for
 --  per-label timing + C_AddOnProfiler for whole-addon avg/peak. Mirrors the
@@ -1532,6 +1544,7 @@ local defaults = {
             textFont = "Expressway",
             textXOffset = 0,
             textYOffset = -5,
+            textAnchor = "BOTTOM",
             iconSpacing = 14,
             opacity = 1.0,
             frameStrata = "MEDIUM",
@@ -1667,7 +1680,8 @@ local function ShowCombatIcon(iconIdx, spellID, texture, label)
         local yOff = p.textYOffset or -2
         SetABRFont(f._text, fontPath, textSize)
         f._text:ClearAllPoints()
-        f._text:SetPoint("TOP", f, "BOTTOM", xOff, yOff)
+        local tp, ip = GetTextAnchorPoints(p)
+        f._text:SetPoint(tp, f, ip, xOff, yOff)
         f._text:SetTextColor(tc.r, tc.g, tc.b, 1)
         f._text:SetText(label or "")
         f._text:Show()
@@ -1744,7 +1758,8 @@ local function ShowCursorIcon(iconIdx, spellID, texture, label)
         local yOff = p.textYOffset or -2
         SetABRFont(f._text, fontPath, textSize)
         f._text:ClearAllPoints()
-        f._text:SetPoint("TOP", f, "BOTTOM", xOff, yOff)
+        local tp, ip = GetTextAnchorPoints(p)
+        f._text:SetPoint(tp, f, ip, xOff, yOff)
         f._text:SetTextColor(tc.r, tc.g, tc.b, 1)
         f._text:SetText(label or "")
         f._text:Show()
@@ -2027,7 +2042,8 @@ local function ShowIcon(iconIdx, m)
         local yOff = p.textYOffset or -2
         SetABRFont(btn._text, fontPath, textSize)
         btn._text:ClearAllPoints()
-        btn._text:SetPoint("TOP", btn, "BOTTOM", xOff, yOff)
+        local tp, ip = GetTextAnchorPoints(p)
+        btn._text:SetPoint(tp, btn, ip, xOff, yOff)
         btn._text:SetTextColor(tc.r, tc.g, tc.b, 1)
         btn._text:Show()
     else
@@ -3227,7 +3243,8 @@ local function BeaconApplyText(f)
         local yOff = p.textYOffset or -2
         SetABRFont(f._text, fontPath, textSize)
         f._text:ClearAllPoints()
-        f._text:SetPoint("TOP", f, "BOTTOM", xOff, yOff)
+        local tp, ip = GetTextAnchorPoints(p)
+        f._text:SetPoint(tp, f, ip, xOff, yOff)
         f._text:SetTextColor(tc.r, tc.g, tc.b, 1)
         f._text:SetText(ShortLabel(f._spellID == _B.BOL and "Beacon of Light" or "Beacon of Faith"))
         f._text:Show()
@@ -3902,7 +3919,7 @@ mainFrame:RegisterEvent("PET_BAR_UPDATE")
 --  in a raid group and the player is a healer with < 80% mana.
 --  Out-of-combat only.
 -------------------------------------------------------------------------------
-do
+local SetupReadyCheckManaWarning = function()
     local warnFrame, warnFS, warnTimer, warnCurve
 
     -- Helpers hang on EABR, NOT block locals: this file's main chunk sits at
@@ -4080,4 +4097,5 @@ do
     _G._EABR_RCWarnHidePreview = HideWarning
     _G._EABR_RCWarnUpdateReg = UpdateReadyCheckRegistration
 end
+SetupReadyCheckManaWarning()
 

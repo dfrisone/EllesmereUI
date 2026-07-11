@@ -5274,10 +5274,12 @@ function EUI_Bags:RefreshInventory()
             for j, data in ipairs(pinItems) do
                 slotIdx = slotIdx + 1
                 local btn = GetOrCreateSlot(slotIdx)
-                btn:GetParent():SetParent(child)
-                local col = (j - 1) % columns
-                local row = math.floor((j - 1) / columns)
-                RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                if btn then  -- nil during combat (avoids minting tainted secure buttons)
+                    btn:GetParent():SetParent(child)
+                    local col = (j - 1) % columns
+                    local row = math.floor((j - 1) / columns)
+                    RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                end
             end
             -- Pin "+" button
             local pinItemCount = #pinItems
@@ -5285,16 +5287,18 @@ function EUI_Bags:RefreshInventory()
                 local pinIdx = pinItemCount + 1
                 slotIdx = slotIdx + 1
                 local pinSlot = GetOrCreateSlot(slotIdx)
-                pinSlot:GetParent():SetParent(child)
-                local col = (pinIdx - 1) % columns
-                local row = math.floor((pinIdx - 1) / columns)
-                RenderButton(pinSlot, { bag = 0, slot = 0 }, slotIdx, col, row, startX, curY, columns)
-                local ov = GetOrCreatePinOverlay()
-                ov:SetParent(child)
-                ov:ClearAllPoints()
-                ov:SetAllPoints(pinSlot)
-                ov:Show()
-                pinItemCount = pinItemCount + 1
+                if pinSlot then  -- nil during combat (avoids minting tainted secure buttons)
+                    pinSlot:GetParent():SetParent(child)
+                    local col = (pinIdx - 1) % columns
+                    local row = math.floor((pinIdx - 1) / columns)
+                    RenderButton(pinSlot, { bag = 0, slot = 0 }, slotIdx, col, row, startX, curY, columns)
+                    local ov = GetOrCreatePinOverlay()
+                    ov:SetParent(child)
+                    ov:ClearAllPoints()
+                    ov:SetAllPoints(pinSlot)
+                    ov:Show()
+                    pinItemCount = pinItemCount + 1
+                end
             end
             -- Pad remaining slots in last row
             local pinRemainder = pinItemCount % columns
@@ -5364,10 +5368,12 @@ function EUI_Bags:RefreshInventory()
             for j, data in ipairs(recentItems) do
                 slotIdx = slotIdx + 1
                 local btn = GetOrCreateSlot(slotIdx)
-                btn:GetParent():SetParent(child)
-                local col = (j - 1) % columns
-                local row = math.floor((j - 1) / columns)
-                RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                if btn then  -- nil during combat (avoids minting tainted secure buttons)
+                    btn:GetParent():SetParent(child)
+                    local col = (j - 1) % columns
+                    local row = math.floor((j - 1) / columns)
+                    RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                end
             end
             local recItemCount = #recentItems
             local recRemainder = recItemCount % columns
@@ -5477,10 +5483,12 @@ function EUI_Bags:RefreshInventory()
                 local _t0RB = ProfBegin("RenderButton")
                 slotIdx = slotIdx + 1
                 local btn = GetOrCreateSlot(slotIdx)
-                btn:GetParent():SetParent(child)
-                local col = (i - 1) % columns
-                local row = math.floor((i - 1) / columns)
-                RenderButton(btn, data, slotIdx, col, row, startX, curY, columns, true)
+                if btn then  -- nil during combat (avoids minting tainted secure buttons)
+                    btn:GetParent():SetParent(child)
+                    local col = (i - 1) % columns
+                    local row = math.floor((i - 1) / columns)
+                    RenderButton(btn, data, slotIdx, col, row, startX, curY, columns, true)
+                end
                 ProfEnd("RenderButton", _t0RB)
             end
             local reagRows = math.ceil(#reagentSlotList / columns)
@@ -5519,10 +5527,12 @@ function EUI_Bags:RefreshInventory()
                 local _t0RB = ProfBegin("RenderButton")
                 slotIdx = slotIdx + 1
                 local btn = GetOrCreateSlot(slotIdx)
-                btn:GetParent():SetParent(child)
-                local col = (j - 1) % columns
-                local row = math.floor((j - 1) / columns)
-                RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                if btn then  -- nil during combat (avoids minting tainted secure buttons)
+                    btn:GetParent():SetParent(child)
+                    local col = (j - 1) % columns
+                    local row = math.floor((j - 1) / columns)
+                    RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                end
                 ProfEnd("RenderButton", _t0RB)
             end
             local remainder = n % columns
@@ -5866,17 +5876,19 @@ function EUI_Bags:RefreshInventory()
                     local aIdx = memberItemCount + 1
                     slotIdx = slotIdx + 1
                     local aSlot = GetOrCreateSlot(slotIdx)
-                    aSlot:GetParent():SetParent(child)
-                    local col = (aIdx - 1) % columns
-                    local row = math.floor((aIdx - 1) / columns)
-                    RenderButton(aSlot, { bag = 0, slot = 0 }, slotIdx, col, row, startX, curY, columns)
-                    local aOv = GetOrCreateAssignOverlay()
-                    aOv._assignCatKey = memberCat._defaultName
-                    aOv:SetParent(child)
-                    aOv:ClearAllPoints()
-                    aOv:SetAllPoints(aSlot)
-                    aOv:Show()
-                    memberItemCount = memberItemCount + 1
+                    if aSlot then  -- nil during combat (avoids minting tainted secure buttons)
+                        aSlot:GetParent():SetParent(child)
+                        local col = (aIdx - 1) % columns
+                        local row = math.floor((aIdx - 1) / columns)
+                        RenderButton(aSlot, { bag = 0, slot = 0 }, slotIdx, col, row, startX, curY, columns)
+                        local aOv = GetOrCreateAssignOverlay()
+                        aOv._assignCatKey = memberCat._defaultName
+                        aOv:SetParent(child)
+                        aOv:ClearAllPoints()
+                        aOv:SetAllPoints(aSlot)
+                        aOv:Show()
+                        memberItemCount = memberItemCount + 1
+                    end
                 end
 
                 local remainder = memberItemCount % columns
@@ -6158,6 +6170,7 @@ function EUI_BagsReagent:RefreshInventory()
     local REAGENT_COLUMNS = 4
     for i, data in ipairs(tempItems) do
         local btn = GetOrCreateReagentSlot(i)
+        if btn then  -- nil during combat (avoids minting tainted secure buttons)
         local parent = btn:GetParent()
         parent:ClearAllPoints()
         parent:Show()
@@ -6212,6 +6225,7 @@ function EUI_BagsReagent:RefreshInventory()
         local col = (i - 1) % REAGENT_COLUMNS
         local row = math.floor((i - 1) / REAGENT_COLUMNS)
         parent:SetPoint("TOPLEFT", startX + (col * (SLOT_SIZE + SPACING)), startY - (row * (SLOT_SIZE + SPACING)))
+        end
     end
 
     EUI_BagsReagent:SetWidth((REAGENT_COLUMNS * (SLOT_SIZE + SPACING)) + 30)
