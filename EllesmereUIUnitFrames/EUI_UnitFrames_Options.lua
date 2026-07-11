@@ -2107,9 +2107,10 @@ initFrame:SetScript("OnEvent", function(self)
                 else ds = db.profile.player end
             end
 
-            -- Enabled/disabled overlay
+            -- Enabled/disabled overlay: the preview mocks the EllesmereUI frame,
+            -- so it is only "enabled" when the unit's source is the EUI frame.
             local unitKey2 = unitKey:match("^boss") and "boss" or unitKey
-            local isEnabled = db.profile.enabledFrames[unitKey2] ~= false
+            local isEnabled = ns.GetUnitFrameSource(unitKey2) == "eui"
             if isEnabled then
                 disabledOverlay:Hide()
                 pf:SetAlpha(1)
@@ -3826,6 +3827,54 @@ initFrame:SetScript("OnEvent", function(self)
     }
     local UNIT_LABELS_SUP = { player="Player", target="Target", focus="Focus" }
 
+    -- Shown in place of a unit's settings when it isn't using the EllesmereUI
+    -- frame (Blizzard default / hidden): we simply don't build the inapplicable
+    -- controls, and this one-line notice explains why. Returns the new y.
+    local function BuildInactiveNotice(parent, y, src)
+        local CPAD = EllesmereUI.CONTENT_PAD or 10
+        local note = EllesmereUI.MakeFont(parent, 13, nil, 1, 1, 1)
+        note:SetTextColor(1, 1, 1, 0.55)
+        note:SetPoint("TOPLEFT", parent, "TOPLEFT", CPAD + 4, y - 18)
+        note:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -(CPAD + 4), y - 18)
+        note:SetJustifyH("LEFT")
+        note:SetText(src == "blizzard"
+            and EllesmereUI.L("This unit uses the Blizzard default frame -- there are no EllesmereUI settings to configure here.")
+            or  EllesmereUI.L("This unit's frame is hidden -- there are no EllesmereUI settings to configure here."))
+        return y - 54
+    end
+
+    -- "Frame Source" row (dropdown on the left). rightCfg fills the right slot
+    -- (mini/boss pass Show Portrait when on the EUI source; otherwise the slot is
+    -- empty). onBeforeSet(v) runs before the write -- boss uses it to stop the
+    -- live preview. Returns row, height.
+    local function BuildFrameSourceRow(Ww, pp, yy, unitKey, onBeforeSet, rightCfg, noBlizzard, tooltip)
+        -- Target-of-target / focus-target only offer "Blizzard Default" when their
+        -- parent target/focus frame is itself Blizzard's (see ns.GetUnitFrameSource);
+        -- otherwise noBlizzard drops the option and `tooltip` explains why.
+        local values = noBlizzard and { eui="EllesmereUI", hidden="Hidden" }
+            or { eui="EllesmereUI", blizzard="Blizzard Default", hidden="Hidden" }
+        local order = noBlizzard and { "eui", "hidden" } or { "eui", "blizzard", "hidden" }
+        return Ww:DualRow(pp, yy,
+            { type="dropdown", text="Frame Source", tooltip=tooltip,
+              values = values,
+              order = order,
+              getValue=function() return ns.GetUnitFrameSource(unitKey) end,
+              setValue=function(v)
+                if onBeforeSet then onBeforeSet(v) end
+                ns.SetUnitFrameSource(unitKey, v)
+                ReloadAndUpdate()
+                EllesmereUI:RefreshPage(true)
+                EllesmereUI:ShowConfirmPopup({
+                    title = "Reload Required",
+                    message = "Changing the frame source requires a UI reload to take effect.",
+                    confirmText = "Reload Now",
+                    cancelText = "Later",
+                    onConfirm = function() ReloadUI() end,
+                })
+              end },
+            rightCfg or { type="spacer" })
+    end
+
     local function BuildSharedSettings(parent, y)
         local W = EllesmereUI.Widgets
         local _, h
@@ -3961,6 +4010,39 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
+        -- Row 0: Frame Source -- EllesmereUI skin / Blizzard default / hidden.
+        -- Placed first so the disable overlay can cover every setting below it
+        -- while this selector stays usable. Switching source needs a /reload
+        -- (oUF permanently disables the Blizzard frame at spawn, and secure
+        -- frames can't be created/torn down in combat).
+        local fsRow
+        fsRow, h = W:DualRow(parent, y,
+            { type="dropdown", text="Frame Source",
+              values = { eui="EllesmereUI", blizzard="Blizzard Default", hidden="Hidden" },
+              order = { "eui", "blizzard", "hidden" },
+              getValue = function() return ns.GetUnitFrameSource(selectedUnit) end,
+              setValue = function(v)
+                  ns.SetUnitFrameSource(selectedUnit, v)
+                  if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
+                  ReloadAndUpdate()
+                  EllesmereUI:RefreshPage(true)
+                  EllesmereUI:ShowConfirmPopup({
+                      title = "Reload Required",
+                      message = "Changing the frame source requires a UI reload to take effect.",
+                      confirmText = "Reload Now",
+                      cancelText = "Later",
+                      onConfirm = function() ReloadUI() end,
+                  })
+              end },
+            { type="spacer" });  y = y - h
+
+        -- If this unit isn't on the EllesmereUI frame, the settings below are
+        -- inapplicable (its EUI frame isn't spawned) -- show a short notice
+        -- instead of the full settings list.
+        if ns.GetUnitFrameSource(selectedUnit) ~= "eui" then
+            return BuildInactiveNotice(parent, y, ns.GetUnitFrameSource(selectedUnit))
+        end
+
         -- Row 1: Visibility | Visibility Options (checkbox dropdown)
         local visRow
         visRow, h = W:DualRow(parent, y,
@@ -3970,8 +4052,11 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return UNIT_DB_MAP[selectedUnit]().barVisibility or "always" end,
               setValue=function(v)
                   UNIT_DB_MAP[selectedUnit]().barVisibility = v
-                  -- Sync enabledFrames: "never" disables the frame entirely
-                  db.profile.enabledFrames[selectedUnit] = (v ~= "never")
+                  -- Keep the frame source consistent so the Visibility and Frame
+                  -- Source dropdowns can't disagree: "never" == Hidden; any
+                  -- visible mode implies the EllesmereUI frame (clearing a stale
+                  -- Blizzard/hidden source rather than resurrecting it later).
+                  ns.SetUnitFrameSource(selectedUnit, (v == "never") and "hidden" or "eui")
                   -- Keep boolean keys in sync for safety
                   local s = UNIT_DB_MAP[selectedUnit]()
                   if v == "always" then
@@ -4031,7 +4116,7 @@ initFrame:SetScript("OnEvent", function(self)
                     local v = UNIT_DB_MAP[selectedUnit]().barVisibility or "always"
                     for _, key in ipairs(GROUP_UNIT_ORDER) do
                         UNIT_DB_MAP[key]().barVisibility = v
-                        db.profile.enabledFrames[key] = (v ~= "never")
+                        ns.SetUnitFrameSource(key, (v == "never") and "hidden" or "eui")
                     end
                     if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
                     ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -4045,7 +4130,7 @@ initFrame:SetScript("OnEvent", function(self)
                         local v = UNIT_DB_MAP[selectedUnit]().barVisibility or "always"
                         for _, key in ipairs(checkedKeys) do
                             UNIT_DB_MAP[key]().barVisibility = v
-                            db.profile.enabledFrames[key] = (v ~= "never")
+                            ns.SetUnitFrameSource(key, (v == "never") and "hidden" or "eui")
                         end
                         if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
                         ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -10832,6 +10917,13 @@ initFrame:SetScript("OnEvent", function(self)
             y = y - h
         end
 
+        -- If this unit isn't on the EllesmereUI frame, skip the (inapplicable)
+        -- settings below and show a short notice instead.
+        if enableRow and ns.GetUnitFrameSource(unitKey) ~= "eui" then
+            y = BuildInactiveNotice(parent, y, ns.GetUnitFrameSource(unitKey))
+            return y, displayHeader, nil, nil, nil, enableRowFrame
+        end
+
         -- Bar Texture override (new row, slot 1). Mini frames inherit the main
         -- frames' donor texture (focus > target > player) by default; picking a
         -- specific texture here overrides that for this frame only. Lands as the
@@ -11875,21 +11967,45 @@ initFrame:SetScript("OnEvent", function(self)
 
         local portraitRow
         local function enableRow(Ww, pp, yy)
-            portraitRow, h = Ww:DualRow(pp, yy,
-                { type="toggle", text=enableText,
-                  getValue=function() return db.profile.enabledFrames[unitKey] ~= false end,
-                  setValue=function(v)
-                    db.profile.enabledFrames[unitKey] = v
-                    ReloadAndUpdate()
-                  end },
-                { type="toggle", text="Show Portrait",
-                  getValue=function() return settingsTable.showPortrait ~= false end,
-                  setValue=function(v)
-                    settingsTable.showPortrait = v
-                    ReloadAndUpdate()
-                  end })
-            AttachPortraitSideCog(portraitRow._rightRegion, settingsTable)
-            return portraitRow, h
+            -- Frame Source on its own row (like player/target); Show Portrait sits
+            -- flush on the next row, only on the EllesmereUI source. For
+            -- Blizzard/hidden the row is Frame Source alone + the notice below.
+            local isEUI = ns.GetUnitFrameSource(unitKey) == "eui"
+            -- "Blizzard Default" only makes sense when the parent target/focus is
+            -- itself on Blizzard's frame (its native child target-of-target is then
+            -- alive); otherwise offer only EllesmereUI / Hidden and explain why.
+            local parentLabel = (unitKey == "focustarget") and "Focus" or "Target"
+            local childName = (unitKey == "focustarget") and "focus-target" or "target-of-target"
+            local parentIsBlizzard = ns.GetUnitFrameSource(parentLabel:lower()) == "blizzard"
+            -- Parent is Blizzard -> "Blizzard Default" is offered here; briefly warn that the
+            -- native child can't be hidden in combat (see SuppressBlizzardChildFrame for why).
+            -- Parent isn't Blizzard -> the option is dropped; explain why instead.
+            local srcTip
+            if parentIsBlizzard then
+                srcTip = "Due to Blizzard API restrictions, Blizzard's native " .. childName
+                    .. " can't be hidden in combat and will show the whole time you are in combat. Recommended: match the "
+                    .. parentLabel .. " frame's source -- both Blizzard Default, or both EllesmereUI."
+            else
+                srcTip = "\"Blizzard Default\" is only available when the " .. parentLabel
+                    .. " frame's source is set to Blizzard Default -- the " .. childName
+                    .. " then comes from Blizzard's " .. parentLabel:lower() .. " frame."
+            end
+            local row, h = BuildFrameSourceRow(Ww, pp, yy, unitKey, nil, nil, not parentIsBlizzard, srcTip)
+            local total = h
+            if isEUI then
+                local ph
+                portraitRow, ph = Ww:DualRow(pp, yy - h,
+                    { type="toggle", text="Show Portrait",
+                      getValue=function() return settingsTable.showPortrait ~= false end,
+                      setValue=function(v)
+                        settingsTable.showPortrait = v
+                        ReloadAndUpdate()
+                      end },
+                    { type="spacer" })
+                AttachPortraitSideCog(portraitRow._leftRegion, settingsTable)
+                total = total + ph
+            end
+            return row, total
         end
 
         local displayHeader, sizeRow, textHeader, textRow
@@ -11898,7 +12014,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Store click targets for hover highlight system
         parent._ufClickTargets = {
             healthBar  = { section = displayHeader,  target = sizeRow },
-            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "right" },
+            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "left" },
             nameText   = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             healthText = { section = textHeader or displayHeader,  target = textRow or sizeRow },
         }
@@ -11911,21 +12027,23 @@ initFrame:SetScript("OnEvent", function(self)
 
         local portraitRow
         local function enableRow(Ww, pp, yy)
-            portraitRow, h = Ww:DualRow(pp, yy,
-                { type="toggle", text="Enable Pet Frame",
-                  getValue=function() return db.profile.enabledFrames.pet ~= false end,
-                  setValue=function(v)
-                    db.profile.enabledFrames.pet = v
-                    ReloadAndUpdate()
-                  end },
-                { type="toggle", text="Show Portrait",
-                  getValue=function() return db.profile.pet.showPortrait ~= false end,
-                  setValue=function(v)
-                    db.profile.pet.showPortrait = v
-                    ReloadAndUpdate()
-                  end })
-            AttachPortraitSideCog(portraitRow._rightRegion, db.profile.pet)
-            return portraitRow, h
+            local isEUI = ns.GetUnitFrameSource("pet") == "eui"
+            local row, h = BuildFrameSourceRow(Ww, pp, yy, "pet")
+            local total = h
+            if isEUI then
+                local ph
+                portraitRow, ph = Ww:DualRow(pp, yy - h,
+                    { type="toggle", text="Show Portrait",
+                      getValue=function() return db.profile.pet.showPortrait ~= false end,
+                      setValue=function(v)
+                        db.profile.pet.showPortrait = v
+                        ReloadAndUpdate()
+                      end },
+                    { type="spacer" })
+                AttachPortraitSideCog(portraitRow._leftRegion, db.profile.pet)
+                total = total + ph
+            end
+            return row, total
         end
 
         local displayHeader, sizeRow, textHeader, textRow
@@ -11934,7 +12052,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Store click targets for hover highlight system
         parent._ufClickTargets = {
             healthBar  = { section = displayHeader,  target = sizeRow },
-            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "right" },
+            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "left" },
             nameText   = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             healthText = { section = textHeader or displayHeader,  target = textRow or sizeRow },
         }
@@ -11954,7 +12072,7 @@ initFrame:SetScript("OnEvent", function(self)
             return ns._bossPreviewActive and EllesmereUI.L("Deactivate Boss Preview") or EllesmereUI.L("Activate Boss Preview")
         end
         local function BossFramesDisabled()
-            return db.profile.enabledFrames.boss == false
+            return ns.GetUnitFrameSource("boss") ~= "eui"
         end
         activateBtnFrame, h = W:WideButton(parent, PreviewLabel(), y, function()
             if BossFramesDisabled() then return end
@@ -11990,37 +12108,39 @@ initFrame:SetScript("OnEvent", function(self)
         -- the aura rows under the "Buffs and Debuffs" section.
         local portraitRow, growthRow, simpleRow, simpleBuffRow, bossAuraRow, bossAuraHeader, bossCastHeader, castMainRow
         local function enableRow(Ww, pp, yy)
-            local eh
-            portraitRow, eh = Ww:DualRow(pp, yy,
-                { type="toggle", text="Enable Boss Frames",
-                  getValue=function() return db.profile.enabledFrames.boss ~= false end,
-                  setValue=function(v)
-                    db.profile.enabledFrames.boss = v
-                    -- Force-stop the in-game preview when disabling boss frames;
-                    -- it rides on the now-disabled frames and renders broken.
-                    if not v and ns._bossPreviewActive and ns.SetBossPreview then
-                        ns.SetBossPreview(false)
-                    end
-                    ReloadAndUpdate()
-                    EllesmereUI:RefreshPage()
-                  end },
-                { type="toggle", text="Show Portrait",
-                  getValue=function() return db.profile.boss.showPortrait ~= false end,
-                  setValue=function(v)
-                    db.profile.boss.showPortrait = v
-                    ReloadAndUpdate()
-                  end })
-            AttachPortraitSideCog(portraitRow._rightRegion, db.profile.boss)
-            local castRow, ch = Ww:DualRow(pp, yy - eh,
-                { type="dropdown", text="Stack Direction", values={ up="Up", down="Down" }, order={ "up", "down" },
-                  getValue=function() return db.profile.boss.bossStackDirection or "down" end,
-                  setValue=function(v) db.profile.boss.bossStackDirection = v; ReloadAndUpdate() end },
-                { type="slider", text="Vertical Spacing", min=-200, max=200, step=1,
-                  getValue=function() return db.profile.bossSpacing or 80 end,
-                  setValue=function(v) db.profile.bossSpacing = v; ReloadAndUpdate() end })
-            -- Show Cast Icon + Cast Bar Height moved to their own "CAST BAR"
-            -- section below the Power Bar (see bossCastBar()).
-            return portraitRow, eh + ch
+            local isEUI = ns.GetUnitFrameSource("boss") == "eui"
+            local row, h = BuildFrameSourceRow(Ww, pp, yy, "boss", function(v)
+                -- Force-stop the in-game preview when boss frames are no longer
+                -- EUI-owned; it rides on the real boss frames and renders broken.
+                if v ~= "eui" and ns._bossPreviewActive and ns.SetBossPreview then
+                    ns.SetBossPreview(false)
+                end
+            end)
+            local total = h
+            -- Frame Source on its own row; Show Portrait then the boss stack layout
+            -- sit flush below, all only for the EUI boss frames.
+            if isEUI then
+                local ph
+                portraitRow, ph = Ww:DualRow(pp, yy - h,
+                    { type="toggle", text="Show Portrait",
+                      getValue=function() return db.profile.boss.showPortrait ~= false end,
+                      setValue=function(v)
+                        db.profile.boss.showPortrait = v
+                        ReloadAndUpdate()
+                      end },
+                    { type="spacer" })
+                AttachPortraitSideCog(portraitRow._leftRegion, db.profile.boss)
+                total = total + ph
+                local castRow, ch = Ww:DualRow(pp, yy - total,
+                    { type="dropdown", text="Stack Direction", values={ up="Up", down="Down" }, order={ "up", "down" },
+                      getValue=function() return db.profile.boss.bossStackDirection or "down" end,
+                      setValue=function(v) db.profile.boss.bossStackDirection = v; ReloadAndUpdate() end },
+                    { type="slider", text="Vertical Spacing", min=-200, max=200, step=1,
+                      getValue=function() return db.profile.bossSpacing or 80 end,
+                      setValue=function(v) db.profile.bossSpacing = v; ReloadAndUpdate() end })
+                total = total + ch
+            end
+            return row, total
         end
 
         local function bossAfterSize(Ww, pp, yy)
@@ -13195,7 +13315,7 @@ initFrame:SetScript("OnEvent", function(self)
             healthBar  = { section = textHeader or displayHeader,  target = sizeRow,  slotSide = "left" },
             powerBar   = { section = parent._powerHeaderFrame or displayHeader,  target = parent._powerHeightRow,  slotSide = "left" },
             powerBarText = { section = parent._powerHeaderFrame or displayHeader,  target = parent._powerTextRow,  slotSide = "left" },
-            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "right" },
+            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "left" },
             nameText   = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             healthText = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             -- Cast bar -> Cast Bar Height; spell icon -> Show Cast Icon. Both live
