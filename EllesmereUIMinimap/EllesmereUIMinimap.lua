@@ -78,9 +78,11 @@ local defaults = {
             -- false -> hover/topLeft.
             coordsMode     = "always",
             coordsPosition = "topLeft",
+            coordsScale    = 1.0,
             -- FPS/MS readout (Text section); options mirror the QoL FPS counter
             showFPS           = false,
             fpsTextSize       = 12,
+            fpsScale          = 1.0,
             fpsShowLocalMS    = true,
             fpsShowWorldMS    = false,
             fpsUseAccent      = false,  -- description text: accent vs custom fpsColor
@@ -4707,6 +4709,8 @@ local function ApplyMinimap()
     local cpy = p and p.coordsBelowOffsetY or 0
     coordFrame:ClearAllPoints()
     coordFrame:SetPoint(cpAnchor[1], minimap, cpAnchor[2], cpAnchor[3] + cpx, cpAnchor[4] + cpy)
+    coordFrame:SetScale(p and p.coordsScale or 1.0)
+    _G._EBS_CoordFrame = coordFrame
     if not coordTicker then
         coordTicker = CreateFrame("Frame")  -- kept for Show/Hide API
         coordTicker._ticker = nil
@@ -4869,6 +4873,8 @@ local function ApplyMinimap()
         fpsBg:ClearAllPoints()
         fpsBg:SetPoint(fAnchor[1], minimap, fAnchor[2],
             fAnchor[3] + (p.fpsOffsetX or 0), fAnchor[4] + (p.fpsOffsetY or 0))
+        fpsBg:SetScale(p.fpsScale or 1.0)
+        _G._EBS_FpsBg = fpsBg
         -- Mouse only while a hover tooltip is assigned, so the readout never
         -- blocks map clicks otherwise
         fpsBg:EnableMouse((p.fpsHoverTooltip or "none") ~= "none")

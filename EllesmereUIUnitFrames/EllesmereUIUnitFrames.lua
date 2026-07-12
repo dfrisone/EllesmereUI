@@ -163,6 +163,18 @@ local defaults = {
             extraTextY = 0,
             extraTextClassColor = false,
             extraTextAlign = "left",
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
+            extraTextShortNameLength = 0,
+            extraTextShortNameEllipsis = true,
+
             bottomTextBar = false,
             bottomTextBarHeight = 16,
             btbPosition = "bottom",
@@ -189,6 +201,15 @@ local defaults = {
             btbCenterY = 0,
             btbCenterClassColor = false,
             btbCenterPowerColor = false,
+            btbLeftShortNameLength = 0,
+            btbLeftShortNameEllipsis = true,
+
+            btbRightShortNameLength = 0,
+            btbRightShortNameEllipsis = true,
+
+            btbCenterShortNameLength = 0,
+            btbCenterShortNameEllipsis = true,
+
             btbClassIcon = "none",
             btbClassIconSize = 14,
             btbClassIconLocation = "left",
@@ -273,6 +294,8 @@ local defaults = {
             showInParty = true,
             showSolo = true,
             barVisibility = "always",
+            oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
+            oocAlpha       = 0.5,    -- whole-frame alpha while out of combat
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
@@ -382,6 +405,18 @@ local defaults = {
             extraTextY = 0,
             extraTextClassColor = false,
             extraTextAlign = "left",
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
+            extraTextShortNameLength = 0,
+            extraTextShortNameEllipsis = true,
+
             bottomTextBar = false,
             bottomTextBarHeight = 16,
             btbPosition = "bottom",
@@ -408,6 +443,15 @@ local defaults = {
             btbCenterY = 0,
             btbCenterClassColor = false,
             btbCenterPowerColor = false,
+            btbLeftShortNameLength = 0,
+            btbLeftShortNameEllipsis = true,
+
+            btbRightShortNameLength = 0,
+            btbRightShortNameEllipsis = true,
+
+            btbCenterShortNameLength = 0,
+            btbCenterShortNameEllipsis = true,
+
             btbClassIcon = "none",
             btbClassIconSize = 14,
             btbClassIconLocation = "left",
@@ -438,6 +482,8 @@ local defaults = {
             showInParty = true,
             showSolo = true,
             barVisibility = "always",
+            oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
+            oocAlpha       = 0.5,    -- whole-frame alpha while out of combat
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
@@ -532,6 +578,15 @@ local defaults = {
             centerTextClassColor = false,
             centerTextColorR = 1, centerTextColorG = 1, centerTextColorB = 1,
             centerTextX = 0, centerTextY = 0,
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
             borderSize = 1,
             borderColor = { r = 0, g = 0, b = 0 },
             borderTexture = "solid",
@@ -567,6 +622,15 @@ local defaults = {
             centerTextClassColor = false,
             centerTextColorR = 1, centerTextColorG = 1, centerTextColorB = 1,
             centerTextX = 0, centerTextY = 0,
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
             borderSize = 1,
             borderColor = { r = 0, g = 0, b = 0 },
             borderTexture = "solid",
@@ -598,6 +662,15 @@ local defaults = {
             centerTextClassColor = false,
             centerTextColorR = 1, centerTextColorG = 1, centerTextColorB = 1,
             centerTextX = 0, centerTextY = 0,
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
             borderSize = 1,
             borderColor = { r = 0, g = 0, b = 0 },
             borderTexture = "solid",
@@ -676,6 +749,18 @@ local defaults = {
             extraTextY = 0,
             extraTextClassColor = false,
             extraTextAlign = "left",
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
+            extraTextShortNameLength = 0,
+            extraTextShortNameEllipsis = true,
+
             bottomTextBar = false,
             bottomTextBarHeight = 16,
             btbPosition = "bottom",
@@ -700,6 +785,15 @@ local defaults = {
             btbCenterY = 0,
             btbCenterClassColor = false,
             btbCenterPowerColor = false,
+            btbLeftShortNameLength = 0,
+            btbLeftShortNameEllipsis = true,
+
+            btbRightShortNameLength = 0,
+            btbRightShortNameEllipsis = true,
+
+            btbCenterShortNameLength = 0,
+            btbCenterShortNameEllipsis = true,
+
             btbClassIcon = "none",
             btbClassIconSize = 14,
             btbClassIconLocation = "left",
@@ -755,6 +849,8 @@ local defaults = {
             showInParty = true,
             showSolo = true,
             barVisibility = "always",
+            oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
+            oocAlpha       = 0.5,    -- whole-frame alpha while out of combat
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
@@ -866,6 +962,15 @@ local defaults = {
             centerTextClassColor = false,
             centerTextColorR = 1, centerTextColorG = 1, centerTextColorB = 1,
             centerTextX = 0, centerTextY = 0,
+            leftTextShortNameLength = 0,
+            leftTextShortNameEllipsis = true,
+
+            rightTextShortNameLength = 0,
+            rightTextShortNameEllipsis = true,
+
+            centerTextShortNameLength = 0,
+            centerTextShortNameEllipsis = true,
+
             borderSize = 1,
             borderColor = { r = 0, g = 0, b = 0 },
             borderTexture = "solid",
@@ -1731,8 +1836,17 @@ end
 -- Nickname-aware replacement for the stock [name] tag (see ContentToTag). Returns
 -- the nickname when one applies, else the raw unit name -- identical to [name] for
 -- everyone without a nickname.
-oUF.Tags.Methods["eui-name"] = function(unit)
-    return ns.ResolveUnitNickname(unit)
+oUF.Tags.Methods["eui-name"] = function(unit, realUnit, lenStr, ellipsisStr)
+    local name = ns.ResolveUnitNickname(unit)
+    local maxLen = tonumber(lenStr) or 0
+    if maxLen <= 0 or #name <= maxLen then return name end
+
+    local useEllipsis = ellipsisStr ~= "0"
+    if useEllipsis then
+        return name:sub(1, maxLen) .. "..."
+    else
+        return name:sub(1, maxLen)
+    end
 end
 oUF.Tags.Events["eui-name"] = "UNIT_NAME_UPDATE"
 
@@ -2232,11 +2346,20 @@ local function GetBossHealthTag()
     end
 end
 
+-- Build a truncated name tag for the given settings prefix (e.g. "leftText", "btbLeft").
+local function BuildShortNameTag(prefix, settings)
+    local len = settings[prefix .. "ShortNameLength"] or 0
+    if len <= 0 then return "[eui-name]" end
+    local ellipsis = settings[prefix .. "ShortNameEllipsis"] ~= false and "1" or "0"
+    return "[eui-name(" .. len .. "," .. ellipsis .. ")]"
+end
+
 -- Resolve a leftTextContent / rightTextContent value to an oUF tag string.
 -- content: "name", "both", "curhpshort", "perhp", "perhpnosign", "perhpnum", "none"
-local function ContentToTag(content)
-    if content == "name" then return "[eui-name]"
-    elseif content == "nametotarget" then return "[eui-name][eui-tgtsep][eui-tgtcol][eui-tgtname]"
+local function ContentToTag(content, prefix, settings)
+    if content == "name" then return BuildShortNameTag(prefix, settings)
+    elseif content == "nametotarget" then
+        return BuildShortNameTag(prefix, settings) .. "[eui-tgtsep][eui-tgtcol][eui-tgtname]"
     elseif content == "both" then return "[curhpshort] | [eui-perhp]%"
     elseif content == "bothdash" then return "[curhpshort] - [eui-perhp]%"
     elseif content == "perhpnum" then return "[eui-perhp]% | [curhpshort]"
@@ -2630,9 +2753,9 @@ local function CreateBottomTextBar(frame, unit, settings, anchorFrame, xOffset, 
 
     -- Tag and position the BTB texts
     local function ApplyBTBTextTags(lc, rc, cc)
-        local lt = ContentToTag(lc)
-        local rt = ContentToTag(rc)
-        local ct = ContentToTag(cc)
+        local lt = ContentToTag(lc, "btbLeft", settings)
+        local rt = ContentToTag(rc, "btbRight", settings)
+        local ct = ContentToTag(cc, "btbCenter", settings)
         if leftFS._curTag then frame:Untag(leftFS); leftFS._curTag = nil end
         if rightFS._curTag then frame:Untag(rightFS); rightFS._curTag = nil end
         if centerFS._curTag then frame:Untag(centerFS); centerFS._curTag = nil end
@@ -6200,10 +6323,10 @@ local function StyleFullFrame(frame, unit)
     -- alignment-based anchor and a 95%-of-bar-width clamp (ellipsis truncation).
     local function ApplyTextTags(lc, rc, cc, ec)
         ec = ec or (settings.extraTextContent or "none")
-        local ltag = ContentToTag(lc)
-        local rtag = ContentToTag(rc)
-        local ctag = ContentToTag(cc)
-        local etag = ContentToTag(ec)
+        local ltag = ContentToTag(lc, "leftText", settings)
+        local rtag = ContentToTag(rc, "rightText", settings)
+        local ctag = ContentToTag(cc, "centerText", settings)
+        local etag = ContentToTag(ec, "extraText", settings)
         if leftText._curTag then frame:Untag(leftText); leftText._curTag = nil end
         if rightText._curTag then frame:Untag(rightText); rightText._curTag = nil end
         if centerText._curTag then frame:Untag(centerText); centerText._curTag = nil end
@@ -6534,10 +6657,10 @@ local function StyleFocusFrame(frame, unit)
     -- alignment-based anchor and a 95%-of-bar-width clamp (ellipsis truncation).
     local function ApplyTextTags(lc, rc, cc, ec)
         ec = ec or (settings.extraTextContent or "none")
-        local ltag = ContentToTag(lc)
-        local rtag = ContentToTag(rc)
-        local ctag = ContentToTag(cc)
-        local etag = ContentToTag(ec)
+        local ltag = ContentToTag(lc, "leftText", settings)
+        local rtag = ContentToTag(rc, "rightText", settings)
+        local ctag = ContentToTag(cc, "centerText", settings)
+        local etag = ContentToTag(ec, "extraText", settings)
         if leftText._curTag then frame:Untag(leftText); leftText._curTag = nil end
         if rightText._curTag then frame:Untag(rightText); rightText._curTag = nil end
         if centerText._curTag then frame:Untag(centerText); centerText._curTag = nil end
@@ -6825,9 +6948,9 @@ local function StyleSimpleFrame(frame, unit)
     end
 
     local function ApplyTextTags(lc, rc, cc)
-        local ltag = ContentToTag(lc)
-        local rtag = ContentToTag(rc)
-        local ctag = ContentToTag(cc)
+        local ltag = ContentToTag(lc, "leftText", settings)
+        local rtag = ContentToTag(rc, "rightText", settings)
+        local ctag = ContentToTag(cc, "centerText", settings)
         if leftText._curTag then frame:Untag(leftText); leftText._curTag = nil end
         if rightText._curTag then frame:Untag(rightText); rightText._curTag = nil end
         if centerText._curTag then frame:Untag(centerText); centerText._curTag = nil end
@@ -7070,9 +7193,9 @@ local function StylePetFrame(frame, unit)
     end
 
     local function ApplyTextTags(lc, rc, cc)
-        local ltag = ContentToTag(lc)
-        local rtag = ContentToTag(rc)
-        local ctag = ContentToTag(cc)
+        local ltag = ContentToTag(lc, "leftText", settings)
+        local rtag = ContentToTag(rc, "rightText", settings)
+        local ctag = ContentToTag(cc, "centerText", settings)
         if leftText._curTag then frame:Untag(leftText); leftText._curTag = nil end
         if rightText._curTag then frame:Untag(rightText); rightText._curTag = nil end
         if centerText._curTag then frame:Untag(centerText); centerText._curTag = nil end
@@ -7328,9 +7451,9 @@ local function StyleBossFrame(frame, unit)
     end
 
     local function ApplyTextTags(lc, rc, cc)
-        local ltag = ContentToTag(lc)
-        local rtag = ContentToTag(rc)
-        local ctag = ContentToTag(cc)
+        local ltag = ContentToTag(lc, "leftText", settings)
+        local rtag = ContentToTag(rc, "rightText", settings)
+        local ctag = ContentToTag(cc, "centerText", settings)
         if leftText._curTag then frame:Untag(leftText); leftText._curTag = nil end
         if rightText._curTag then frame:Untag(rightText); rightText._curTag = nil end
         if centerText._curTag then frame:Untag(centerText); centerText._curTag = nil end
@@ -10355,13 +10478,28 @@ local function ApplyBlizzCastbarState()
     end
 end
 
+-- Effective whole-frame alpha for a unit frame. When "Fade Out of Combat" is
+-- enabled and the player is out of combat, the frame shows at its chosen
+-- oocAlpha; otherwise full opacity. Off by default, so existing setups are
+-- unchanged. Every "shown" SetAlpha site (visibility loop + mouseover hover)
+-- routes through this so a combat transition or hover can't clobber the fade.
+-- Combat state is passed in by the caller (the visibility loop uses its own
+-- event-tracked _ufInCombat, which leads InCombatLockdown() on regen events).
+-- On ns (not a new file-scope local) to respect the Lua 200-locals cap.
+function ns.ResolveFrameAlpha(s, inCombat)
+    if s and s.oocFadeEnabled and not inCombat then
+        return s.oocAlpha or 0.5
+    end
+    return 1
+end
+
 local function UnitFrame_OnEnter(self)
     local unit = self.unit
     if not unit then return end
     local unitKey = unit:match("^boss%d$") and "boss" or unit
     local s = db and db.profile and db.profile[unitKey]
     if s and (s.barVisibility or "always") == "mouseover" then
-        (self._visWrap or self):SetAlpha(1)
+        (self._visWrap or self):SetAlpha(ns.ResolveFrameAlpha(s, InCombatLockdown()))
     end
     if unit and GameTooltip and GameTooltip_SetDefaultAnchor then
         local showTooltip = not s or s.showUnitTooltip ~= false
@@ -10402,7 +10540,7 @@ local function UnitFrame_OnLeave(self)
                            or s.visHideHousing
                            or s.visOnlyInstances
         local keepShown = (not hiddenByOpts) and hasAnyHideOpt
-        ;(self._visWrap or self):SetAlpha(keepShown and 1 or 0)
+        ;(self._visWrap or self):SetAlpha(keepShown and ns.ResolveFrameAlpha(s, InCombatLockdown()) or 0)
     end
     if self._tooltipTicker then self._tooltipTicker:Cancel(); self._tooltipTicker = nil end
     if GameTooltip and GameTooltip:IsOwned(self) then
@@ -11507,6 +11645,13 @@ function InitializeFrames()
                 local hiddenByOpts = EllesmereUI and EllesmereUI.CheckVisibilityOptions and EllesmereUI.CheckVisibilityOptions(s)
                 local vis = s.barVisibility or "always"
 
+                -- Whole-frame out-of-combat fade: the alpha to use whenever the
+                -- frame is "shown" below. 1 unless "Fade Out of Combat" is on and
+                -- we are out of combat, in which case the chosen oocAlpha. Uses the
+                -- event-tracked _ufInCombat (authoritative on regen transitions,
+                -- which lead InCombatLockdown()) so the fade flips instantly.
+                local shownAlpha = ns.ResolveFrameAlpha(s, _ufInCombat)
+
                 -- Combat-sensitive and mouseover modes use SetAlpha to show/hide
                 -- (SetAlpha is not a restricted API). The frame stays technically
                 -- shown so it can transition instantly; alpha controls visibility.
@@ -11518,9 +11663,9 @@ function InitializeFrames()
                 -- parent chain so wrapper alpha 0 always wins.
                 local alphaTarget = frame._visWrap or frame
                 if vis == "in_combat" then
-                    alphaTarget:SetAlpha((not hiddenByOpts and _ufInCombat) and 1 or 0)
+                    alphaTarget:SetAlpha((not hiddenByOpts and _ufInCombat) and shownAlpha or 0)
                 elseif vis == "out_of_combat" then
-                    alphaTarget:SetAlpha((not hiddenByOpts and not _ufInCombat) and 1 or 0)
+                    alphaTarget:SetAlpha((not hiddenByOpts and not _ufInCombat) and shownAlpha or 0)
                 elseif vis == "mouseover" then
                     -- Mouseover: hidden by default; hover toggles alpha.
                     -- But when the user has configured any positive "Hide if"
@@ -11537,14 +11682,14 @@ function InitializeFrames()
                     if hiddenByOpts then
                         alphaTarget:SetAlpha(0)
                     elseif hasAnyHideOpt then
-                        alphaTarget:SetAlpha(1)
+                        alphaTarget:SetAlpha(shownAlpha)
                     else
                         alphaTarget:SetAlpha(0)
                     end
                 else
-                    -- Non-combat modes: restore full alpha; Show/Hide controls
-                    -- visibility in the block below.
-                    alphaTarget:SetAlpha(1)
+                    -- Non-combat modes: restore the resting alpha (full, or the
+                    -- out-of-combat fade); Show/Hide controls visibility below.
+                    alphaTarget:SetAlpha(shownAlpha)
                 end
 
                 -- Alpha-only hide for the "visHide*" overrides (mounted,
@@ -11559,10 +11704,12 @@ function InitializeFrames()
                 end
 
                 -- 3D PlayerModel frames don't inherit parent alpha, so
-                -- explicitly sync the model's alpha with the visibility state.
+                -- explicitly sync the model's alpha with the visibility state
+                -- (including the out-of-combat fade, so the portrait dims with
+                -- the rest of the frame instead of staying fully opaque).
                 local bd3d = frame.Portrait and frame.Portrait.backdrop and frame.Portrait.backdrop._3d
                 if bd3d then
-                    bd3d:SetAlpha(hiddenByOpts and 0 or 1)
+                    bd3d:SetAlpha(hiddenByOpts and 0 or shownAlpha)
                 end
 
                 -- Show/Hide and SetAttribute are restricted during lockdown.
@@ -11877,6 +12024,14 @@ function SetupOptionsPanel()
         -- name. Re-assert the preview (red color + fake name) so a settings
         -- change doesn't revert it. Secret-safe: no health values are read.
         if ns._bossPreviewActive and ns.SetBossPreview then ns.SetBossPreview(true) end
+        -- ReloadFrames rebuilds frames but never touches the top-level wrapper /
+        -- 3D-portrait alpha, so recompute the out-of-combat fade here. Without
+        -- this, a profile/spec swap (or first switch to a 3D portrait, whose
+        -- PlayerModel is created at alpha 1) leaves player/target/focus stuck at
+        -- the old opacity until the next combat/target/zone event. Safe from the
+        -- throttle: UpdateFrameVisibility guards its restricted Show/Hide behind
+        -- InCombatLockdown, and SetAlpha is unrestricted.
+        if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
         -- 12.1 aura containers reload with every real pass (direct call --
         -- ns.ReloadFrames is just the throttle-arming stub, so wrapping it
         -- from the container file is timing-unreliable).

@@ -1135,7 +1135,7 @@ initFrame:SetScript("OnEvent", function(self)
         extraFS:SetWordWrap(false)
 
         -- Resolve preview text for a content key
-        local function PreviewTextForContent(content, s)
+        local function PreviewTextForContent(content, s, prefix)
             -- Mirror live "Show Decimal on Text": one decimal on abbreviated values
             -- and percents when the global flag is on; integer (current) otherwise.
             local function _pvAbbrev(v)
@@ -1145,23 +1145,34 @@ initFrame:SetScript("OnEvent", function(self)
             local function _pvPct(p01)
                 return _G._EUI_TextDecimals and string.format("%.1f", p01 * 100) or tostring(math.floor(p01 * 100))
             end
-            if content == "name" then
-                if unitKey == "player" then
-                    return UnitName("player") or "Player"
-                else
-                    return _previewCreatureNames[unitKey] or unitKey
-                end
-            elseif content == "nametotarget" then
-                local nm = (unitKey == "player") and (UnitName("player") or "Player")
-                    or (_previewCreatureNames[unitKey] or unitKey)
-                -- Sample class-colored target name to illustrate the always-class-colored target.
+            local function _pvName()
+                if unitKey == "player" then return UnitName("player") or "Player" end
+                return _previewCreatureNames[unitKey] or unitKey
+            end
+            local function _pvTargetSuffix()
                 local _, ct = UnitClass("player")
                 local cc = ct and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[ct]
                 local tgt = "Target"
                 if cc then
                     tgt = string.format("|cff%02x%02x%02x%s|r", math.floor(cc.r * 255 + 0.5), math.floor(cc.g * 255 + 0.5), math.floor(cc.b * 255 + 0.5), tgt)
                 end
-                return nm .. " > " .. tgt
+                return " > " .. tgt
+            end
+            local function _pvShortName(raw)
+                if not prefix then return raw end
+                local maxLen = s[prefix .. "ShortNameLength"] or 0
+                if maxLen <= 0 or #raw <= maxLen then return raw end
+                local useEllipsis = s[prefix .. "ShortNameEllipsis"] ~= false
+                if useEllipsis then
+                    return raw:sub(1, maxLen) .. "..."
+                else
+                    return raw:sub(1, maxLen)
+                end
+            end
+            if content == "name" then
+                return _pvShortName(_pvName())
+            elseif content == "nametotarget" then
+                return _pvShortName(_pvName()) .. _pvTargetSuffix()
             elseif content == "both" or content == "bothdash" or content == "curhpshort" or content == "perhp" or content == "perhpnosign" or content == "perhpnum" or content == "perhpnumdash" then
                 local maxHP = UnitHealthMax("player") or 1
                 local pct = _previewHealthPct or 0.70
@@ -1275,7 +1286,7 @@ initFrame:SetScript("OnEvent", function(self)
                     extraFS:SetJustifyH("LEFT")
                     PP.Point(extraFS, "LEFT", textOverlay, "LEFT", 5 + exo, eyo)
                 end
-                extraFS:SetText(PreviewTextForContent(ec, s))
+                extraFS:SetText(PreviewTextForContent(ec, s, "extraText"))
                 extraFS:Show()
                 PreviewClassColor(extraFS, s.extraTextClassColor, s.extraTextColorR, s.extraTextColorG, s.extraTextColorB)
             else
@@ -1288,7 +1299,7 @@ initFrame:SetScript("OnEvent", function(self)
             if cc ~= "none" then
                 centerFS:SetJustifyH("CENTER")
                 PP.Point(centerFS, "CENTER", textOverlay, "CENTER", cxo, cyo)
-                centerFS:SetText(PreviewTextForContent(cc, s))
+                centerFS:SetText(PreviewTextForContent(cc, s, "centerText"))
                 centerFS:Show()
                 PreviewClassColor(centerFS, s.centerTextClassColor, s.centerTextColorR, s.centerTextColorG, s.centerTextColorB)
             else
@@ -1310,7 +1321,7 @@ initFrame:SetScript("OnEvent", function(self)
                 else
                     leftFS:SetWidth(0)
                 end
-                leftFS:SetText(PreviewTextForContent(lc, s))
+                leftFS:SetText(PreviewTextForContent(lc, s, "leftText"))
                 leftFS:Show()
                 PreviewClassColor(leftFS, s.leftTextClassColor, s.leftTextColorR, s.leftTextColorG, s.leftTextColorB)
             else
@@ -1322,7 +1333,7 @@ initFrame:SetScript("OnEvent", function(self)
             if rc ~= "none" then
                 rightFS:SetJustifyH("RIGHT")
                 PP.Point(rightFS, "RIGHT", textOverlay, "RIGHT", -5 + rxo, ryo)
-                rightFS:SetText(PreviewTextForContent(rc, s))
+                rightFS:SetText(PreviewTextForContent(rc, s, "rightText"))
                 rightFS:Show()
                 PreviewClassColor(rightFS, s.rightTextClassColor, s.rightTextColorR, s.rightTextColorG, s.rightTextColorB)
             else
@@ -1667,7 +1678,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if lc ~= "none" then
                     btbLeftFS:SetJustifyH("LEFT")
                     PP.Point(btbLeftFS, "LEFT", btbTextOvr, "LEFT", 5 + (s.btbLeftX or 0), s.btbLeftY or 0)
-                    btbLeftFS:SetText(PreviewTextForContent(lc, s))
+                    btbLeftFS:SetText(PreviewTextForContent(lc, s, "btbLeft"))
                     btbLeftFS:Show()
                     PreviewClassColor(btbLeftFS, s.btbLeftClassColor, s.btbLeftColorR, s.btbLeftColorG, s.btbLeftColorB)
                     PreviewPowerColor(btbLeftFS, lc, s.btbLeftPowerColor)
@@ -1678,7 +1689,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if rc ~= "none" then
                     btbRightFS:SetJustifyH("RIGHT")
                     PP.Point(btbRightFS, "RIGHT", btbTextOvr, "RIGHT", -5 + (s.btbRightX or 0), s.btbRightY or 0)
-                    btbRightFS:SetText(PreviewTextForContent(rc, s))
+                    btbRightFS:SetText(PreviewTextForContent(rc, s, "btbRight"))
                     btbRightFS:Show()
                     PreviewClassColor(btbRightFS, s.btbRightClassColor, s.btbRightColorR, s.btbRightColorG, s.btbRightColorB)
                     PreviewPowerColor(btbRightFS, rc, s.btbRightPowerColor)
@@ -1689,7 +1700,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if cc ~= "none" then
                     btbCenterFS:SetJustifyH("CENTER")
                     PP.Point(btbCenterFS, "CENTER", btbTextOvr, "CENTER", s.btbCenterX or 0, s.btbCenterY or 0)
-                    btbCenterFS:SetText(PreviewTextForContent(cc, s))
+                    btbCenterFS:SetText(PreviewTextForContent(cc, s, "btbCenter"))
                     btbCenterFS:Show()
                     PreviewClassColor(btbCenterFS, s.btbCenterClassColor, s.btbCenterColorR, s.btbCenterColorG, s.btbCenterColorB)
                     PreviewPowerColor(btbCenterFS, cc, s.btbCenterPowerColor)
@@ -4139,6 +4150,37 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
+        -- Out of Combat Alpha: inline cog on the Visibility row (left region,
+        -- next to the Visibility dropdown/sync). Fades the whole unit frame to a
+        -- chosen alpha while out of combat (100 = no fade; full alpha in combat).
+        -- Off by default. Applied via ns.ResolveFrameAlpha inside
+        -- UpdateFrameVisibility, so it reacts to combat on the existing regen path.
+        -- Reuses the CDM fade's strings ("Fade Out of Combat" / "Out of Combat
+        -- Alpha") so the terminology stays consistent across modules.
+        do
+            local rgn = visRow._leftRegion
+            local _, oocCogShow = EllesmereUI.BuildCogPopup({
+                title = "Out of Combat Alpha",
+                rows = {
+                    { type = "toggle", label = "Fade Out of Combat",
+                      tooltip = "Fades the entire frame (portrait, health and power bars, text) while out of combat.",
+                      get = function() return SVal("oocFadeEnabled", false) == true end,
+                      set = function(v)
+                          SSet("oocFadeEnabled", v)
+                          if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
+                      end },
+                    { type = "slider", label = "Out of Combat Alpha", min = 0, max = 100, step = 1,
+                      disabled = function() return not SVal("oocFadeEnabled", false) end,
+                      get = function() return math.floor((SVal("oocAlpha", 0.5)) * 100 + 0.5) end,
+                      set = function(v)
+                          SSet("oocAlpha", v / 100)
+                          if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
+                      end },
+                },
+            })
+            MakeCogBtn(rgn, oocCogShow)
+        end
+
         -- Sync icon on Visibility Options (right)
         do
             local rgn = visRow._rightRegion
@@ -5690,6 +5732,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.leftTextColorR, d.leftTextColorG, d.leftTextColorB = src.leftTextColorR, src.leftTextColorG, src.leftTextColorB
                         d.leftTextSize = src.leftTextSize
                         d.leftTextX, d.leftTextY = src.leftTextX, src.leftTextY
+                        d.leftTextShortNameLength = src.leftTextShortNameLength
+                        d.leftTextShortNameEllipsis = src.leftTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -5712,6 +5757,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.leftTextSize or 0) ~= (src.leftTextSize or 0) then return false end
                         if (d.leftTextX or 0) ~= (src.leftTextX or 0) then return false end
                         if (d.leftTextY or 0) ~= (src.leftTextY or 0) then return false end
+                        if (d.leftTextShortNameLength or 0) ~= (src.leftTextShortNameLength or 0) then return false end
+
+                        if (d.leftTextShortNameEllipsis == false) ~= (src.leftTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -5792,7 +5840,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("leftTextY", 0) end,
                       set=function(v) SSet("leftTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("leftTextShortNameLength", 0) end,
+                      set=function(v) SSet("leftTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("leftTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("leftTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local leftCogShow = leftCogShowRaw
             local leftCogBtn = MakeCogBtn(leftRgn, leftCogShow)
@@ -5825,6 +5883,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.rightTextColorR, d.rightTextColorG, d.rightTextColorB = src.rightTextColorR, src.rightTextColorG, src.rightTextColorB
                         d.rightTextSize = src.rightTextSize
                         d.rightTextX, d.rightTextY = src.rightTextX, src.rightTextY
+                        d.rightTextShortNameLength = src.rightTextShortNameLength
+                        d.rightTextShortNameEllipsis = src.rightTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -5847,6 +5908,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.rightTextSize or 0) ~= (src.rightTextSize or 0) then return false end
                         if (d.rightTextX or 0) ~= (src.rightTextX or 0) then return false end
                         if (d.rightTextY or 0) ~= (src.rightTextY or 0) then return false end
+                        if (d.rightTextShortNameLength or 0) ~= (src.rightTextShortNameLength or 0) then return false end
+
+                        if (d.rightTextShortNameEllipsis == false) ~= (src.rightTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -5925,7 +5989,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("rightTextY", 0) end,
                       set=function(v) SSet("rightTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("rightTextShortNameLength", 0) end,
+                      set=function(v) SSet("rightTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("rightTextContent","both") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("rightTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("rightTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("rightTextContent","both") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local rightCogShow = rightCogShowRaw
             local rightCogBtn = MakeCogBtn(rightRgn, rightCogShow)
@@ -5974,6 +6048,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.centerTextColorR, d.centerTextColorG, d.centerTextColorB = src.centerTextColorR, src.centerTextColorG, src.centerTextColorB
                         d.centerTextSize = src.centerTextSize
                         d.centerTextX, d.centerTextY = src.centerTextX, src.centerTextY
+                        d.centerTextShortNameLength = src.centerTextShortNameLength
+                        d.centerTextShortNameEllipsis = src.centerTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -5996,6 +6073,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.centerTextSize or 0) ~= (src.centerTextSize or 0) then return false end
                         if (d.centerTextX or 0) ~= (src.centerTextX or 0) then return false end
                         if (d.centerTextY or 0) ~= (src.centerTextY or 0) then return false end
+                        if (d.centerTextShortNameLength or 0) ~= (src.centerTextShortNameLength or 0) then return false end
+
+                        if (d.centerTextShortNameEllipsis == false) ~= (src.centerTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -6074,7 +6154,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("centerTextY", 0) end,
                       set=function(v) SSet("centerTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("centerTextShortNameLength", 0) end,
+                      set=function(v) SSet("centerTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("centerTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("centerTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local centerCogShow = centerCogShowRaw
             local centerCogBtn = MakeCogBtn(ctrRgn, centerCogShow)
@@ -6111,6 +6201,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.extraTextSize = src.extraTextSize
                         d.extraTextX, d.extraTextY = src.extraTextX, src.extraTextY
                         d.extraTextAlign = src.extraTextAlign
+                        d.extraTextShortNameLength = src.extraTextShortNameLength
+                        d.extraTextShortNameEllipsis = src.extraTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -6134,6 +6227,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.extraTextX or 0) ~= (src.extraTextX or 0) then return false end
                         if (d.extraTextY or 0) ~= (src.extraTextY or 0) then return false end
                         if (d.extraTextAlign or "left") ~= (src.extraTextAlign or "left") then return false end
+                        if (d.extraTextShortNameLength or 0) ~= (src.extraTextShortNameLength or 0) then return false end
+
+                        if (d.extraTextShortNameEllipsis == false) ~= (src.extraTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -6215,7 +6311,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("extraTextY", 0) end,
                       set=function(v) SSet("extraTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("extraTextShortNameLength", 0) end,
+                      set=function(v) SSet("extraTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("extraTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("extraTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("extraTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("extraTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local extraCogShow = extraCogShowRaw
             local extraCogBtn = MakeCogBtn(etrRgn, extraCogShow)
@@ -8277,7 +8383,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return SVal("btbLeftY", 0) end,
                       set=function(v) SSet("btbLeftY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("btbLeftShortNameLength", 0) end,
+                      set=function(v) SSet("btbLeftShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbLeftContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("btbLeftShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("btbLeftShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbLeftContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local btbLeftCogShow = btbLeftCogShowRaw
             local btbLCogBtn = MakeCogBtn(btbLRgn, btbLeftCogShow)
@@ -8391,7 +8507,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return SVal("btbRightY", 0) end,
                       set=function(v) SSet("btbRightY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("btbRightShortNameLength", 0) end,
+                      set=function(v) SSet("btbRightShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbRightContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("btbRightShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("btbRightShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbRightContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local btbRightCogShow = btbRightCogShowRaw
             local btbRCogBtn = MakeCogBtn(btbRRgn, btbRightCogShow)
@@ -8587,7 +8713,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return SVal("btbCenterY", 0) end,
                       set=function(v) SSet("btbCenterY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("btbCenterShortNameLength", 0) end,
+                      set=function(v) SSet("btbCenterShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbCenterContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("btbCenterShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("btbCenterShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbCenterContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local btbCenterCogShow = btbCenterCogShowRaw
             local btbCCogBtn = MakeCogBtn(btbCRgn, btbCenterCogShow)
@@ -11440,7 +11576,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return MVal("leftTextY", 0) end,
                       set=function(v) MSet("leftTextY", v) end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return MVal("leftTextShortNameLength", 0) end,
+                      set=function(v) MSet("leftTextShortNameLength", v) end,
+                      disabled=function() local c=MVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return MVal("leftTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) MSet("leftTextShortNameEllipsis", v) end,
+                      disabled=function() local c=MVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local cogBtn = MCogBtn(rgn, cogShowFn)
             local function UpdCog()
@@ -11516,7 +11662,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return MVal("rightTextY", 0) end,
                       set=function(v) MSet("rightTextY", v) end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return MVal("rightTextShortNameLength", 0) end,
+                      set=function(v) MSet("rightTextShortNameLength", v) end,
+                      disabled=function() local c=MVal("rightTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return MVal("rightTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) MSet("rightTextShortNameEllipsis", v) end,
+                      disabled=function() local c=MVal("rightTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local cogBtn = MCogBtn(rgn, cogShowFn)
             local function UpdCog()
@@ -11604,7 +11760,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return MVal("centerTextY", 0) end,
                       set=function(v) MSet("centerTextY", v) end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return MVal("centerTextShortNameLength", 0) end,
+                      set=function(v) MSet("centerTextShortNameLength", v) end,
+                      disabled=function() local c=MVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return MVal("centerTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) MSet("centerTextShortNameEllipsis", v) end,
+                      disabled=function() local c=MVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local cogBtn = MCogBtn(rgn, cogShowFn)
             local function UpdCog()

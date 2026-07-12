@@ -606,7 +606,81 @@ function RegisterUnlockElements()
                 p.width = max(60, PPdr and PPdr.Snap(w - p.gap - iconSize) or floor(w - p.gap - iconSize + 0.5))
                 Rebuild()
             end,
-            setHeight = function() end,
+            -- Height is the SUM of three independently-sized bars (Second
+            -- Wind, Skyriding charges, Speed) plus two fixed gaps between
+            -- them -- there's no single "height" field to write. Scale all
+            -- three proportionally toward the requested total, matching how
+            -- the Options page's three height sliders combine to change the
+            -- overall element size, then clamp each to its own Options-page
+            -- slider range (2-24 / 2-24 / 4-40) so a drag can't push one bar
+            -- to zero or past its usable size.
+            setHeight = function(_, h)
+                local p = db.profile
+                local PPdr = EllesmereUI and EllesmereUI.PP
+                local newTotalH = PPdr and PPdr.Snap(h) or floor(h + 0.5)
+                local targetSum = max(8, newTotalH - 2 * p.gap)
+
+                local bars = {
+                    { field = "secondWindHeight", lo = 2, hi = 24 },
+                    { field = "skyridingHeight",  lo = 2, hi = 24 },
+                    { field = "speedHeight",      lo = 4, hi = 40 },
+                }
+                local oldSum = 0
+                for _, b in ipairs(bars) do
+                    b.old = p[b.field]
+                    oldSum = oldSum + b.old
+                end
+                if oldSum <= 0 then
+                    -- Corrupted/legacy profile (e.g. hand-edited SavedVariables)
+                    -- with all three heights at/under zero: reset to defaults so
+                    -- the control self-heals instead of silently no-op'ing forever.
+                    for _, b in ipairs(bars) do p[b.field] = DB_DEFAULTS.profile[b.field] end
+                    Rebuild()
+                    return
+                end
+
+                local scale = targetSum / oldSum
+                for _, b in ipairs(bars) do
+                    b.new = max(b.lo, min(b.hi, floor(b.old * scale + 0.5)))
+                end
+
+                -- A bar already at its min/max absorbs none of a further
+                -- shrink/grow, so plain proportional scaling can leave the
+                -- resize handle feeling stuck once one or two bars saturate.
+                -- Hand any leftover delta to whichever bar(s) still have
+                -- headroom instead of discarding it (bounded to 3 passes --
+                -- one per bar -- so this always terminates).
+                for _ = 1, #bars do
+                    local sum = bars[1].new + bars[2].new + bars[3].new
+                    local leftover = targetSum - sum
+                    if leftover == 0 then break end
+                    local openBars = {}
+                    for _, b in ipairs(bars) do
+                        if (leftover > 0 and b.new < b.hi) or (leftover < 0 and b.new > b.lo) then
+                            openBars[#openBars + 1] = b
+                        end
+                    end
+                    if #openBars == 0 then break end
+                    local shareF = leftover / #openBars
+                    local share = shareF >= 0 and floor(shareF + 0.5) or -floor(-shareF + 0.5)
+                    if share == 0 then
+                        -- Leftover doesn't divide evenly across every open bar
+                        -- this pass (e.g. 1px across 3 bars): give the whole
+                        -- remainder to just the first bar with headroom rather
+                        -- than rounding a fractional share up and applying it
+                        -- to all of them, which would overshoot the target.
+                        local b = openBars[1]
+                        b.new = max(b.lo, min(b.hi, b.new + leftover))
+                    else
+                        for _, b in ipairs(openBars) do
+                            b.new = max(b.lo, min(b.hi, b.new + share))
+                        end
+                    end
+                end
+
+                for _, b in ipairs(bars) do p[b.field] = b.new end
+                Rebuild()
+            end,
             savePos = SavePos, loadPos = LoadPos, clearPos = ClearPos, applyPos = ApplyPos,
         }),
     })

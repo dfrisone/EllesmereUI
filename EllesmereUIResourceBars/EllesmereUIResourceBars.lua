@@ -1020,6 +1020,7 @@ local DEFAULTS = {
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
+            visHideDragonriding = false,
             visHideNoTarget = false,
             visHideNoEnemy = false,
             orientation = "HORIZONTAL",  -- "HORIZONTAL","VERTICAL_UP","VERTICAL_DOWN"
@@ -1066,6 +1067,7 @@ local DEFAULTS = {
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
+            visHideDragonriding = false,
             visHideNoTarget = false,
             visHideNoEnemy = false,
             orientation = "HORIZONTAL",  -- "HORIZONTAL","VERTICAL_UP","VERTICAL_DOWN"
@@ -1146,6 +1148,7 @@ local DEFAULTS = {
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
+            visHideDragonriding = false,
             visHideNoTarget = false,
             visHideNoEnemy = false,
             oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
@@ -7388,7 +7391,7 @@ local function OnEvent(self, event, ...)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
         UpdateVisibility()
-    elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
+    elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" or event == "PLAYER_CAN_GLIDE_CHANGED" then
         UpdateVisibility()
     elseif event == "ZONE_CHANGED_NEW_AREA" then
         -- Re-check secondary max power: UnitPowerMax can change across zone
@@ -7686,6 +7689,7 @@ function ERB:OnEnable()
     eventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
     -- Visibility option events
     eventFrame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_CAN_GLIDE_CHANGED")
     eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     eventFrame:RegisterUnitEvent("UNIT_ABSORB_AMOUNT_CHANGED", "player")

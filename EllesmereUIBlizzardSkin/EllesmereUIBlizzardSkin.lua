@@ -269,9 +269,9 @@ end
         if cached and _GameTooltip:IsShown() and _tipShownGUID == guid
             and not ttd.ilvlShown
             and EllesmereUIDB and EllesmereUIDB.tooltipItemLevel ~= false
-            and not _tipHasLine(_GameTooltip, "Item Level") then
+            and not _tipHasLine(_GameTooltip, EllesmereUI.L("Item Level")) then
             local nBefore = _GameTooltip:NumLines() or 0
-            _GameTooltip:AddDoubleLine("Item Level:", cached.ilvl, 1, 1, 1, 1, 1, 1)
+            _GameTooltip:AddDoubleLine(EllesmereUI.L("Item Level:"), cached.ilvl, 1, 1, 1, 1, 1, 1)
             _ttFonts(_GameTooltip, nBefore + 1)
             _GameTooltip:Show()
             ttd.ilvlShown = true
@@ -515,8 +515,8 @@ end
                     end
                 end
             end
-            if ilvl and not _tipHasLine(tt, "Item Level") then
-                tt:AddDoubleLine("Item Level:", ilvl, 1, 1, 1, 1, 1, 1)
+            if ilvl and not _tipHasLine(tt, EllesmereUI.L("Item Level")) then
+                tt:AddDoubleLine(EllesmereUI.L("Item Level:"), ilvl, 1, 1, 1, 1, 1, 1)
                 ttd.ilvlShown = true
             end
         end

@@ -6384,6 +6384,8 @@ function NameplateFrame:UpdateClassification()
         PP.Point(self.classFrame, "BOTTOMLEFT", self.health, "TOPLEFT", cxOff, 2 + cpPush + cyOff)
     elseif slot == "topright" then
         PP.Point(self.classFrame, "BOTTOMRIGHT", self.health, "TOPRIGHT", cxOff, 2 + cpPush + cyOff)
+    elseif slot == "bottom" then
+        PP.Point(self.classFrame, "TOP", self.cast, "BOTTOM", cxOff, -2 + cyOff)
     end
     self.classFrame:Show()
     self:UpdateNameWidth()

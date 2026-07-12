@@ -758,6 +758,28 @@ do
                     local btn = _G["OverrideActionBarButton" .. i]
                     if btn then
                         if btn.UpdateAction then btn:UpdateAction() end
+                        -- Force-paint the cooldown swipe/text right now instead of
+                        -- waiting for a future ACTIONBAR_UPDATE_COOLDOWN broadcast --
+                        -- re-registering the broadcaster above only catches the NEXT
+                        -- cooldown state change, so a vehicle ability already on
+                        -- cooldown the moment we enter (or re-enter) the vehicle never
+                        -- gets an initial paint and shows no swipe/number until
+                        -- something else (mouseover, combat) forces a real update.
+                        -- Mirrors the ExtraActionButton1 cooldown dispatch above:
+                        -- GetAttribute("action"), never btn.action (protected/secret
+                        -- attribute -- reading it directly during combat taints).
+                        local cd = btn.cooldown
+                        local action = btn:GetAttribute("action")
+                        if cd and action and HasAction(action) and C_ActionBar and C_ActionBar.GetActionCooldown then
+                            local cdInfo = C_ActionBar.GetActionCooldown(action)
+                            if cdInfo and cdInfo.isActive then
+                                local durObj = C_ActionBar.GetActionCooldownDuration
+                                    and C_ActionBar.GetActionCooldownDuration(action)
+                                if durObj then cd:SetCooldownFromDurationObject(durObj) end
+                            else
+                                cd:Clear()
+                            end
+                        end
                         local hk = btn.HotKey
                         if hk then
                             local key1 = GetBindingKey("ACTIONBUTTON" .. i)
@@ -5622,6 +5644,10 @@ local function BuildVisibilityString(info, s, visOverride)
     local key = info.key
     local vis = visOverride or s.barVisibility or "always"
 
+    if info.isStance and (GetNumShapeshiftForms() or 0) == 0 then
+        return "hide" -- classes/specs with no forms have no stance bar to show
+    end
+
     -- Build visibility-option hide clauses that can be expressed as macro
     -- conditionals. These run inside the secure state driver so they work
     -- even in combat without taint.
@@ -9369,6 +9395,7 @@ function EAB:FinishSetup()
         C_Timer_After(0, function()
             _gridState.spellsPending = false
             LayoutBar("StanceBar")
+            self:RefreshRuntimeVisibility() -- form count may have changed; re-eval stance bar show/hide
             for _, info in ipairs(BAR_CONFIG) do
                 self:ApplyAlwaysShowButtons(info.key)
             end

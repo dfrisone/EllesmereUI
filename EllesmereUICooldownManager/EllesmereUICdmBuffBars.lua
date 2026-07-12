@@ -3253,16 +3253,20 @@ function ns.UpdateTrackedBuffBarTimers()
                 end
             end
 
-            -- Blizzard viewer bind-miss fallback. The buff-bar viewer sometimes
-            -- fails to bind a freshly applied aura to its frame (observed live:
-            -- Avenging Wrath aura up, frame's auraInstanceID never set, IsActive
-            -- stuck false until ANOTHER bar's activation forces a viewer
-            -- refresh). When the assigned frame reads inactive but the player
-            -- demonstrably carries the aura (known-spellID player-aura query,
-            -- no scanning), drive the bar from the aura data directly. Reads
-            -- only; our own frames only -- never pokes the Blizzard frame.
+            -- Blizzard viewer bind-miss / not-tracked-at-all fallback. Covers
+            -- two cases: (1) the buff-bar viewer fails to bind a freshly
+            -- applied aura to its frame (observed live: Avenging Wrath aura
+            -- up, frame's auraInstanceID never set, IsActive stuck false
+            -- until ANOTHER bar's activation forces a viewer refresh), and
+            -- (2) the spell has NO presence in any Blizzard CooldownViewer
+            -- category at all (blzChild permanently nil -- e.g. Essence of
+            -- the Blood Queen, a hero-talent proc buff Blizzard's CDM never
+            -- registers). Either way, when the player demonstrably carries
+            -- the aura (known-spellID player-aura query, no scanning), drive
+            -- the bar from the aura data directly. Reads only; our own
+            -- frames only -- never pokes the Blizzard frame.
             local fbAura
-            if not isActive and blzChild and not cfg.spellIDs
+            if not isActive and not cfg.spellIDs
                and cfg.spellID and cfg.spellID > 0
                and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
                 fbAura = C_UnitAuras.GetPlayerAuraBySpellID(cfg.spellID)

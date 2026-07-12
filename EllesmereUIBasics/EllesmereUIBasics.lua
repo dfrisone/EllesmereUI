@@ -1,6 +1,6 @@
 -------------------------------------------------------------------------------
 --  EllesmereUIBasics.lua  (shim for v6.6)
---
+-- Gly
 --  Basics has been split into per-module addons: EllesmereUIMinimap,
 --  EllesmereUIFriends, EllesmereUIQuestTracker, EllesmereUIQoL (cursor),
 --  EllesmereUIChat, EllesmereUIDamageMeters, EllesmereUIBlizzardSkin.

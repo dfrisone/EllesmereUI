@@ -10172,7 +10172,15 @@ local function Skin_CraftOrders()
         List(mo.OrderList)
     end
 
-    -- Bottom tabs (frame.Tabs table, AH-style).
+    -- Bottom tabs (frame.Tabs table, AH-style). Confirmed via live dump these
+    -- carry none of the standard selection fields (tabID/selectedTabID,
+    -- isSelected, displayMode are all nil, and there's no GetDisplayMode API
+    -- either) so the engine's TabIsSelected() never matches and neither tab
+    -- ever shows active. Selection here is purely which content page is
+    -- shown, so sync the FFD override from BrowseOrders/MyOrdersPage
+    -- visibility instead (mirrors the Auction House's displayMode-based
+    -- SyncTabSel). Runs every Skin_CraftOrders() pass, which the browse/mo
+    -- OnShow hooks below already re-trigger on every tab switch.
     local coTabs = {}
     if type(f.Tabs) == "table" then
         for _, t in ipairs(f.Tabs) do
@@ -10180,6 +10188,15 @@ local function Skin_CraftOrders()
         end
     end
     WSkin.NormalizeTabRow(coTabs)
+    for _, t in ipairs(coTabs) do
+        local name = t.GetName and t:GetName()
+        if name and name:find("BrowseTab", 1, true) then
+            GetFFD(t).selOverride = (f.BrowseOrders and f.BrowseOrders:IsShown()) and true or false
+        elseif name and name:find("OrdersTab", 1, true) then
+            GetFFD(t).selOverride = (f.MyOrdersPage and f.MyOrdersPage:IsShown()) and true or false
+        end
+    end
+    WSkin.UpdateAllTabs()
 
     if not _craftHooked then
         _craftHooked = true

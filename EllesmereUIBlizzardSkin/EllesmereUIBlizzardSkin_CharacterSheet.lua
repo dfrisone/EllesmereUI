@@ -1871,9 +1871,12 @@ local function SkinCharacterSheet()
                         labelIndex = labelIndex + 1
 
                         if newStats[labelIndex] then
-                            -- Update label text
+                            -- Update label text. Shown state respects the section's
+                            -- collapsed flag -- a spec switch refreshes the row data
+                            -- even while collapsed, but must not force it visible
+                            -- again (the collapse/expand path owns visibility).
                             stat.label:SetText(L(newStats[labelIndex].name))
-                            stat.label:Show()
+                            stat.label:SetShown(not sectionData.isCollapsed)
 
                             if stat.value then
                                 -- Find and update the corresponding entry in GetFFD(frame).statsValues
@@ -1895,7 +1898,7 @@ local function SkinCharacterSheet()
                                         break
                                     end
                                 end
-                                stat.value:Show()
+                                stat.value:SetShown(not sectionData.isCollapsed)
                             end
                         else
                             -- Hide stats that aren't in newStats
@@ -1903,8 +1906,9 @@ local function SkinCharacterSheet()
                             if stat.value then stat.value:Hide() end
                         end
                     elseif stat.divider then
-                        -- Show dividers only between visible stats
-                        stat.divider:SetShown(labelIndex < #newStats)
+                        -- Show dividers only between visible stats (and only when
+                        -- the section itself isn't collapsed).
+                        stat.divider:SetShown(not sectionData.isCollapsed and labelIndex < #newStats)
                     end
                 end
 
@@ -2459,14 +2463,19 @@ local function SkinCharacterSheet()
         titleContainer:SetScript("OnClick", function()
             sectionData.isCollapsed = not sectionData.isCollapsed
             _applyCollapsedState()
+            -- _applyCollapsedState's expand branch unconditionally shows every
+            -- row, including ones a showWhen/showCrestKey filter (spec- or
+            -- crest-gated stats, e.g. Brewmaster's Stagger Effect) correctly
+            -- hid earlier. Re-apply the real filter immediately so expanding
+            -- a section never re-reveals a stat that doesn't apply right now.
+            -- (Also recalculates section layout, so no separate call is needed.)
+            RefreshStatsVisibility()
 
             -- Persist across sessions.
             if EllesmereUIDB then
                 EllesmereUIDB.charSheetCollapsedSections = EllesmereUIDB.charSheetCollapsedSections or {}
                 EllesmereUIDB.charSheetCollapsedSections[_collapseKey] = sectionData.isCollapsed or nil
             end
-
-            GetFFD(frame).recalculateSections()
         end)
 
         -- Up/Down reorder arrows (friends-list Favorites/Friends style):

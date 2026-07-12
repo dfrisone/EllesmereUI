@@ -1166,6 +1166,8 @@ initFrame:SetScript("OnEvent", function(self)
                     classIcon:SetPoint("BOTTOMLEFT", health, "TOPLEFT", clXOff, 2 + cpPush + clYOff)
                 elseif clPos == "topright" then
                     classIcon:SetPoint("BOTTOMRIGHT", health, "TOPRIGHT", clXOff, 2 + cpPush + clYOff)
+                elseif clPos == "bottom" then
+                    classIcon:SetPoint("TOP", cast, "BOTTOM", clXOff, -2 + clYOff)
                 end
                 classIcon:Show()
                 if pf._classOverlay then pf._classOverlay:Show() end

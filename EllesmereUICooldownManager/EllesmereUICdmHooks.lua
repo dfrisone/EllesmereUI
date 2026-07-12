@@ -699,19 +699,20 @@ local function ResolveCDIDToBar(cdID, viewerDefaultBar)
     end
     local routedBar = nil
     do
-        if info.spellID and info.spellID > 0 then
-            routedBar = RVV(divertMap, info.spellID)
-        end
-        if not routedBar and info.overrideSpellID and info.overrideSpellID > 0
-           and info.overrideSpellID ~= info.spellID then
+        -- No raw `> 0` / `~=` comparisons on info.spellID/overrideSpellID here:
+        -- on an active CDM viewer frame these can be secret numbers (per
+        -- EllesmereUICdmSpellPicker.lua's _IsUsableSID comment), and comparing
+        -- a secret value directly taints execution. RVV (ResolveVariantValue)
+        -- already gates its input through _IsUsableSID internally, so just
+        -- feed it the raw fields and let it reject anything unusable.
+        routedBar = RVV(divertMap, info.spellID)
+        if not routedBar then
             routedBar = RVV(divertMap, info.overrideSpellID)
         end
         if not routedBar and info.linkedSpellIDs then
             for _, lid in ipairs(info.linkedSpellIDs) do
-                if type(lid) == "number" and lid > 0 then
-                    routedBar = RVV(divertMap, lid)
-                    if routedBar then break end
-                end
+                routedBar = RVV(divertMap, lid)
+                if routedBar then break end
             end
         end
     end
