@@ -413,12 +413,29 @@ end
 --  Build / Rebuild / Redraw
 -------------------------------------------------------------------------------
 local function LayoutPips(frame, pipCount, width, height, spacing)
+    -- Distribute in whole PHYSICAL-pixel units (PP.mult), not whole
+    -- UI-coordinate units. 1 UI-unit only equals 1 physical pixel at the
+    -- "pixel perfect" scale -- at any other UI Scale, flooring to whole
+    -- UI-units left a fractional remainder unassigned, so the last pip fell
+    -- short of the frame's actual right edge (the "extra spacing between
+    -- charges and Whirling Surge" report, reproducible at UI scales where
+    -- that leftover doesn't round away to ~0).
+    local PPdr = EllesmereUI and EllesmereUI.PP
+    local px = (PPdr and PPdr.mult and PPdr.mult > 0) and PPdr.mult or 1
     local widthAvail = max(0, width - (pipCount - 1) * spacing)
-    local pipW = floor(widthAvail / pipCount)
-    local rem  = widthAvail - pipW * pipCount
+    -- If the whole row doesn't span even one physical pixel (a very small
+    -- bar at a low UI Scale, where px itself is large), snapping to whole
+    -- physical-pixel units would floor every pip to 0 width -- pips
+    -- vanishing entirely is worse than the sub-pixel gap this fix targets.
+    -- Fall back to plain UI-unit distribution (pre-fix behavior) in that
+    -- degenerate case so pips stay visible, just not perfectly pixel-snapped.
+    if widthAvail < px then px = 1 end
+    local totalUnits = floor(widthAvail / px + 1e-6)
+    local unitsPer = floor(totalUnits / pipCount)
+    local remUnits = totalUnits - unitsPer * pipCount
     local x = 0
     for i = 1, pipCount do
-        local thisW = pipW + (i <= rem and 1 or 0)
+        local thisW = (unitsPer + (i <= remUnits and 1 or 0)) * px
         local pip = frame.pips[i]
         pip:ClearAllPoints()
         pip:SetPoint("TOPLEFT", frame, "TOPLEFT", x, 0)

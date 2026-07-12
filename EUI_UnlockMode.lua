@@ -1729,6 +1729,47 @@ local function ApplyAllWidthHeightMatches()
     ApplyMatchesInDependencyOrder(MatchH.GetHeightMatchDB(), MatchH.ApplyHeightMatch)
 end
 
+-- Re-sync every active width/height match when the global UI Scale changes.
+-- ApplyWidthMatch/ApplyHeightMatch convert the target's size into the
+-- source's coordinate space via GetEffectiveScale() ratio -- correct at the
+-- moment they run, but nothing previously re-ran that conversion after a UI
+-- Scale change, so a source/target pair whose frames don't scale identically
+-- (e.g. a custom element parented to UIParent matched against a Blizzard
+-- Edit Mode frame with its own independent scale) is left using the OLD
+-- scale ratio until something UNRELATED happens to trigger a re-match. This
+-- produced reports of "extra spacing" on Dragon Riding's Width Match to
+-- Cooldowns that only went away when changing something else forced a
+-- re-application. A short delay lets every frame's GetEffectiveScale()
+-- finish propagating through the hierarchy before recomputing.
+-- Debounced to a quiet period rather than a fixed delay from the first
+-- event: a live-preview UI Scale slider can fire this event many times per
+-- second while being dragged, and re-running the match pass on every single
+-- firing (each one capturing a different, still-transient scale) was itself
+-- causing a non-converging feedback loop -- the re-applied width feeding
+-- into the next SetSize, which re-fires the resize-propagation chain, which
+-- re-applies again with a slightly different value, repeating indefinitely.
+-- Cancelling and rescheduling on every event means the pass only actually
+-- runs once scale changes stop arriving for a moment.
+-- Shares its debounce timer (on EllesmereUI.PP) with the other UI-Scale
+-- trigger in EllesmereUI.lua's PP.SetUIScale, rather than keeping an
+-- independent local timer: whether UIParent:SetScale() also raises this
+-- event is not something we could verify statically, so if it does, this
+-- listener cancels/replaces PP.SetUIScale's own pending timer (or vice
+-- versa) instead of both firing a full match pass back to back.
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("UI_SCALE_CHANGED")
+    f:SetScript("OnEvent", function()
+        local PPu = EllesmereUI and EllesmereUI.PP
+        if not PPu then return end
+        if PPu._scaleMatchDebounce then PPu._scaleMatchDebounce:Cancel() end
+        PPu._scaleMatchDebounce = C_Timer.NewTimer(0.3, function()
+            PPu._scaleMatchDebounce = nil
+            ApplyAllWidthHeightMatches()
+        end)
+    end)
+end
+
 -------------------------------------------------------------------------------
 --  OnSizeChanged hook for registered element frames
 --  Automatically fires NotifyElementResized when a frame changes size,

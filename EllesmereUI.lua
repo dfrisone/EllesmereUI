@@ -1867,6 +1867,21 @@ do
             if _G._ERB_Apply then _G._ERB_Apply() end
             if _G._EAB_Apply then _G._EAB_Apply() end
             if _G._ECME_Apply then _G._ECME_Apply() end
+            -- Re-sync width/height matches (e.g. Dragon Riding's Width Match
+            -- to Cooldowns) against the new pixel grid. This is EllesmereUI's
+            -- own scale setter -- it calls UIParent:SetScale() directly, which
+            -- does NOT fire Blizzard's UI_SCALE_CHANGED (that's tied to the
+            -- CVar system), so a listener on that event never catches this
+            -- path. Debounced the same way: the Options slider can call this
+            -- repeatedly while being dragged, and re-matching on every single
+            -- call was itself causing a non-converging feedback loop.
+            if EllesmereUI.ApplyAllWidthHeightMatches then
+                if PP._scaleMatchDebounce then PP._scaleMatchDebounce:Cancel() end
+                PP._scaleMatchDebounce = C_Timer.NewTimer(0.3, function()
+                    PP._scaleMatchDebounce = nil
+                    EllesmereUI.ApplyAllWidthHeightMatches()
+                end)
+            end
         end
     end
 
