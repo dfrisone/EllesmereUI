@@ -50,6 +50,18 @@ initFrame:SetScript("OnEvent", function(self)
         return db and db.profile
     end
     local function DDB()  local p = DB(); return p and p.display end
+
+    local PREVIEW_TEXT_ANCHORS = {
+        BOTTOM = { "TOP",    "BOTTOM" },
+        TOP    = { "BOTTOM", "TOP"    },
+        CENTER = { "CENTER", "CENTER" },
+        LEFT   = { "RIGHT",  "LEFT"   },
+        RIGHT  = { "LEFT",   "RIGHT"  },
+    }
+    local function GetPreviewTextAnchor(d)
+        local m = PREVIEW_TEXT_ANCHORS[(d and d.textAnchor) or "BOTTOM"] or PREVIEW_TEXT_ANCHORS.BOTTOM
+        return m[1], m[2]
+    end
     local function RDB()  local p = DB(); return p and p.raidBuffs end
     local function ADB()  local p = DB(); return p and p.auras end
     local function CDB()  local p = DB(); return p and p.consumables end
@@ -279,7 +291,8 @@ initFrame:SetScript("OnEvent", function(self)
                 local textYOff = d and d.textYOffset or -2
                 SetPVFont(btn._text, fontPath, textSize)
                 btn._text:ClearAllPoints()
-                btn._text:SetPoint("TOP", btn, "BOTTOM", textXOff, textYOff)
+                local tp, ip = GetPreviewTextAnchor(d)
+                btn._text:SetPoint(tp, btn, ip, textXOff, textYOff)
                 btn._text:SetTextColor(tc.r, tc.g, tc.b, 1)
                 btn._text:Show()
             else
@@ -548,7 +561,10 @@ initFrame:SetScript("OnEvent", function(self)
             local textXOff = d and d.textXOffset or 0
             local textYOff = d and d.textYOffset or -2
             local text = btn:CreateFontString(nil, "OVERLAY")
-            text:SetPoint("TOP", btn, "BOTTOM", textXOff, textYOff)
+            do
+                local tp, ip = GetPreviewTextAnchor(d)
+                text:SetPoint(tp, btn, ip, textXOff, textYOff)
+            end
             SetPVFont(text, fontPath, textSize)
             text:SetTextColor(tc.r, tc.g, tc.b, 1)
             text:SetText(iconData.label or "")
@@ -943,6 +959,14 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Text Size", min=6, max=30, step=1,
                       get=function() local d = DDB(); return d and d.textSize or 11 end,
                       set=function(v) local d = DDB(); if not d then return end; d.textSize = v; RefreshAll(); UpdatePreviewHeader() end },
+                    { type="dropdown", label="Anchor",
+                      values = {
+                          BOTTOM = "Below Icon", TOP = "Above Icon",
+                          CENTER = "On Icon", LEFT = "Left of Icon", RIGHT = "Right of Icon",
+                      },
+                      order = { "BOTTOM", "TOP", "CENTER", "LEFT", "RIGHT" },
+                      get=function() local d = DDB(); return d and d.textAnchor or "BOTTOM" end,
+                      set=function(v) local d = DDB(); if not d then return end; d.textAnchor = v; RefreshAll(); UpdatePreviewHeader() end },
                     { type="slider", label="X Offset", min=-50, max=50, step=1,
                       get=function() local d = DDB(); return d and d.textXOffset or 0 end,
                       set=function(v) local d = DDB(); if not d then return end; d.textXOffset = v; RefreshAll(); UpdatePreviewHeader() end },

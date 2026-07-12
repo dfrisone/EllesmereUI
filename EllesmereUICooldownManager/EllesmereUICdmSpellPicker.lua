@@ -930,6 +930,254 @@ function ns.MoveTrackedSpell(barKey, fromIdx, toIdx)
     return true
 end
 
+--- Stable display-order key for a Blizzard-tracked buff (cooldownID) or custom.
+local function BuffDisplayStableKey(sid, cdID)
+    if type(cdID) == "number" then return "c" .. cdID end
+    if type(sid) == "number" and sid > 0 then return "s" .. sid end
+    return nil
+end
+ns.BuffDisplayStableKey = BuffDisplayStableKey
+
+--- Spell ids associated with a stored buffDisplayOrder key ("c"..cdID / "s"..sid).
+local function SpellIdsForBuffOrderKey(key)
+    if type(key) ~= "string" then return nil end
+    local pfx, num = string.sub(key, 1, 1), tonumber(string.sub(key, 2))
+    if not num or num <= 0 then return nil end
+    if pfx == "s" then return num end
+    if pfx == "c" and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(num)
+        if not info then return nil end
+        if _IsUsableSID(info.overrideSpellID) then return info.overrideSpellID end
+        if _IsUsableSID(info.spellID) then return info.spellID end
+    end
+    return nil
+end
+
+--- True when a live buff entry matches a stored buffDisplayOrder key, including
+--- hero-talent / override variants (cooldownID can drift across talent swaps).
+local function BuffOrderKeyMatchesEntry(key, sid, cdID, frame)
+    if not key then return false end
+    local stable = BuffDisplayStableKey(sid, cdID)
+    if stable and stable == key then return true end
+    local storedSid = SpellIdsForBuffOrderKey(key)
+    if not storedSid then return false end
+    if sid and IsVariantOf(storedSid, sid) then return true end
+    if frame and ns.GetCanonicalSpellIDForFrame then
+        local canon = ns.GetCanonicalSpellIDForFrame(frame)
+        if canon and IsVariantOf(storedSid, canon) then return true end
+    end
+    if cdID and type(cdID) == "number" and ns._cdmCleanSidByCDID then
+        local clean = ns._cdmCleanSidByCDID[cdID]
+        if clean and IsVariantOf(storedSid, clean) then return true end
+    end
+    return false
+end
+
+--- Enumerate default-buffs-bar entries (viewer pool + this bar's customs/items),
+--- minus spells diverted to other buff-family or hosted CD/utility bars.
+function ns.CollectDefaultBuffTrackEntries()
+    local diverted = {}
+    local p = ECME and ECME.db and ECME.db.profile
+    if p and p.cdmBars and p.cdmBars.bars then
+        for _, otherBd in ipairs(p.cdmBars.bars) do
+            if otherBd.enabled and otherBd.key ~= "buffs" then
+                local otherSd = ns.GetBarSpellData(otherBd.key)
+                if otherBd.barType == "buffs" or otherBd.barType == "custom_buff" then
+                    if otherSd and otherSd.assignedSpells then
+                        for _, sid in ipairs(otherSd.assignedSpells) do
+                            if type(sid) == "number" and sid > 0 then diverted[sid] = true end
+                        end
+                    end
+                elseif otherSd and otherSd.hostedBuffSpellIDs then
+                    for sid in pairs(otherSd.hostedBuffSpellIDs) do
+                        if type(sid) == "number" and sid > 0 then diverted[sid] = true end
+                    end
+                end
+            end
+        end
+    end
+
+    local out = {}
+    local seen = {}
+    local entries = ns.EnumerateCDMViewerSpells and ns.EnumerateCDMViewerSpells(true) or {}
+    for _, e in ipairs(entries) do
+        if e.sid and not diverted[e.sid] and not seen[e.sid] then
+            seen[e.sid] = true
+            local key = BuffDisplayStableKey(e.sid, e.cdID)
+            if key then
+                out[#out + 1] = {
+                    key         = key,
+                    sid         = e.sid,
+                    cdID        = e.cdID,
+                    layoutIndex = e.layoutIndex or 0,
+                }
+            end
+        end
+    end
+
+    local sdSelf = ns.GetBarSpellData("buffs")
+    if sdSelf and sdSelf.assignedSpells then
+        local extra = 5000
+        if sdSelf.spellDurations then
+            for _, sid in ipairs(sdSelf.assignedSpells) do
+                if type(sid) == "number" and sid > 0 and (sdSelf.spellDurations[sid] or 0) > 0 then
+                    local key = BuffDisplayStableKey(sid, nil)
+                    if key and not seen[key] then
+                        seen[key] = true
+                        out[#out + 1] = { key = key, sid = sid, cdID = nil, layoutIndex = extra }
+                        extra = extra + 1
+                    end
+                end
+            end
+        end
+        extra = 6000
+        for _, sid in ipairs(sdSelf.assignedSpells) do
+            if type(sid) == "number" and sid <= -100 then
+                local key = BuffDisplayStableKey(sid, nil)
+                if key and not seen[key] then
+                    seen[key] = true
+                    out[#out + 1] = { key = key, sid = sid, cdID = nil, layoutIndex = extra }
+                    extra = extra + 1
+                end
+            end
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if a.layoutIndex ~= b.layoutIndex then return a.layoutIndex < b.layoutIndex end
+        return (a.key or "") < (b.key or "")
+    end)
+    return out
+end
+
+--- Reorder present keys to match Blizzard viewer order while absent keys (talent
+--- gaps, untalented catalog entries) keep their stored slots.
+local function SyncPresentBuffOrderToBlizzard(order, present, entries)
+    if not order or #order == 0 or not entries or #entries == 0 then return order end
+    local blizzRank = {}
+    for i, e in ipairs(entries) do
+        if blizzRank[e.key] == nil then blizzRank[e.key] = i end
+    end
+    local sortedPresent = {}
+    for _, key in ipairs(order) do
+        if present[key] then sortedPresent[#sortedPresent + 1] = key end
+    end
+    table.sort(sortedPresent, function(a, b)
+        return (blizzRank[a] or 99999) < (blizzRank[b] or 99999)
+    end)
+    local pi = 1
+    local synced = {}
+    for _, key in ipairs(order) do
+        if present[key] then
+            synced[#synced + 1] = sortedPresent[pi]
+            pi = pi + 1
+        else
+            synced[#synced + 1] = key
+        end
+    end
+    return synced
+end
+
+--- Keep stored buffDisplayOrder across talent/spec gaps, seed on first stable
+--- pass, and insert newly-tracked buffs by Blizzard layoutIndex (not at tail).
+function ns.ReconcileBuffDisplayOrder()
+    if ns._cdmSpecRebuildStale then return end
+    local sd = ns.GetBarSpellData("buffs")
+    if not sd then return end
+
+    local order = sd.buffDisplayOrder
+    if order and type(order[1]) == "number" then
+        sd.buffDisplayOrder = nil
+        order = nil
+    end
+
+    local entries = ns.CollectDefaultBuffTrackEntries()
+    if #entries == 0 then return end
+
+    local present = {}
+    for _, e in ipairs(entries) do
+        if present[e.key] == nil then
+            present[e.key] = { sid = e.sid, cdID = e.cdID, layoutIndex = e.layoutIndex or 0 }
+        end
+    end
+
+    if not order or #order == 0 then
+        local seeded = {}
+        for _, e in ipairs(entries) do seeded[#seeded + 1] = e.key end
+        sd.buffDisplayOrder = seeded
+        ns._spellOrderDirty = true
+        return
+    end
+
+    local newOrder, seen = {}, {}
+    for _, key in ipairs(order) do
+        if not seen[key] then
+            seen[key] = true
+            newOrder[#newOrder + 1] = key
+        end
+    end
+
+    local newcomers = {}
+    for _, e in ipairs(entries) do
+        if not seen[e.key] then
+            newcomers[#newcomers + 1] = e
+        end
+    end
+    if #newcomers > 0 then
+        table.sort(newcomers, function(a, b)
+            if a.layoutIndex ~= b.layoutIndex then return a.layoutIndex < b.layoutIndex end
+            return (a.key or "") < (b.key or "")
+        end)
+        local blizzRank = {}
+        for i, e in ipairs(entries) do blizzRank[e.key] = i end
+        for _, e in ipairs(newcomers) do
+            local insertAt = #newOrder + 1
+            for i, key in ipairs(newOrder) do
+                local rank = blizzRank[key]
+                if rank and rank > blizzRank[e.key] then
+                    insertAt = i
+                    break
+                end
+            end
+            table.insert(newOrder, insertAt, e.key)
+            seen[e.key] = true
+        end
+    end
+
+    if not sd._buffDisplayOrderUserModified then
+        newOrder = SyncPresentBuffOrderToBlizzard(newOrder, present, entries)
+    end
+
+    local changed = (#newOrder ~= #order)
+    if not changed then
+        for i = 1, #newOrder do
+            if newOrder[i] ~= order[i] then changed = true; break end
+        end
+    end
+    if changed then
+        sd.buffDisplayOrder = newOrder
+        ns._spellOrderDirty = true
+    end
+end
+
+--- Resolve a buff bar entry's sort index from buffDisplayOrder (variant-aware).
+function ns.ResolveBuffDisplaySortIndex(entry, buffOrder, isDefaultBuffs)
+    if not buffOrder or not entry then return nil end
+    if isDefaultBuffs then
+        local cd = entry.frame and entry.frame.cooldownID
+        local sid = entry.spellID
+        for key, idx in pairs(buffOrder) do
+            if BuffOrderKeyMatchesEntry(key, sid, cd, entry.frame) then return idx end
+        end
+        return nil
+    end
+    local ef = entry.frame
+    local canon = ef and ns.GetCanonicalSpellIDForFrame and ns.GetCanonicalSpellIDForFrame(ef)
+    return (canon and buffOrder[canon])
+        or (entry.spellID and buffOrder[entry.spellID])
+        or (entry.baseSpellID and buffOrder[entry.baseSpellID])
+end
+
 --- Default buffs bar DISPLAY-ORDER reorder helpers.
 ---
 --- The default "buffs" bar's assignedSpells is shared with routing + custom
@@ -948,6 +1196,7 @@ function ns.SwapBuffDisplayOrder(idx1, idx2)
     if not t then return false end
     if idx1 < 1 or idx2 < 1 or idx1 > #t or idx2 > #t then return false end
     t[idx1], t[idx2] = t[idx2], t[idx1]
+    sd._buffDisplayOrderUserModified = true
     ns._spellOrderDirty = true
     local frame = cdmBarFrames["buffs"]
     if frame then frame._blizzCache = nil end
@@ -965,6 +1214,7 @@ function ns.MoveBuffDisplayOrder(fromIdx, toIdx)
     if toIdx > #t then toIdx = #t end
     local val = table.remove(t, fromIdx)
     table.insert(t, toIdx, val)
+    sd._buffDisplayOrderUserModified = true
     ns._spellOrderDirty = true
     local frame = cdmBarFrames["buffs"]
     if frame then frame._blizzCache = nil end

@@ -447,7 +447,6 @@ local CDM_ITEM_PRESETS = {
         name     = "Demonic Healthstone",
         itemID   = 224464,
         spellID  = 452930,
-        combatLockout = true,
     },
 }
 ns.CDM_ITEM_PRESETS = CDM_ITEM_PRESETS
@@ -7287,6 +7286,13 @@ function ns.RepopulateFromBlizzard()
         FilterSetPreservingUserAdded(ghostSD, ghostSD.removedSpells)
     end
     -- Ghost buff bar removed: buff visibility managed by Blizzard CDM.
+
+    local buffSD = ns.GetBarSpellData("buffs")
+    if buffSD then
+        buffSD.buffDisplayOrder = nil
+        buffSD._buffDisplayOrderUserModified = nil
+    end
+    ns._spellOrderDirty = true
 
     -- (Site #10 re-snapshot deleted: under the new model, "repopulate from
     -- Blizzard" is just "wipe diversions and let the route map's spillover

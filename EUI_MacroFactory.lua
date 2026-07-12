@@ -272,7 +272,7 @@ function EllesmereUI.BuildMacroFactory(parent, startY, PP)
 
     -- Druid (102=Balance, 103=Feral, 104=Guardian, 105=Restoration)
     local DRUID_GEN = {
-        { name="EUI_UrsolVortex", icon="Interface\\Icons\\spell_nature_stoneclawtotem", label="Ursol's Vortex\n(Cursor)", fixedBody="/cast [@cursor] Ursol's Vortex" },
+        { name="EUI_UrsolVortex", icon="Interface\\Icons\\spell_druid_ursolsvortex", label="Ursol's Vortex\n(Cursor)", fixedBody="/cast [@cursor] Ursol's Vortex" },
         { name="EUI_Innervate", icon="Interface\\Icons\\spell_nature_lightning", label="Innervate\n(Focus)", fixedBody="/cast [@focus,help,nodead][] Innervate", fixedTooltip="Innervate" },
         { name="EUI_RemoveCorrupt", icon="Interface\\Icons\\spell_holy_removecurse", label="Remove Corruption\n(Focus)", fixedBody="/cast [@focus,help,nodead][] Remove Corruption", fixedTooltip="Remove Corruption" },
     }

@@ -164,6 +164,53 @@ function EQT.RefreshFonts()
     end
 end
 
+-- Forces Blizzard to fully recompute block heights/positions after we
+-- resize existing FontStrings (RestyleAll) or Blizzard only partially
+-- relayouts around a focus change -- both leave stale cached block heights
+-- that overlap the next block until a full ObjectiveTrackerFrame:Update()
+-- runs (normally only happens on /reload).
+--
+-- Deferred via C_Timer.After(0) so this never runs inline inside whatever
+-- callback triggered it: the documented SplashFrame taint (see
+-- EllesmereUIQuestTracker_QoL.lua) came from calling Update() SYNCHRONOUSLY
+-- inside a Blizzard secure call chain (OnHide during a quest turn-in flow).
+-- A fresh timer tick, fired from a plain insecure options-panel action or
+-- event handler, has no such ancestor. Also combat-gated because Update()
+-- rebuilds the tracker's secure quest-item action buttons; if combat is
+-- active when the tick fires, retry once on PLAYER_REGEN_ENABLED instead of
+-- silently dropping the request.
+local _relayoutPending = false
+local _relayoutRetryFrame = nil
+local function DoTrackerRelayout()
+    if InCombatLockdown() then
+        if not _relayoutRetryFrame then
+            _relayoutRetryFrame = CreateFrame("Frame")
+            _relayoutRetryFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            if not EQT._eventFrames then EQT._eventFrames = {} end
+            if not EQT._eventRegistrations then EQT._eventRegistrations = {} end
+            local idx = #EQT._eventFrames + 1
+            EQT._eventFrames[idx] = _relayoutRetryFrame
+            EQT._eventRegistrations[idx] = {"PLAYER_REGEN_ENABLED"}
+            _relayoutRetryFrame:SetScript("OnEvent", function()
+                if EQT.ForceTrackerRelayout then EQT.ForceTrackerRelayout() end
+            end)
+        end
+        return
+    end
+    local otf = _G.ObjectiveTrackerFrame
+    if otf and otf.Update then
+        otf:Update()
+    end
+end
+function EQT.ForceTrackerRelayout()
+    if _relayoutPending then return end
+    _relayoutPending = true
+    C_Timer.After(0, function()
+        _relayoutPending = false
+        DoTrackerRelayout()
+    end)
+end
+
 -- Physical-pixel-perfect 1px accent divider under each section header.
 -- Parented to ObjectiveTrackerFrame (NOT the header) so collapse/expand
 -- animations on the header don't drag our divider with them. Keyed by
@@ -1078,8 +1125,15 @@ function EQT.InitSkin()
     -- Quest events just need a BG resize. Block skinning is handled by
     -- AddBlock/AddObjective/GetProgressBar/GetTimerBar hooks, so we no
     -- longer need to walk the entire tracker tree on every event.
-    evt:SetScript("OnEvent", function()
+    evt:SetScript("OnEvent", function(_, event)
         if EQT.QueueResize then EQT.QueueResize() end
+        -- Focusing a quest can expand its objective text without Blizzard
+        -- relayouting sibling blocks underneath it; force a full relayout
+        -- for this event specifically (not the frequent quest-log events,
+        -- which already go through Blizzard's own native Update()).
+        if event == "SUPER_TRACKING_CHANGED" and EQT.ForceTrackerRelayout then
+            EQT.ForceTrackerRelayout()
+        end
     end)
     if not EQT._eventFrames then EQT._eventFrames = {} end
     if not EQT._eventRegistrations then EQT._eventRegistrations = {} end
@@ -1107,6 +1161,10 @@ function EQT.InitSkin()
             if t.Header then SkinHeader(t.Header) end
             SkinExistingBlocks(t)
         end)
+        -- Font/color size changes just resized existing FontStrings in
+        -- place; Blizzard's cached block heights are now stale until a
+        -- full relayout runs (see EQT.ForceTrackerRelayout above).
+        if EQT.ForceTrackerRelayout then EQT.ForceTrackerRelayout() end
     end
 
     -- Live-update headers, blocks and progress bar fills when the user

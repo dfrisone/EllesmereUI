@@ -35,13 +35,16 @@ ns.NICK_ADDON = ADDON_NAME:find("Standalone") and ADDON_NAME or "EllesmereUI"
 --  threat border renders behind them: debuffs, defensives/externals, private
 --  auras, dispel-type icons, and Buff Manager icons/squares/bars. Each aura
 --  unit renders its own children (cooldown/border/text) up to +5 above its base.
---  Only the target/hover border-raise and the marker carrier sit above the band.
+--  Only the target/hover border-raise and the marker carrier sit above the aura
+--  band; name/health text (ns.LVL_TEXT) sits above the raised border; the marker
+--  carrier also hosts ready-check / summon / rez icons above the text.
 --  Kept on `ns` (not file-scope locals) to avoid the Lua 5.1 local cap in this
 --  large file, and shared with EUI_RaidFrames_BuffManager.lua.
 -------------------------------------------------------------------------------
-ns.LVL_DISPEL_OVERLAY = 7  -- Blizzard private-aura dispel gradient: below the border (+8) and name/health text (+12) so it renders BEHIND them (like the regular dispel overlay), but above the health bar so it stays visible. Per-slot private-aura icons stay above at LVL_AURA.
-ns.LVL_AURA   = 13   -- base level for every aura icon/bar (children at +1..+5); sits ONE above the name/health text (+12) so auras draw over text
+ns.LVL_DISPEL_OVERLAY = 7  -- Blizzard private-aura dispel gradient: below the border (+8) and name/health text (ns.LVL_TEXT) so it renders BEHIND them (like the regular dispel overlay), but above the health bar so it stays visible. Per-slot private-aura icons stay above at LVL_AURA.
+ns.LVL_AURA   = 13   -- base level for every aura icon/bar (children at +1..+5)
 ns.LVL_RAISE  = 20   -- main border while hovered/targeted (PP container at +1)
+ns.LVL_TEXT   = 21   -- name/health text (above LVL_RAISE; matches Unit Frames)
 ns.LVL_MARKER = 22   -- raid marker icon (always on top)
 
 -------------------------------------------------------------------------------
@@ -688,6 +691,7 @@ local defaults = {
             durTextOffsetY  = 0,
         },
 
+        buffHideTooltips = true,
         debuffSize       = 18,
         debuffCap        = 3,
         debuffHideTooltips = true,
@@ -814,6 +818,22 @@ ns._ResolveTooltipMode = function(s)
     if s.showTooltip == false then return "never" end
     if EllesmereUIDB and EllesmereUIDB.showUnitTooltipsInCombat then return "always" end
     return "outOfCombat"
+end
+
+-- Whether raid-frame hover tooltips are allowed right now, per the "Show Raid
+-- Frames Tooltip" mode + current combat state. Shared by the unit tooltip and
+-- the buff/debuff aura-icon tooltips so one setting governs every raid-frame
+-- tip (an aura tip is still gated by its own "Hide Tooltips" toggle on top).
+function ns.RaidFrameTooltipAllowed(button)
+    local fd = button and ns.GetFFD and ns.GetFFD(button)
+    local s = (fd and (fd._isParty and ns._scaledPartyProxy
+        or (fd._isExtra and ns._scaledExtraProxy) or ns._scaledProfile))
+        or ns._scaledProfile
+    local ttMode = ns._ResolveTooltipMode(s)
+    if ttMode == "never" then return false end
+    if ttMode == "outOfCombat" and inCombat then return false end
+    if ttMode == "outOfBossCombat" and ns._inBossCombat then return false end
+    return true
 end
 
 -------------------------------------------------------------------------------
@@ -3055,12 +3075,11 @@ local function StyleButton(button)
     AnchorDispelIcon()
     d.AnchorDispelIcon = AnchorDispelIcon
 
-    -- Text carrier: name + health text sit ABOVE the base/threat/dispel borders
-    -- (+8/+10/+11) and the BM frame-border effect (+11) so they stay readable,
-    -- but BELOW the aura layer (ns.LVL_AURA = +13) so debuffs/buffs draw over them.
+    -- Text carrier: name + health text sit above borders and the hover/target
+    -- raise (ns.LVL_TEXT), matching Unit Frames text overlay layering.
     local textCarrier = CreateFrame("Frame", nil, button)
     textCarrier:SetAllPoints(health)
-    textCarrier:SetFrameLevel(button:GetFrameLevel() + 12)
+    textCarrier:SetFrameLevel(button:GetFrameLevel() + ns.LVL_TEXT)
 
     -- Name text
     local nameFS = textCarrier:CreateFontString(nil, "OVERLAY")
@@ -3257,8 +3276,8 @@ local function StyleButton(button)
     AnchorRaidMarker()
     d.AnchorRaidMarker = AnchorRaidMarker
 
-    -- Ready check icon (shared with the incoming-summon indicator)
-    local readyCheck = health:CreateTexture(nil, "OVERLAY", nil, 3)
+    -- Ready check icon (shared with incoming-summon / incoming-rez; above name text)
+    local readyCheck = markerCarrier:CreateTexture(nil, "OVERLAY")
     readyCheck:SetSize(PixelSnap(s.readyCheckSize or 20), PixelSnap(s.readyCheckSize or 20))
     readyCheck:Hide()
     d.readyCheck = readyCheck
@@ -3393,6 +3412,8 @@ local function StyleButton(button)
                 fd._hovered = true
                 if fd.ApplyBorderColor then fd.ApplyBorderColor() end
             end
+            -- Aura tooltip honors the same combat-visibility mode as the unit tip.
+            if not ns.RaidFrameTooltipAllowed(b) then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             if GameTooltip.SetUnitAuraByAuraInstanceID then
                 GameTooltip:SetUnitAuraByAuraInstanceID(u, iid)
@@ -3763,6 +3784,17 @@ local function StyleButton(button)
         local fd = GetFFD(self)
         fd._hovered = true
         if fd.ApplyBorderColor then fd.ApplyBorderColor() end
+        -- Aura icons (buff/debuff) enable mouse and propagate motion up to this
+        -- button, so a direct enter onto an icon fires the icon's OnEnter first
+        -- (aura tooltip) then bubbles here -- which would clobber it with the unit
+        -- tooltip. If the cursor is genuinely over one of our aura icons (marked by
+        -- a stashed _tipIID), let that icon own the tooltip and bail here.
+        local foci = (GetMouseFoci and GetMouseFoci()) or (GetMouseFocus and { GetMouseFocus() })
+        if foci then
+            for _, mf in ipairs(foci) do
+                if mf ~= self and mf._tipIID ~= nil then return end
+            end
+        end
         -- Read through the party-aware proxy (like every other render path), not
         -- raw db.profile -- otherwise party_<key> overrides written by a custom
         -- party "Range & Tooltip" section are never seen and the tooltip mode
@@ -6247,7 +6279,7 @@ FB.EnsureBuilt = function()
 
         local carrier = CreateFrame("Frame", nil, b)
         carrier:SetAllPoints(health)
-        carrier:SetFrameLevel(b:GetFrameLevel() + 12)
+        carrier:SetFrameLevel(b:GetFrameLevel() + ns.LVL_TEXT)
         local nameFS = carrier:CreateFontString(nil, "OVERLAY")
         nameFS:SetWordWrap(false)
         b._nameText = nameFS
@@ -11733,15 +11765,15 @@ local function CreatePreviewFrame(index)
     raidMarker:Hide()
 
     -- Ready check icon (position/size re-applied in the preview indicator pass)
-    local readyCheck = health:CreateTexture(nil, "OVERLAY", nil, 3)
+    local readyCheck = markerCarrier:CreateTexture(nil, "OVERLAY")
     readyCheck:SetSize(PixelSnap(s.readyCheckSize or 20), PixelSnap(s.readyCheckSize or 20))
     readyCheck:SetPoint("CENTER", health, "CENTER", 0, 0)
     readyCheck:Hide()
 
-    -- Text carrier: above borders (+8/+10/+11), below the aura layer (+13).
+    -- Text carrier: above borders and the hover/target raise (ns.LVL_TEXT).
     local textCarrier = CreateFrame("Frame", nil, f)
     textCarrier:SetAllPoints(health)
-    textCarrier:SetFrameLevel(f:GetFrameLevel() + 12)
+    textCarrier:SetFrameLevel(f:GetFrameLevel() + ns.LVL_TEXT)
 
     -- Name text (anchoring done by ApplyPreviewData on every refresh)
     local nameFS = textCarrier:CreateFontString(nil, "OVERLAY")

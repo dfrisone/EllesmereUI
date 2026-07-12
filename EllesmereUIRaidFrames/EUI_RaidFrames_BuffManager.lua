@@ -821,6 +821,60 @@ local DD_SPELL_ICON_SIZE = 17  -- icon size in ability/own-only dropdown menus
 local BAR_POOL_SIZE  = 4
 local BMSIMPLE_CAP   = 10  -- max buffs the Simple Setup grid can show per button
 
+-- Hover tooltips for BuffManager aura icons/bars. Mirrors the Debuff Display
+-- tooltip pattern (see EllesmereUIRaidFrames StyleButton): OnEnter renders the
+-- aura by its instance ID, which is secret-safe — it works for fingerprinted
+-- secret auras too (Blizzard renders the real name we can't read). Mouse is
+-- enabled only when the buff "Hide Tooltips" setting is off; motion and clicks
+-- propagate to the parent button so click-casting keeps working underneath.
+local function BM_TooltipOnEnter(self)
+    local u, iid = self._tipUnit, self._tipIID
+    if not u or not iid or issecretvalue(iid) then return end
+    -- Honor the same "Show Raid Frames Tooltip" combat-visibility mode as the
+    -- unit/debuff tooltips so one setting governs every raid-frame hover tip.
+    if ns.RaidFrameTooltipAllowed and not ns.RaidFrameTooltipAllowed(self._ownerButton) then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if GameTooltip.SetUnitAuraByAuraInstanceID then
+        GameTooltip:SetUnitAuraByAuraInstanceID(u, iid)
+    elseif GameTooltip.SetUnitBuffByAuraInstanceID then
+        GameTooltip:SetUnitBuffByAuraInstanceID(u, iid)
+    end
+    GameTooltip:Show()
+end
+
+local function BM_TooltipOnLeave()
+    GameTooltip:Hide()
+end
+
+-- Wire a pooled aura frame for hover tooltips once, at creation. Mouse starts
+-- disabled (transparent); BM_SetTipTarget toggles it live per the setting.
+local function BM_WireTooltip(f, button)
+    f._ownerButton = button
+    f:EnableMouse(false)
+    if f.SetPropagateMouseMotion then f:SetPropagateMouseMotion(true) end
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
+    f:SetScript("OnEnter", BM_TooltipOnEnter)
+    f:SetScript("OnLeave", BM_TooltipOnLeave)
+end
+
+-- Stash the hover target (unit + aura instance) as a frame is assigned an aura,
+-- and toggle mouse interactivity to match the buff "Hide Tooltips" setting. Read
+-- live so a combat-time toggle applies on the next aura event. Default (nil) =
+-- tooltips shown. A missing/secret instance id disables the hover.
+local function BM_SetTipTarget(f, unit, iid)
+    f._tipUnit = unit
+    f._tipIID  = iid
+    -- db is a per-call parameter elsewhere in this file, not a file upvalue;
+    -- read the profile off the addon namespace so this file-scope helper is safe.
+    local prof = ns.db and ns.db.profile
+    local wantMouse = (not prof or prof.buffHideTooltips ~= true)
+        and iid ~= nil and not issecretvalue(iid)
+    if f._tipMouse ~= wantMouse then
+        f:EnableMouse(wantMouse)
+        f._tipMouse = wantMouse
+    end
+end
+
 function ns.BM_CreateIndicators(button, health, d, PP)
     if not health then return end
 
@@ -877,6 +931,7 @@ function ns.BM_CreateIndicators(button, health, d, PP)
         durFS:Hide()
         f._durText = durFS
 
+        BM_WireTooltip(f, button)
         iconPool[i] = f
     end
 
@@ -893,6 +948,7 @@ function ns.BM_CreateIndicators(button, health, d, PP)
         barBg:SetColorTexture(0, 0, 0, 0.5)
         bar._bg = barBg
 
+        BM_WireTooltip(bar, button)
         barPool[i] = bar
     end
 
@@ -955,6 +1011,7 @@ function ns.BM_CreateIndicators(button, health, d, PP)
             f._borderFrame = bdr
         end
 
+        BM_WireTooltip(f, button)
         simplePool[i] = f
     end
     d.bmSimpleIcons = simplePool
@@ -1590,6 +1647,7 @@ function ns.BM_UpdateSimpleGrid(button, unit, db, updateInfo)
             shown = shown + 1
             d.bmSimpleActiveIDs[iid] = true
             local icon = d.bmSimpleIcons[shown]
+            BM_SetTipTarget(icon, unit, iid)
             icon:SetSize(sz, sz)
             icon._tex:SetTexture(tex or 136243)
             local _z = bs.iconZoom or 0.08
@@ -1890,6 +1948,7 @@ function ns.BM_UpdateIndicators(button, unit, db, updateInfo)
                     barPoolIdx = barPoolIdx + 1
                     local bar = d.bmBarPool[barPoolIdx]
                     if bar then
+                        BM_SetTipTarget(bar, unit, aura.auraInstanceID)
                         BM_ApplyBarLevel(bar, ind, buttonLvl)
                         bar:SetReverseFill(ind.reverseFill or false)
                         local c = ind.color or { r=0, g=1, b=0 }
@@ -1963,6 +2022,7 @@ function ns.BM_UpdateIndicators(button, unit, db, updateInfo)
                         iconPoolIdx = iconPoolIdx + 1
                         local f = d.bmIconPool[iconPoolIdx]
                         if f then
+                            BM_SetTipTarget(f, unit, aura.auraInstanceID)
                             BM_ApplyIconLevel(f, ind, buttonLvl)
                             -- Per-spell size offset (right-click in preview): base
                             -- size + this spell's offset, clamped to >= 1px.

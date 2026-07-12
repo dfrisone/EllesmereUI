@@ -4626,3 +4626,7 @@ if GetLocale() == "koKR" and EllesmereUI then
         ["윈첨"] = "첨탑",
     }
 end
+L["Colon (5:32)"] = "콜론 (5:32)"
+L["Duration Format"] = "지속시간 형식"
+L["Seconds (152)"] = "초 (152)"
+L["Standard (5m / 32)"] = "표준 (5m / 32)"

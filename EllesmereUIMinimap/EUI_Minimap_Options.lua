@@ -1367,8 +1367,16 @@ initFrame:SetScript("OnEvent", function(self)
             local rgn = coordsRow._rightRegion
             local function coordsOff() return CoordsMode() == "never" end
             local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Coordinates Position",
+                title = "Coordinates Size and Position",
                 rows = {
+                    { type = "slider", label = "Scale", min = 0.5, max = 2.0, step = 0.01,
+                      get = function() local m = MinimapDB(); return m and m.coordsScale or 1.0 end,
+                      set = function(v)
+                          local m = MinimapDB(); if not m then return end
+                          m.coordsScale = v
+                          local cf = _G._EBS_CoordFrame
+                          if cf then cf:SetScale(v) end
+                      end },
                     { type = "slider", label = "X Offset", min = -500, max = 500, step = 1,
                       get = function() local m = MinimapDB(); return m and m.coordsBelowOffsetX or 0 end,
                       set = function(v)
@@ -1392,7 +1400,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetAlpha(coordsOff() and 0.15 or 0.4)
             local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
             cogTex:SetAllPoints()
-            cogTex:SetTexture(EllesmereUI.DIRECTIONS_ICON)
+            cogTex:SetTexture(EllesmereUI.RESIZE_ICON)
             cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
             cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(coordsOff() and 0.15 or 0.4) end)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
@@ -1504,8 +1512,16 @@ initFrame:SetScript("OnEvent", function(self)
         do
             local rgn = fpsRow._rightRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "FPS/MS Position",
+                title = "FPS/MS Size and Position",
                 rows = {
+                    { type = "slider", label = "Scale", min = 0.5, max = 2.0, step = 0.01,
+                      get = function() local m = MinimapDB(); return m and m.fpsScale or 1.0 end,
+                      set = function(v)
+                          local m = MinimapDB(); if not m then return end
+                          m.fpsScale = v
+                          local fb = _G._EBS_FpsBg
+                          if fb then fb:SetScale(v) end
+                      end },
                     { type = "slider", label = "X Offset", min = -500, max = 500, step = 1,
                       get = function() local m = MinimapDB(); return m and m.fpsOffsetX or 0 end,
                       set = function(v)
@@ -1529,7 +1545,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetAlpha(FpsOff() and 0.15 or 0.4)
             local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
             cogTex:SetAllPoints()
-            cogTex:SetTexture(EllesmereUI.DIRECTIONS_ICON)
+            cogTex:SetTexture(EllesmereUI.RESIZE_ICON)
             cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
             cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(FpsOff() and 0.15 or 0.4) end)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)

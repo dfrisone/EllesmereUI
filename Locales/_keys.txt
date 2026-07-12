@@ -442,12 +442,15 @@ Target
 Target Unit
 Thickness
 This Action Bar is also used as the Moonkin Form bar.\nChanging spells on a Druid for this bar will also change them on your Moonkin Form bar.
+This bar will always be attached to your current target's nameplate
 This bar will always be attached to your focus target's nameplate
 This can't change which spells the user tracks in Blizzard's CDM.\nIt's recommended to also share your Blizzard CDM layout for any spec you choose here.
 This is where you can control the settings of Unlock Mode.\n\nElements can be repositioned by dragging or arrow keys (+shift)\nAnchor, Height Match, or Width match any element.\nSnapping is based on closest element, but you can snap only to\n a specific element via right click or the settings icon.
 This option requires %1$s to be %2$s
 This preset
 This spell is already being used on %s
+This unit uses the Blizzard default frame -- there are no EllesmereUI settings to configure here.
+This unit's frame is hidden -- there are no EllesmereUI settings to configure here.
 Threshold
 Threshold Seconds
 Threshold Settings

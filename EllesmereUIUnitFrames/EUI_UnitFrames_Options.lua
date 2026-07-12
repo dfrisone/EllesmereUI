@@ -1135,7 +1135,7 @@ initFrame:SetScript("OnEvent", function(self)
         extraFS:SetWordWrap(false)
 
         -- Resolve preview text for a content key
-        local function PreviewTextForContent(content, s)
+        local function PreviewTextForContent(content, s, prefix)
             -- Mirror live "Show Decimal on Text": one decimal on abbreviated values
             -- and percents when the global flag is on; integer (current) otherwise.
             local function _pvAbbrev(v)
@@ -1145,23 +1145,34 @@ initFrame:SetScript("OnEvent", function(self)
             local function _pvPct(p01)
                 return _G._EUI_TextDecimals and string.format("%.1f", p01 * 100) or tostring(math.floor(p01 * 100))
             end
-            if content == "name" then
-                if unitKey == "player" then
-                    return UnitName("player") or "Player"
-                else
-                    return _previewCreatureNames[unitKey] or unitKey
-                end
-            elseif content == "nametotarget" then
-                local nm = (unitKey == "player") and (UnitName("player") or "Player")
-                    or (_previewCreatureNames[unitKey] or unitKey)
-                -- Sample class-colored target name to illustrate the always-class-colored target.
+            local function _pvName()
+                if unitKey == "player" then return UnitName("player") or "Player" end
+                return _previewCreatureNames[unitKey] or unitKey
+            end
+            local function _pvTargetSuffix()
                 local _, ct = UnitClass("player")
                 local cc = ct and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[ct]
                 local tgt = "Target"
                 if cc then
                     tgt = string.format("|cff%02x%02x%02x%s|r", math.floor(cc.r * 255 + 0.5), math.floor(cc.g * 255 + 0.5), math.floor(cc.b * 255 + 0.5), tgt)
                 end
-                return nm .. " > " .. tgt
+                return " > " .. tgt
+            end
+            local function _pvShortName(raw)
+                if not prefix then return raw end
+                local maxLen = s[prefix .. "ShortNameLength"] or 0
+                if maxLen <= 0 or #raw <= maxLen then return raw end
+                local useEllipsis = s[prefix .. "ShortNameEllipsis"] ~= false
+                if useEllipsis then
+                    return raw:sub(1, maxLen) .. "..."
+                else
+                    return raw:sub(1, maxLen)
+                end
+            end
+            if content == "name" then
+                return _pvShortName(_pvName())
+            elseif content == "nametotarget" then
+                return _pvShortName(_pvName()) .. _pvTargetSuffix()
             elseif content == "both" or content == "bothdash" or content == "curhpshort" or content == "perhp" or content == "perhpnosign" or content == "perhpnum" or content == "perhpnumdash" then
                 local maxHP = UnitHealthMax("player") or 1
                 local pct = _previewHealthPct or 0.70
@@ -1275,7 +1286,7 @@ initFrame:SetScript("OnEvent", function(self)
                     extraFS:SetJustifyH("LEFT")
                     PP.Point(extraFS, "LEFT", textOverlay, "LEFT", 5 + exo, eyo)
                 end
-                extraFS:SetText(PreviewTextForContent(ec, s))
+                extraFS:SetText(PreviewTextForContent(ec, s, "extraText"))
                 extraFS:Show()
                 PreviewClassColor(extraFS, s.extraTextClassColor, s.extraTextColorR, s.extraTextColorG, s.extraTextColorB)
             else
@@ -1288,7 +1299,7 @@ initFrame:SetScript("OnEvent", function(self)
             if cc ~= "none" then
                 centerFS:SetJustifyH("CENTER")
                 PP.Point(centerFS, "CENTER", textOverlay, "CENTER", cxo, cyo)
-                centerFS:SetText(PreviewTextForContent(cc, s))
+                centerFS:SetText(PreviewTextForContent(cc, s, "centerText"))
                 centerFS:Show()
                 PreviewClassColor(centerFS, s.centerTextClassColor, s.centerTextColorR, s.centerTextColorG, s.centerTextColorB)
             else
@@ -1310,7 +1321,7 @@ initFrame:SetScript("OnEvent", function(self)
                 else
                     leftFS:SetWidth(0)
                 end
-                leftFS:SetText(PreviewTextForContent(lc, s))
+                leftFS:SetText(PreviewTextForContent(lc, s, "leftText"))
                 leftFS:Show()
                 PreviewClassColor(leftFS, s.leftTextClassColor, s.leftTextColorR, s.leftTextColorG, s.leftTextColorB)
             else
@@ -1322,7 +1333,7 @@ initFrame:SetScript("OnEvent", function(self)
             if rc ~= "none" then
                 rightFS:SetJustifyH("RIGHT")
                 PP.Point(rightFS, "RIGHT", textOverlay, "RIGHT", -5 + rxo, ryo)
-                rightFS:SetText(PreviewTextForContent(rc, s))
+                rightFS:SetText(PreviewTextForContent(rc, s, "rightText"))
                 rightFS:Show()
                 PreviewClassColor(rightFS, s.rightTextClassColor, s.rightTextColorR, s.rightTextColorG, s.rightTextColorB)
             else
@@ -1667,7 +1678,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if lc ~= "none" then
                     btbLeftFS:SetJustifyH("LEFT")
                     PP.Point(btbLeftFS, "LEFT", btbTextOvr, "LEFT", 5 + (s.btbLeftX or 0), s.btbLeftY or 0)
-                    btbLeftFS:SetText(PreviewTextForContent(lc, s))
+                    btbLeftFS:SetText(PreviewTextForContent(lc, s, "btbLeft"))
                     btbLeftFS:Show()
                     PreviewClassColor(btbLeftFS, s.btbLeftClassColor, s.btbLeftColorR, s.btbLeftColorG, s.btbLeftColorB)
                     PreviewPowerColor(btbLeftFS, lc, s.btbLeftPowerColor)
@@ -1678,7 +1689,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if rc ~= "none" then
                     btbRightFS:SetJustifyH("RIGHT")
                     PP.Point(btbRightFS, "RIGHT", btbTextOvr, "RIGHT", -5 + (s.btbRightX or 0), s.btbRightY or 0)
-                    btbRightFS:SetText(PreviewTextForContent(rc, s))
+                    btbRightFS:SetText(PreviewTextForContent(rc, s, "btbRight"))
                     btbRightFS:Show()
                     PreviewClassColor(btbRightFS, s.btbRightClassColor, s.btbRightColorR, s.btbRightColorG, s.btbRightColorB)
                     PreviewPowerColor(btbRightFS, rc, s.btbRightPowerColor)
@@ -1689,7 +1700,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if cc ~= "none" then
                     btbCenterFS:SetJustifyH("CENTER")
                     PP.Point(btbCenterFS, "CENTER", btbTextOvr, "CENTER", s.btbCenterX or 0, s.btbCenterY or 0)
-                    btbCenterFS:SetText(PreviewTextForContent(cc, s))
+                    btbCenterFS:SetText(PreviewTextForContent(cc, s, "btbCenter"))
                     btbCenterFS:Show()
                     PreviewClassColor(btbCenterFS, s.btbCenterClassColor, s.btbCenterColorR, s.btbCenterColorG, s.btbCenterColorB)
                     PreviewPowerColor(btbCenterFS, cc, s.btbCenterPowerColor)
@@ -2107,9 +2118,10 @@ initFrame:SetScript("OnEvent", function(self)
                 else ds = db.profile.player end
             end
 
-            -- Enabled/disabled overlay
+            -- Enabled/disabled overlay: the preview mocks the EllesmereUI frame,
+            -- so it is only "enabled" when the unit's source is the EUI frame.
             local unitKey2 = unitKey:match("^boss") and "boss" or unitKey
-            local isEnabled = db.profile.enabledFrames[unitKey2] ~= false
+            local isEnabled = ns.GetUnitFrameSource(unitKey2) == "eui"
             if isEnabled then
                 disabledOverlay:Hide()
                 pf:SetAlpha(1)
@@ -3826,6 +3838,54 @@ initFrame:SetScript("OnEvent", function(self)
     }
     local UNIT_LABELS_SUP = { player="Player", target="Target", focus="Focus" }
 
+    -- Shown in place of a unit's settings when it isn't using the EllesmereUI
+    -- frame (Blizzard default / hidden): we simply don't build the inapplicable
+    -- controls, and this one-line notice explains why. Returns the new y.
+    local function BuildInactiveNotice(parent, y, src)
+        local CPAD = EllesmereUI.CONTENT_PAD or 10
+        local note = EllesmereUI.MakeFont(parent, 13, nil, 1, 1, 1)
+        note:SetTextColor(1, 1, 1, 0.55)
+        note:SetPoint("TOPLEFT", parent, "TOPLEFT", CPAD + 4, y - 18)
+        note:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -(CPAD + 4), y - 18)
+        note:SetJustifyH("LEFT")
+        note:SetText(src == "blizzard"
+            and EllesmereUI.L("This unit uses the Blizzard default frame -- there are no EllesmereUI settings to configure here.")
+            or  EllesmereUI.L("This unit's frame is hidden -- there are no EllesmereUI settings to configure here."))
+        return y - 54
+    end
+
+    -- "Frame Source" row (dropdown on the left). rightCfg fills the right slot
+    -- (mini/boss pass Show Portrait when on the EUI source; otherwise the slot is
+    -- empty). onBeforeSet(v) runs before the write -- boss uses it to stop the
+    -- live preview. Returns row, height.
+    local function BuildFrameSourceRow(Ww, pp, yy, unitKey, onBeforeSet, rightCfg, noBlizzard, tooltip)
+        -- Target-of-target / focus-target only offer "Blizzard Default" when their
+        -- parent target/focus frame is itself Blizzard's (see ns.GetUnitFrameSource);
+        -- otherwise noBlizzard drops the option and `tooltip` explains why.
+        local values = noBlizzard and { eui="EllesmereUI", hidden="Hidden" }
+            or { eui="EllesmereUI", blizzard="Blizzard Default", hidden="Hidden" }
+        local order = noBlizzard and { "eui", "hidden" } or { "eui", "blizzard", "hidden" }
+        return Ww:DualRow(pp, yy,
+            { type="dropdown", text="Frame Source", tooltip=tooltip,
+              values = values,
+              order = order,
+              getValue=function() return ns.GetUnitFrameSource(unitKey) end,
+              setValue=function(v)
+                if onBeforeSet then onBeforeSet(v) end
+                ns.SetUnitFrameSource(unitKey, v)
+                ReloadAndUpdate()
+                EllesmereUI:RefreshPage(true)
+                EllesmereUI:ShowConfirmPopup({
+                    title = "Reload Required",
+                    message = "Changing the frame source requires a UI reload to take effect.",
+                    confirmText = "Reload Now",
+                    cancelText = "Later",
+                    onConfirm = function() ReloadUI() end,
+                })
+              end },
+            rightCfg or { type="spacer" })
+    end
+
     local function BuildSharedSettings(parent, y)
         local W = EllesmereUI.Widgets
         local _, h
@@ -3961,6 +4021,39 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
+        -- Row 0: Frame Source -- EllesmereUI skin / Blizzard default / hidden.
+        -- Placed first so the disable overlay can cover every setting below it
+        -- while this selector stays usable. Switching source needs a /reload
+        -- (oUF permanently disables the Blizzard frame at spawn, and secure
+        -- frames can't be created/torn down in combat).
+        local fsRow
+        fsRow, h = W:DualRow(parent, y,
+            { type="dropdown", text="Frame Source",
+              values = { eui="EllesmereUI", blizzard="Blizzard Default", hidden="Hidden" },
+              order = { "eui", "blizzard", "hidden" },
+              getValue = function() return ns.GetUnitFrameSource(selectedUnit) end,
+              setValue = function(v)
+                  ns.SetUnitFrameSource(selectedUnit, v)
+                  if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
+                  ReloadAndUpdate()
+                  EllesmereUI:RefreshPage(true)
+                  EllesmereUI:ShowConfirmPopup({
+                      title = "Reload Required",
+                      message = "Changing the frame source requires a UI reload to take effect.",
+                      confirmText = "Reload Now",
+                      cancelText = "Later",
+                      onConfirm = function() ReloadUI() end,
+                  })
+              end },
+            { type="spacer" });  y = y - h
+
+        -- If this unit isn't on the EllesmereUI frame, the settings below are
+        -- inapplicable (its EUI frame isn't spawned) -- show a short notice
+        -- instead of the full settings list.
+        if ns.GetUnitFrameSource(selectedUnit) ~= "eui" then
+            return BuildInactiveNotice(parent, y, ns.GetUnitFrameSource(selectedUnit))
+        end
+
         -- Row 1: Visibility | Visibility Options (checkbox dropdown)
         local visRow
         visRow, h = W:DualRow(parent, y,
@@ -3970,8 +4063,11 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return UNIT_DB_MAP[selectedUnit]().barVisibility or "always" end,
               setValue=function(v)
                   UNIT_DB_MAP[selectedUnit]().barVisibility = v
-                  -- Sync enabledFrames: "never" disables the frame entirely
-                  db.profile.enabledFrames[selectedUnit] = (v ~= "never")
+                  -- Keep the frame source consistent so the Visibility and Frame
+                  -- Source dropdowns can't disagree: "never" == Hidden; any
+                  -- visible mode implies the EllesmereUI frame (clearing a stale
+                  -- Blizzard/hidden source rather than resurrecting it later).
+                  ns.SetUnitFrameSource(selectedUnit, (v == "never") and "hidden" or "eui")
                   -- Keep boolean keys in sync for safety
                   local s = UNIT_DB_MAP[selectedUnit]()
                   if v == "always" then
@@ -4031,7 +4127,7 @@ initFrame:SetScript("OnEvent", function(self)
                     local v = UNIT_DB_MAP[selectedUnit]().barVisibility or "always"
                     for _, key in ipairs(GROUP_UNIT_ORDER) do
                         UNIT_DB_MAP[key]().barVisibility = v
-                        db.profile.enabledFrames[key] = (v ~= "never")
+                        ns.SetUnitFrameSource(key, (v == "never") and "hidden" or "eui")
                     end
                     if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
                     ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -4045,13 +4141,44 @@ initFrame:SetScript("OnEvent", function(self)
                         local v = UNIT_DB_MAP[selectedUnit]().barVisibility or "always"
                         for _, key in ipairs(checkedKeys) do
                             UNIT_DB_MAP[key]().barVisibility = v
-                            db.profile.enabledFrames[key] = (v ~= "never")
+                            ns.SetUnitFrameSource(key, (v == "never") and "hidden" or "eui")
                         end
                         if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
                         ReloadAndUpdate(); EllesmereUI:RefreshPage()
                     end,
                 },
             })
+        end
+
+        -- Out of Combat Alpha: inline cog on the Visibility row (left region,
+        -- next to the Visibility dropdown/sync). Fades the whole unit frame to a
+        -- chosen alpha while out of combat (100 = no fade; full alpha in combat).
+        -- Off by default. Applied via ns.ResolveFrameAlpha inside
+        -- UpdateFrameVisibility, so it reacts to combat on the existing regen path.
+        -- Reuses the CDM fade's strings ("Fade Out of Combat" / "Out of Combat
+        -- Alpha") so the terminology stays consistent across modules.
+        do
+            local rgn = visRow._leftRegion
+            local _, oocCogShow = EllesmereUI.BuildCogPopup({
+                title = "Out of Combat Alpha",
+                rows = {
+                    { type = "toggle", label = "Fade Out of Combat",
+                      tooltip = "Fades the entire frame (portrait, health and power bars, text) while out of combat.",
+                      get = function() return SVal("oocFadeEnabled", false) == true end,
+                      set = function(v)
+                          SSet("oocFadeEnabled", v)
+                          if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
+                      end },
+                    { type = "slider", label = "Out of Combat Alpha", min = 0, max = 100, step = 1,
+                      disabled = function() return not SVal("oocFadeEnabled", false) end,
+                      get = function() return math.floor((SVal("oocAlpha", 0.5)) * 100 + 0.5) end,
+                      set = function(v)
+                          SSet("oocAlpha", v / 100)
+                          if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
+                      end },
+                },
+            })
+            MakeCogBtn(rgn, oocCogShow)
         end
 
         -- Sync icon on Visibility Options (right)
@@ -5605,6 +5732,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.leftTextColorR, d.leftTextColorG, d.leftTextColorB = src.leftTextColorR, src.leftTextColorG, src.leftTextColorB
                         d.leftTextSize = src.leftTextSize
                         d.leftTextX, d.leftTextY = src.leftTextX, src.leftTextY
+                        d.leftTextShortNameLength = src.leftTextShortNameLength
+                        d.leftTextShortNameEllipsis = src.leftTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -5627,6 +5757,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.leftTextSize or 0) ~= (src.leftTextSize or 0) then return false end
                         if (d.leftTextX or 0) ~= (src.leftTextX or 0) then return false end
                         if (d.leftTextY or 0) ~= (src.leftTextY or 0) then return false end
+                        if (d.leftTextShortNameLength or 0) ~= (src.leftTextShortNameLength or 0) then return false end
+
+                        if (d.leftTextShortNameEllipsis == false) ~= (src.leftTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -5707,7 +5840,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("leftTextY", 0) end,
                       set=function(v) SSet("leftTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("leftTextShortNameLength", 0) end,
+                      set=function(v) SSet("leftTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("leftTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("leftTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local leftCogShow = leftCogShowRaw
             local leftCogBtn = MakeCogBtn(leftRgn, leftCogShow)
@@ -5740,6 +5883,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.rightTextColorR, d.rightTextColorG, d.rightTextColorB = src.rightTextColorR, src.rightTextColorG, src.rightTextColorB
                         d.rightTextSize = src.rightTextSize
                         d.rightTextX, d.rightTextY = src.rightTextX, src.rightTextY
+                        d.rightTextShortNameLength = src.rightTextShortNameLength
+                        d.rightTextShortNameEllipsis = src.rightTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -5762,6 +5908,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.rightTextSize or 0) ~= (src.rightTextSize or 0) then return false end
                         if (d.rightTextX or 0) ~= (src.rightTextX or 0) then return false end
                         if (d.rightTextY or 0) ~= (src.rightTextY or 0) then return false end
+                        if (d.rightTextShortNameLength or 0) ~= (src.rightTextShortNameLength or 0) then return false end
+
+                        if (d.rightTextShortNameEllipsis == false) ~= (src.rightTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -5840,7 +5989,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("rightTextY", 0) end,
                       set=function(v) SSet("rightTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("rightTextShortNameLength", 0) end,
+                      set=function(v) SSet("rightTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("rightTextContent","both") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("rightTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("rightTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("rightTextContent","both") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local rightCogShow = rightCogShowRaw
             local rightCogBtn = MakeCogBtn(rightRgn, rightCogShow)
@@ -5889,6 +6048,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.centerTextColorR, d.centerTextColorG, d.centerTextColorB = src.centerTextColorR, src.centerTextColorG, src.centerTextColorB
                         d.centerTextSize = src.centerTextSize
                         d.centerTextX, d.centerTextY = src.centerTextX, src.centerTextY
+                        d.centerTextShortNameLength = src.centerTextShortNameLength
+                        d.centerTextShortNameEllipsis = src.centerTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -5911,6 +6073,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.centerTextSize or 0) ~= (src.centerTextSize or 0) then return false end
                         if (d.centerTextX or 0) ~= (src.centerTextX or 0) then return false end
                         if (d.centerTextY or 0) ~= (src.centerTextY or 0) then return false end
+                        if (d.centerTextShortNameLength or 0) ~= (src.centerTextShortNameLength or 0) then return false end
+
+                        if (d.centerTextShortNameEllipsis == false) ~= (src.centerTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -5989,7 +6154,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("centerTextY", 0) end,
                       set=function(v) SSet("centerTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("centerTextShortNameLength", 0) end,
+                      set=function(v) SSet("centerTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("centerTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("centerTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local centerCogShow = centerCogShowRaw
             local centerCogBtn = MakeCogBtn(ctrRgn, centerCogShow)
@@ -6026,6 +6201,9 @@ initFrame:SetScript("OnEvent", function(self)
                         d.extraTextSize = src.extraTextSize
                         d.extraTextX, d.extraTextY = src.extraTextX, src.extraTextY
                         d.extraTextAlign = src.extraTextAlign
+                        d.extraTextShortNameLength = src.extraTextShortNameLength
+                        d.extraTextShortNameEllipsis = src.extraTextShortNameEllipsis
+
                     end
                 end
                 ReloadAndUpdate(); EllesmereUI:RefreshPage()
@@ -6049,6 +6227,9 @@ initFrame:SetScript("OnEvent", function(self)
                         if (d.extraTextX or 0) ~= (src.extraTextX or 0) then return false end
                         if (d.extraTextY or 0) ~= (src.extraTextY or 0) then return false end
                         if (d.extraTextAlign or "left") ~= (src.extraTextAlign or "left") then return false end
+                        if (d.extraTextShortNameLength or 0) ~= (src.extraTextShortNameLength or 0) then return false end
+
+                        if (d.extraTextShortNameEllipsis == false) ~= (src.extraTextShortNameEllipsis == false) then return false end
                     end
                     return true
                 end,
@@ -6130,7 +6311,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-150, max=150, step=1,
                       get=function() return SVal("extraTextY", 0) end,
                       set=function(v) SSet("extraTextY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("extraTextShortNameLength", 0) end,
+                      set=function(v) SSet("extraTextShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("extraTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("extraTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("extraTextShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("extraTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local extraCogShow = extraCogShowRaw
             local extraCogBtn = MakeCogBtn(etrRgn, extraCogShow)
@@ -8192,7 +8383,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return SVal("btbLeftY", 0) end,
                       set=function(v) SSet("btbLeftY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("btbLeftShortNameLength", 0) end,
+                      set=function(v) SSet("btbLeftShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbLeftContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("btbLeftShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("btbLeftShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbLeftContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local btbLeftCogShow = btbLeftCogShowRaw
             local btbLCogBtn = MakeCogBtn(btbLRgn, btbLeftCogShow)
@@ -8306,7 +8507,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return SVal("btbRightY", 0) end,
                       set=function(v) SSet("btbRightY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("btbRightShortNameLength", 0) end,
+                      set=function(v) SSet("btbRightShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbRightContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("btbRightShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("btbRightShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbRightContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local btbRightCogShow = btbRightCogShowRaw
             local btbRCogBtn = MakeCogBtn(btbRRgn, btbRightCogShow)
@@ -8502,7 +8713,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return SVal("btbCenterY", 0) end,
                       set=function(v) SSet("btbCenterY", v); UpdatePreview() end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return SVal("btbCenterShortNameLength", 0) end,
+                      set=function(v) SSet("btbCenterShortNameLength", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbCenterContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return SVal("btbCenterShortNameEllipsis", true) ~= false end,
+                      set=function(v) SSet("btbCenterShortNameEllipsis", v); UpdatePreview() end,
+                      disabled=function() local c=SVal("btbCenterContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local btbCenterCogShow = btbCenterCogShowRaw
             local btbCCogBtn = MakeCogBtn(btbCRgn, btbCenterCogShow)
@@ -10832,6 +11053,13 @@ initFrame:SetScript("OnEvent", function(self)
             y = y - h
         end
 
+        -- If this unit isn't on the EllesmereUI frame, skip the (inapplicable)
+        -- settings below and show a short notice instead.
+        if enableRow and ns.GetUnitFrameSource(unitKey) ~= "eui" then
+            y = BuildInactiveNotice(parent, y, ns.GetUnitFrameSource(unitKey))
+            return y, displayHeader, nil, nil, nil, enableRowFrame
+        end
+
         -- Bar Texture override (new row, slot 1). Mini frames inherit the main
         -- frames' donor texture (focus > target > player) by default; picking a
         -- specific texture here overrides that for this frame only. Lands as the
@@ -11348,7 +11576,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return MVal("leftTextY", 0) end,
                       set=function(v) MSet("leftTextY", v) end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return MVal("leftTextShortNameLength", 0) end,
+                      set=function(v) MSet("leftTextShortNameLength", v) end,
+                      disabled=function() local c=MVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return MVal("leftTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) MSet("leftTextShortNameEllipsis", v) end,
+                      disabled=function() local c=MVal("leftTextContent","name") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local cogBtn = MCogBtn(rgn, cogShowFn)
             local function UpdCog()
@@ -11424,7 +11662,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return MVal("rightTextY", 0) end,
                       set=function(v) MSet("rightTextY", v) end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return MVal("rightTextShortNameLength", 0) end,
+                      set=function(v) MSet("rightTextShortNameLength", v) end,
+                      disabled=function() local c=MVal("rightTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return MVal("rightTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) MSet("rightTextShortNameEllipsis", v) end,
+                      disabled=function() local c=MVal("rightTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local cogBtn = MCogBtn(rgn, cogShowFn)
             local function UpdCog()
@@ -11512,7 +11760,17 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="Y Offset", min=-30, max=30, step=1,
                       get=function() return MVal("centerTextY", 0) end,
                       set=function(v) MSet("centerTextY", v) end },
-                },
+                    { type="slider", label="Name Length", min=0, max=30, step=1,
+                      get=function() return MVal("centerTextShortNameLength", 0) end,
+                      set=function(v) MSet("centerTextShortNameLength", v) end,
+                      disabled=function() local c=MVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                    { type="toggle", label="Show Ellipsis",
+                      get=function() return MVal("centerTextShortNameEllipsis", true) ~= false end,
+                      set=function(v) MSet("centerTextShortNameEllipsis", v) end,
+                      disabled=function() local c=MVal("centerTextContent","none") return c ~= "name" and c ~= "nametotarget" end,
+                      disabledTooltip="Only applies when Name or Name > Target is selected." },
+                                    },
             })
             local cogBtn = MCogBtn(rgn, cogShowFn)
             local function UpdCog()
@@ -11875,21 +12133,45 @@ initFrame:SetScript("OnEvent", function(self)
 
         local portraitRow
         local function enableRow(Ww, pp, yy)
-            portraitRow, h = Ww:DualRow(pp, yy,
-                { type="toggle", text=enableText,
-                  getValue=function() return db.profile.enabledFrames[unitKey] ~= false end,
-                  setValue=function(v)
-                    db.profile.enabledFrames[unitKey] = v
-                    ReloadAndUpdate()
-                  end },
-                { type="toggle", text="Show Portrait",
-                  getValue=function() return settingsTable.showPortrait ~= false end,
-                  setValue=function(v)
-                    settingsTable.showPortrait = v
-                    ReloadAndUpdate()
-                  end })
-            AttachPortraitSideCog(portraitRow._rightRegion, settingsTable)
-            return portraitRow, h
+            -- Frame Source on its own row (like player/target); Show Portrait sits
+            -- flush on the next row, only on the EllesmereUI source. For
+            -- Blizzard/hidden the row is Frame Source alone + the notice below.
+            local isEUI = ns.GetUnitFrameSource(unitKey) == "eui"
+            -- "Blizzard Default" only makes sense when the parent target/focus is
+            -- itself on Blizzard's frame (its native child target-of-target is then
+            -- alive); otherwise offer only EllesmereUI / Hidden and explain why.
+            local parentLabel = (unitKey == "focustarget") and "Focus" or "Target"
+            local childName = (unitKey == "focustarget") and "focus-target" or "target-of-target"
+            local parentIsBlizzard = ns.GetUnitFrameSource(parentLabel:lower()) == "blizzard"
+            -- Parent is Blizzard -> "Blizzard Default" is offered here; briefly warn that the
+            -- native child can't be hidden in combat (see SuppressBlizzardChildFrame for why).
+            -- Parent isn't Blizzard -> the option is dropped; explain why instead.
+            local srcTip
+            if parentIsBlizzard then
+                srcTip = "Due to Blizzard API restrictions, Blizzard's native " .. childName
+                    .. " can't be hidden in combat and will show the whole time you are in combat. Recommended: match the "
+                    .. parentLabel .. " frame's source -- both Blizzard Default, or both EllesmereUI."
+            else
+                srcTip = "\"Blizzard Default\" is only available when the " .. parentLabel
+                    .. " frame's source is set to Blizzard Default -- the " .. childName
+                    .. " then comes from Blizzard's " .. parentLabel:lower() .. " frame."
+            end
+            local row, h = BuildFrameSourceRow(Ww, pp, yy, unitKey, nil, nil, not parentIsBlizzard, srcTip)
+            local total = h
+            if isEUI then
+                local ph
+                portraitRow, ph = Ww:DualRow(pp, yy - h,
+                    { type="toggle", text="Show Portrait",
+                      getValue=function() return settingsTable.showPortrait ~= false end,
+                      setValue=function(v)
+                        settingsTable.showPortrait = v
+                        ReloadAndUpdate()
+                      end },
+                    { type="spacer" })
+                AttachPortraitSideCog(portraitRow._leftRegion, settingsTable)
+                total = total + ph
+            end
+            return row, total
         end
 
         local displayHeader, sizeRow, textHeader, textRow
@@ -11898,7 +12180,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Store click targets for hover highlight system
         parent._ufClickTargets = {
             healthBar  = { section = displayHeader,  target = sizeRow },
-            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "right" },
+            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "left" },
             nameText   = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             healthText = { section = textHeader or displayHeader,  target = textRow or sizeRow },
         }
@@ -11911,21 +12193,23 @@ initFrame:SetScript("OnEvent", function(self)
 
         local portraitRow
         local function enableRow(Ww, pp, yy)
-            portraitRow, h = Ww:DualRow(pp, yy,
-                { type="toggle", text="Enable Pet Frame",
-                  getValue=function() return db.profile.enabledFrames.pet ~= false end,
-                  setValue=function(v)
-                    db.profile.enabledFrames.pet = v
-                    ReloadAndUpdate()
-                  end },
-                { type="toggle", text="Show Portrait",
-                  getValue=function() return db.profile.pet.showPortrait ~= false end,
-                  setValue=function(v)
-                    db.profile.pet.showPortrait = v
-                    ReloadAndUpdate()
-                  end })
-            AttachPortraitSideCog(portraitRow._rightRegion, db.profile.pet)
-            return portraitRow, h
+            local isEUI = ns.GetUnitFrameSource("pet") == "eui"
+            local row, h = BuildFrameSourceRow(Ww, pp, yy, "pet")
+            local total = h
+            if isEUI then
+                local ph
+                portraitRow, ph = Ww:DualRow(pp, yy - h,
+                    { type="toggle", text="Show Portrait",
+                      getValue=function() return db.profile.pet.showPortrait ~= false end,
+                      setValue=function(v)
+                        db.profile.pet.showPortrait = v
+                        ReloadAndUpdate()
+                      end },
+                    { type="spacer" })
+                AttachPortraitSideCog(portraitRow._leftRegion, db.profile.pet)
+                total = total + ph
+            end
+            return row, total
         end
 
         local displayHeader, sizeRow, textHeader, textRow
@@ -11934,7 +12218,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Store click targets for hover highlight system
         parent._ufClickTargets = {
             healthBar  = { section = displayHeader,  target = sizeRow },
-            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "right" },
+            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "left" },
             nameText   = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             healthText = { section = textHeader or displayHeader,  target = textRow or sizeRow },
         }
@@ -11954,7 +12238,7 @@ initFrame:SetScript("OnEvent", function(self)
             return ns._bossPreviewActive and EllesmereUI.L("Deactivate Boss Preview") or EllesmereUI.L("Activate Boss Preview")
         end
         local function BossFramesDisabled()
-            return db.profile.enabledFrames.boss == false
+            return ns.GetUnitFrameSource("boss") ~= "eui"
         end
         activateBtnFrame, h = W:WideButton(parent, PreviewLabel(), y, function()
             if BossFramesDisabled() then return end
@@ -11990,37 +12274,39 @@ initFrame:SetScript("OnEvent", function(self)
         -- the aura rows under the "Buffs and Debuffs" section.
         local portraitRow, growthRow, simpleRow, simpleBuffRow, bossAuraRow, bossAuraHeader, bossCastHeader, castMainRow
         local function enableRow(Ww, pp, yy)
-            local eh
-            portraitRow, eh = Ww:DualRow(pp, yy,
-                { type="toggle", text="Enable Boss Frames",
-                  getValue=function() return db.profile.enabledFrames.boss ~= false end,
-                  setValue=function(v)
-                    db.profile.enabledFrames.boss = v
-                    -- Force-stop the in-game preview when disabling boss frames;
-                    -- it rides on the now-disabled frames and renders broken.
-                    if not v and ns._bossPreviewActive and ns.SetBossPreview then
-                        ns.SetBossPreview(false)
-                    end
-                    ReloadAndUpdate()
-                    EllesmereUI:RefreshPage()
-                  end },
-                { type="toggle", text="Show Portrait",
-                  getValue=function() return db.profile.boss.showPortrait ~= false end,
-                  setValue=function(v)
-                    db.profile.boss.showPortrait = v
-                    ReloadAndUpdate()
-                  end })
-            AttachPortraitSideCog(portraitRow._rightRegion, db.profile.boss)
-            local castRow, ch = Ww:DualRow(pp, yy - eh,
-                { type="dropdown", text="Stack Direction", values={ up="Up", down="Down" }, order={ "up", "down" },
-                  getValue=function() return db.profile.boss.bossStackDirection or "down" end,
-                  setValue=function(v) db.profile.boss.bossStackDirection = v; ReloadAndUpdate() end },
-                { type="slider", text="Vertical Spacing", min=-200, max=200, step=1,
-                  getValue=function() return db.profile.bossSpacing or 80 end,
-                  setValue=function(v) db.profile.bossSpacing = v; ReloadAndUpdate() end })
-            -- Show Cast Icon + Cast Bar Height moved to their own "CAST BAR"
-            -- section below the Power Bar (see bossCastBar()).
-            return portraitRow, eh + ch
+            local isEUI = ns.GetUnitFrameSource("boss") == "eui"
+            local row, h = BuildFrameSourceRow(Ww, pp, yy, "boss", function(v)
+                -- Force-stop the in-game preview when boss frames are no longer
+                -- EUI-owned; it rides on the real boss frames and renders broken.
+                if v ~= "eui" and ns._bossPreviewActive and ns.SetBossPreview then
+                    ns.SetBossPreview(false)
+                end
+            end)
+            local total = h
+            -- Frame Source on its own row; Show Portrait then the boss stack layout
+            -- sit flush below, all only for the EUI boss frames.
+            if isEUI then
+                local ph
+                portraitRow, ph = Ww:DualRow(pp, yy - h,
+                    { type="toggle", text="Show Portrait",
+                      getValue=function() return db.profile.boss.showPortrait ~= false end,
+                      setValue=function(v)
+                        db.profile.boss.showPortrait = v
+                        ReloadAndUpdate()
+                      end },
+                    { type="spacer" })
+                AttachPortraitSideCog(portraitRow._leftRegion, db.profile.boss)
+                total = total + ph
+                local castRow, ch = Ww:DualRow(pp, yy - total,
+                    { type="dropdown", text="Stack Direction", values={ up="Up", down="Down" }, order={ "up", "down" },
+                      getValue=function() return db.profile.boss.bossStackDirection or "down" end,
+                      setValue=function(v) db.profile.boss.bossStackDirection = v; ReloadAndUpdate() end },
+                    { type="slider", text="Vertical Spacing", min=-200, max=200, step=1,
+                      getValue=function() return db.profile.bossSpacing or 80 end,
+                      setValue=function(v) db.profile.bossSpacing = v; ReloadAndUpdate() end })
+                total = total + ch
+            end
+            return row, total
         end
 
         local function bossAfterSize(Ww, pp, yy)
@@ -13195,7 +13481,7 @@ initFrame:SetScript("OnEvent", function(self)
             healthBar  = { section = textHeader or displayHeader,  target = sizeRow,  slotSide = "left" },
             powerBar   = { section = parent._powerHeaderFrame or displayHeader,  target = parent._powerHeightRow,  slotSide = "left" },
             powerBarText = { section = parent._powerHeaderFrame or displayHeader,  target = parent._powerTextRow,  slotSide = "left" },
-            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "right" },
+            portrait   = { section = displayHeader,  target = portraitRow,   slotSide = "left" },
             nameText   = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             healthText = { section = textHeader or displayHeader,  target = textRow or sizeRow },
             -- Cast bar -> Cast Bar Height; spell icon -> Show Cast Icon. Both live
@@ -13764,6 +14050,21 @@ initFrame:SetScript("OnEvent", function(self)
             { type = "slider", text = "Text Size", min = 6, max = 24, step = 1,
               getValue = function() return PAGet("textSize") or 11 end,
               setValue = function(v) PASet("textSize", v) end }
+        );  y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type = "dropdown", text = "Duration Format",
+              tooltip = "How aura duration text is written. All styles except Blizzard Default are short and locale-independent, so they never overflow the icon.",
+              values = {
+                  blizzard = { text = "Blizzard Default (2 min)" },
+                  compact  = { text = "Standard (5m / 32)" },
+                  colon    = { text = "Colon (5:32)" },
+                  seconds  = { text = "Seconds (152)" },
+              },
+              order = { "blizzard", "compact", "colon", "seconds" },
+              getValue = function() return PAGet("durationFormat") or "blizzard" end,
+              setValue = function(v) PASet("durationFormat", v) end },
+            nil
         );  y = y - h
 
         -- Row 3: Border Size (+ inline color swatch) | (empty)

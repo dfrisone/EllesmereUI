@@ -4351,7 +4351,9 @@ function EllesmereUI.GetSoulFragments()
         -- In Void Metamorphosis (1217607): stacks come from Silence the
         -- Whispers (1227702) and max is 40. Outside meta: stacks come
         -- from Dark Heart (1225789) and max is 50 (or 35 with Soul
-        -- Glutton talent 1247534).
+        -- Glutton talent 1247534). Surrender to the Void (PvP talent
+        -- 1261423) requires 50 additional souls to enter Metamorphosis,
+        -- on top of whichever base/Soul-Glutton value applies.
         local inMeta = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(1217607)
         local aura, max
         if inMeta then
@@ -4360,6 +4362,9 @@ function EllesmereUI.GetSoulFragments()
         else
             aura = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(1225789)
             max = (C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(1247534)) and 35 or 50
+            if C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(1261423) then
+                max = max + 50
+            end
         end
         return (aura and aura.applications or 0), max
     end
@@ -11235,6 +11240,17 @@ EllesmereUI.VIS_OPT_ITEMS = {
       tooltip = "This bar will only show if you have an enemy targeted" },
 }
 
+EllesmereUI.VIS_OPT_ITEMS_RESOURCE_BARS = {}
+for _, item in ipairs(EllesmereUI.VIS_OPT_ITEMS) do
+    EllesmereUI.VIS_OPT_ITEMS_RESOURCE_BARS[#EllesmereUI.VIS_OPT_ITEMS_RESOURCE_BARS + 1] = item
+    if item.key == "visHideMounted" then
+        EllesmereUI.VIS_OPT_ITEMS_RESOURCE_BARS[#EllesmereUI.VIS_OPT_ITEMS_RESOURCE_BARS + 1] = {
+            key = "visHideDragonriding", label = "Hide when Dragonriding",
+            tooltip = "Hides this element while you are on a skyriding (glide-capable) mount, where Blizzard shows its vigor HUD.",
+        }
+    end
+end
+
 -- Cache player class once at load time (never changes).
 local _, _playerClass = UnitClass("player")
 
@@ -11272,6 +11288,15 @@ function EllesmereUI.IsPlayerMountedLike()
     return false
 end
 
+function EllesmereUI.IsPlayerSkyriding()
+    if not (EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike()) then return false end
+    if C_PlayerInfo and C_PlayerInfo.GetGlidingInfo then
+        local _, canGlide = C_PlayerInfo.GetGlidingInfo()
+        return canGlide == true
+    end
+    return false
+end
+
 -- Non-macro visibility subset: the options that CAN'T be expressed in a
 -- secure [macro] condition and must be evaluated in Lua. Used by secure
 -- action bar frames that delegate the macro-expressible options
@@ -11305,6 +11330,10 @@ function EllesmereUI.CheckVisibilityOptionsNonMacro(opts)
     -- Hide when Mounted (includes druid travel/flight/aquatic forms)
     if opts.visHideMounted then
         if EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike() then return true end
+    end
+
+    if opts.visHideDragonriding then
+        if EllesmereUI.IsPlayerSkyriding and EllesmereUI.IsPlayerSkyriding() then return true end
     end
 
     return false

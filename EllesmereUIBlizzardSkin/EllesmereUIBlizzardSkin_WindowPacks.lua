@@ -744,6 +744,24 @@ local function FadeEJArt(frame, depth)
     end
 end
 
+-- Some Blizzard text bakes a |cff000000 black or |cff414141 dark grey run INTO
+-- the string (gossip/quest option titles, and localized quest reward/greeting
+-- blurbs on non-English clients); a plain SetTextColor cannot lighten those --
+-- the embedded run wins. Rewrite just those two tones to readable light ones in
+-- place, leaving every other color (links, quest difficulty) untouched.
+-- Idempotent: once rewritten the source codes are gone, so re-runs are no-ops.
+local DARK_TEXT_RECOLOR = { ["000000"] = "ffffff", ["414141"] = "b0b8bc" }
+local function RecolorDarkText(fs)
+    if not fs or not fs.GetText then return end
+    local txt = fs:GetText()
+    if not txt or txt == "" or not txt:find("|cff", 1, true) then return end
+    local new, n = txt:gsub("|c[fF][fF](%x%x%x%x%x%x)", function(hex)
+        local repl = DARK_TEXT_RECOLOR[hex:lower()]
+        if repl then return "|cff" .. repl end
+    end)
+    if n > 0 and new ~= txt then fs:SetText(new) end
+end
+
 -- Force encounter text white so it reads on the dark panel once the parchment
 -- is gone. SimpleHTML bodies take per-element colors. Embedded ability/gear
 -- hyperlinks carry baked-in |c color codes; those are rewritten in place to
@@ -766,6 +784,7 @@ local function WhitenTextIn(frame, depth)
             if r and r.IsObjectType and r:IsObjectType("FontString") and r.SetTextColor then
                 r:SetTextColor(1, 1, 1)
                 RecolorLinks(r)
+                RecolorDarkText(r)
             end
         end
     end
@@ -4925,18 +4944,75 @@ local function Skin_Mail()
         if a and not GetFFD(a).sock then
             local d = GetFFD(a)
             d.sock = true
-            local keep = {}
-            local icon = a.icon or (a.GetName and a:GetName() and _G[a:GetName() .. "IconTexture"])
-            if icon then keep[icon] = true end
-            WSkin.FadeRegions(a, keep)
             local nt = a.GetNormalTexture and a:GetNormalTexture()
+
+            -- Fade every direct texture on the button. The SendMailAttachment
+            -- button has a static placeholder texture (returned by the item API)
+            -- plus a separate dynamic icon texture that Blizzard creates/updates
+            -- when items are placed. Fading everything initially prevents the
+            -- placeholder from clipping through; the hook below re-shows the
+            -- actual icon when an item is dropped in.
+            WSkin.FadeRegions(a)
             if nt and nt.SetAlpha then nt:SetAlpha(0) end
-            local bg = a:CreateTexture(nil, "BACKGROUND", nil, -2)
+            if a.IconBorder then a.IconBorder:SetAlpha(0) end
+
+            -- Background at a very low sublevel so it cannot cover the icon.
+            local bg = a:CreateTexture(nil, "BACKGROUND", nil, -8)
             bg:SetColorTexture(Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA)
             bg:SetAllPoints(a)
             d.bg = bg
             WSkin.AddBorder(a)
-            if icon then WSkin.SquareIcon(icon) end
+
+            -- If the slot already contains an item when the frame is shown (e.g.
+            -- reopening the mailbox), the icon texture exists at ARTWORK/OVERLAY
+            -- with a real item texture. Re-show it here because the hook below
+            -- only fires on later SetItemButtonTexture calls.
+            local countFS = a.Count or (a.GetName and _G[a:GetName() .. "Count"])
+            local countText = countFS and countFS.GetText and countFS:GetText()
+            if countText and countText ~= "" and countText ~= "0" then
+                for j = 1, select("#", a:GetRegions()) do
+                    local r = select(j, a:GetRegions())
+                    if r and r:IsObjectType("Texture") and r.GetDrawLayer and r.GetTexture then
+                        local layer = ({r:GetDrawLayer()})[1]
+                        if (layer == "ARTWORK" or layer == "OVERLAY") and r:GetTexture() then
+                            r:SetAlpha(1)
+                            r:Show()
+                            if r.SetTexCoord then r:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+                        end
+                    end
+                end
+            end
+
+            -- Hook SetItemButtonTexture: when an item is placed, find the region
+            -- that actually received the item texture and show only that. When
+            -- the slot is cleared, hide all icon textures again.
+            if a.SetItemButtonTexture and not d.texHook then
+                d.texHook = true
+                hooksecurefunc(a, "SetItemButtonTexture", function(self, texture)
+                    if not texture then
+                        for j = 1, select("#", self:GetRegions()) do
+                            local r = select(j, self:GetRegions())
+                            if r and r:IsObjectType("Texture") then
+                                r:SetAlpha(0)
+                            end
+                        end
+                        return
+                    end
+                    for j = 1, select("#", self:GetRegions()) do
+                        local r = select(j, self:GetRegions())
+                        if r and r:IsObjectType("Texture") then
+                            local match = (r.GetTexture and r:GetTexture() == texture) or (r.GetAtlas and r:GetAtlas() == texture)
+                            if match then
+                                r:SetAlpha(1)
+                                r:Show()
+                                if r.SetTexCoord then r:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+                            else
+                                r:SetAlpha(0)
+                            end
+                        end
+                    end
+                end)
+            end
         end
     end
 
@@ -4963,19 +5039,6 @@ local function Skin_Mail()
                 SkinMailItemButton(_G.OpenMailLetterButton)
                 for i = 1, 16 do SkinMailItemButton(_G["OpenMailAttachmentButton" .. i]) end
                 WhitenMailText()
-            end))
-        end
-        if type(_G.SendMailFrame_Update) == "function" then
-            hooksecurefunc("SendMailFrame_Update", WSkin.Debounce(function()
-                for i = 1, 16 do
-                    local a = _G["SendMailAttachment" .. i]
-                    if a then
-                        local icon = a.icon or (a.GetName and a:GetName() and _G[a:GetName() .. "IconTexture"])
-                        if icon then WSkin.SquareIcon(icon) end
-                        local nt = a.GetNormalTexture and a:GetNormalTexture()
-                        if nt and nt.SetAlpha then nt:SetAlpha(0) end
-                    end
-                end
             end))
         end
     end
@@ -6760,8 +6823,9 @@ local function Skin_WorldMap()
                     if fs and fs.SetTextColor then fs:SetTextColor(1, 0.82, 0) end
                 end
                 local rw = _G.QuestInfoRewardsFrame
-                if rw and rw.Header and rw.Header.SetTextColor then
-                    rw.Header:SetTextColor(1, 0.82, 0)
+                if rw then
+                    WhitenTextIn(rw)  -- catch nested spell/effect + SimpleHTML reward blurbs
+                    if rw.Header and rw.Header.SetTextColor then rw.Header:SetTextColor(1, 0.82, 0) end
                 end
                 for _, n in ipairs({ "QuestInfoDescriptionText", "QuestInfoObjectivesText",
                                      "QuestInfoGroupSize" }) do
@@ -7760,31 +7824,13 @@ WSkin.RegisterWindow({
 -------------------------------------------------------------------------------
 --  Gossip (GossipFrame) -- NPC dialog window. Base UI, always loaded.
 -------------------------------------------------------------------------------
--- One gossip / quest option: white text for readability on the dark bg.
--- Gossip quest/option titles bake a |cff000000 black (or |cff414141 dark grey)
--- color code INTO the string, so a plain SetTextColor cannot lighten them --
--- the embedded run wins. Rewrite just those two tones to readable light ones in
--- place, leaving every other color (links, quest difficulty) untouched.
--- Idempotent: once rewritten the source codes are gone, so re-runs are no-ops.
-local GOSSIP_TEXT_RECOLOR = { ["000000"] = "ffffff", ["414141"] = "b0b8bc" }
-local function RecolorGossipText(fs)
-    if not fs or not fs.GetText then return end
-    local txt = fs:GetText()
-    if not txt or txt == "" or not txt:find("|cff", 1, true) then return end
-    local new, n = txt:gsub("|c[fF][fF](%x%x%x%x%x%x)", function(hex)
-        local repl = GOSSIP_TEXT_RECOLOR[hex:lower()]
-        if repl then return "|cff" .. repl end
-    end)
-    if n > 0 and new ~= txt then fs:SetText(new) end
-end
-
 local function SkinGossipOption(btn)
     if not btn or btn:IsForbidden() then return end
     -- Recolor ONLY -- keep Blizzard's native font on gossip text (its buttons
     -- follow the color-only widget font policy). No WSkin.Font here.
-    if btn.GreetingText then WSkin.White(btn.GreetingText); RecolorGossipText(btn.GreetingText) end
+    if btn.GreetingText then WSkin.White(btn.GreetingText); RecolorDarkText(btn.GreetingText) end
     local fs = btn.GetFontString and btn:GetFontString()
-    if fs then WSkin.White(fs); RecolorGossipText(fs) end
+    if fs then WSkin.White(fs); RecolorDarkText(fs) end
     -- The NPC greeting body text is a FontString nested inside the element (not
     -- the named GreetingText field or the button label), so it slips past both
     -- checks above and renders black on the dark panel. Whiten every FontString
@@ -7958,13 +8004,13 @@ local function Skin_Quest()
             if fs and fs.SetTextColor then fs:SetTextColor(1, 0.82, 0) end
         end
         local rw = _G.QuestInfoRewardsFrame
-        if rw and rw.Header and rw.Header.SetTextColor then rw.Header:SetTextColor(1, 0.82, 0) end
         for _, n in ipairs({ "QuestInfoDescriptionText", "QuestInfoObjectivesText",
                              "QuestInfoGroupSize", "QuestInfoRewardText", "QuestInfoQuestType" }) do
             local fs = _G[n]
             if fs and fs.SetTextColor then fs:SetTextColor(1, 1, 1) end
         end
         if rw then
+            WhitenTextIn(rw)  -- catch nested spell/effect + SimpleHTML reward blurbs the fields below miss
             for _, k in ipairs({ "ItemChooseText", "ItemReceiveText",
                                  "PlayerTitleText", "SpellLearnText" }) do
                 local fs = rw[k]
@@ -7980,6 +8026,7 @@ local function Skin_Quest()
                     if btn.Name and btn.Name.SetTextColor then btn.Name:SetTextColor(1, 1, 1) end
                 end
             end
+            if rw.Header and rw.Header.SetTextColor then rw.Header:SetTextColor(1, 0.82, 0) end
         end
         local of = _G.QuestInfoObjectivesFrame
         if of and of.Objectives then
@@ -8004,25 +8051,32 @@ local function Skin_Quest()
             end
         end
     end
-    local function SkinQuestGreetingButtons()
+    -- Greeting text + section labels + quest title buttons. Blizzard re-applies
+    -- the dark parchment material colour in the greeting panel OnShow after our
+    -- skin runs, so re-white on every show (hooked below), not just once here.
+    local function StyleQuestGreeting()
+        if _G.QuestGreetingText then WSkin.White(_G.QuestGreetingText); RecolorDarkText(_G.QuestGreetingText) end
+        for _, n in ipairs({ "CurrentQuestsText", "AvailableQuestsText" }) do
+            local fs = _G[n]
+            if fs then WSkin.White(fs); RecolorDarkText(fs) end
+        end
         local gp = _G.QuestFrameGreetingPanel
-        if not gp or not gp.titleButtonPool then return end
-        for btn in gp.titleButtonPool:EnumerateActive() do
-            SkinQuestGreetingButton(btn)
+        if gp and gp.titleButtonPool then
+            for btn in gp.titleButtonPool:EnumerateActive() do
+                SkinQuestGreetingButton(btn)
+            end
         end
     end
 
-    -- Greeting panel body: white greeting paragraph + section labels, faded
-    -- divider, readable quest title buttons.
-    if _G.QuestGreetingText then WSkin.Font(_G.QuestGreetingText); WSkin.White(_G.QuestGreetingText) end
+    if _G.QuestGreetingText then WSkin.Font(_G.QuestGreetingText) end
     for _, n in ipairs({ "CurrentQuestsText", "AvailableQuestsText" }) do
         local fs = _G[n]
-        if fs then WSkin.Font(fs); WSkin.White(fs) end
+        if fs then WSkin.Font(fs) end
     end
     if _G.QuestGreetingFrameHorizontalBreak and _G.QuestGreetingFrameHorizontalBreak.SetAlpha then
         _G.QuestGreetingFrameHorizontalBreak:SetAlpha(0)
     end
-    SkinQuestGreetingButtons()
+    StyleQuestGreeting()
 
     -- Progress panel static text.
     if _G.QuestProgressTitleText then
@@ -8037,9 +8091,12 @@ local function Skin_Quest()
         end))
         -- Greeting rows repopulate on QUEST_GREETING / QUEST_LOG_UPDATE.
         local gp = _G.QuestFrameGreetingPanel
-        if gp then gp:HookScript("OnShow", WSkin.Debounce(SkinQuestGreetingButtons)) end
+        if gp then gp:HookScript("OnShow", WSkin.Debounce(StyleQuestGreeting)) end
         if type(_G.QuestFrameGreetingPanel_OnShow) == "function" then
-            hooksecurefunc("QuestFrameGreetingPanel_OnShow", SkinQuestGreetingButtons)
+            hooksecurefunc("QuestFrameGreetingPanel_OnShow", function()
+                StyleQuestGreeting()
+                if C_Timer then C_Timer.After(0, StyleQuestGreeting) end
+            end)
         end
         -- Body text: Blizzard re-colors it on each display, so re-assert in the
         -- hook (and once more next frame -- objectives are colored after this).

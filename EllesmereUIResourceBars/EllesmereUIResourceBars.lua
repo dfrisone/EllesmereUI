@@ -1014,10 +1014,13 @@ local DEFAULTS = {
             offsetX     = 0,
             offsetY     = -64,
             barAlpha    = 1.0,
+            oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
+            oocAlpha    = 0.5,       -- alpha the bar fades to while out of combat
             visibility  = "always",  -- "always","combat","target","mouseover","never","in_combat","in_raid","in_party","solo"
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
+            visHideDragonriding = false,
             visHideNoTarget = false,
             visHideNoEnemy = false,
             orientation = "HORIZONTAL",  -- "HORIZONTAL","VERTICAL_UP","VERTICAL_DOWN"
@@ -1058,10 +1061,13 @@ local DEFAULTS = {
             offsetX     = 0,
             offsetY     = -54,
             barAlpha    = 1.0,
+            oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
+            oocAlpha    = 0.5,       -- alpha the bar fades to while out of combat
             visibility  = "always",  -- "always","combat","target","mouseover","never","in_combat","in_raid","in_party","solo"
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
+            visHideDragonriding = false,
             visHideNoTarget = false,
             visHideNoEnemy = false,
             orientation = "HORIZONTAL",  -- "HORIZONTAL","VERTICAL_UP","VERTICAL_DOWN"
@@ -1142,9 +1148,11 @@ local DEFAULTS = {
             visHideHousing = false,
             visOnlyInstances = false,
             visHideMounted = false,
+            visHideDragonriding = false,
             visHideNoTarget = false,
             visHideNoEnemy = false,
-            oocAlpha    = 1.0,
+            oocFadeEnabled = false,  -- "Fade Out of Combat" toggle (off by default)
+            oocAlpha    = 0.5,       -- alpha the bar fades to while out of combat
             offsetX     = 0,
             offsetY     = -38,
             -- Shift elements anchored to the class resource bar when the spec
@@ -1261,6 +1269,19 @@ local _erbEventFrame        -- file-scoped ref to the event frame (assigned in O
 local isInCombat = false
 local currentAlpha = 1
 local targetAlpha = 1
+
+-- Effective bar alpha. When "Fade Out of Combat" is enabled and the player is
+-- out of combat, the bar shows its chosen oocAlpha; otherwise its normal
+-- opacity. Off by default. Every SetAlpha site routes through this -- BuildBars
+-- sets bar alpha too, and some events (UNIT_MAXHEALTH/UNIT_MAXPOWER) rebuild
+-- without a following UpdateVisibility, so folding the fade in here keeps a
+-- rebuild from clobbering it. On ns (not a new local) to respect the 200-cap.
+function ns.ResolveBarAlpha(cfg)
+    if cfg and cfg.oocFadeEnabled and not isInCombat then
+        return cfg.oocAlpha or 0.5
+    end
+    return (cfg and cfg.barAlpha) or 1
+end
 local cachedClass
 local cachedPrimary
 local cachedSecondary
@@ -2590,7 +2611,7 @@ local function BuildBars()
             healthBar._text:SetTextColor(hp.textFillR or 1, hp.textFillG or 1, hp.textFillB or 1, hp.textFillA or 1)
         end
         healthBar:Show()
-        healthBar:SetAlpha(hp.barAlpha or 1)
+        healthBar:SetAlpha(ns.ResolveBarAlpha(hp))
         ApplyBarOrientation(healthBar, hpOri)
         if IsSpecDisabled(hp) then
             EllesmereUI.SetElementVisibility(healthBar, false)
@@ -2768,7 +2789,7 @@ local function BuildBars()
         if hidePower then
             EllesmereUI.SetElementVisibility(primaryBar, false)
         else
-            primaryBar:SetAlpha(pp.barAlpha or 1)
+            primaryBar:SetAlpha(ns.ResolveBarAlpha(pp))
         end
         ApplyBarOrientation(primaryBar, ppOri)
         if IsSpecDisabled(pp) then
@@ -3238,7 +3259,7 @@ local function BuildBars()
         end
 
         secondaryFrame:Show()
-        secondaryFrame:SetAlpha(sp.barAlpha or 1)
+        secondaryFrame:SetAlpha(ns.ResolveBarAlpha(sp))
     elseif secondaryFrame then
         -- Enabled but no resource for this spec: keep the frame positioned
         -- at zero alpha so anchored elements have a valid target.
@@ -5210,7 +5231,7 @@ local function UpdateVisibility()
         if hp and hp.enabled and not IsSpecDisabled(hp) and ShouldShowBar(hp) and not inVehicle then
             healthBar:Show()
             EllesmereUI.SetElementVisibility(healthBar, true)
-            healthBar:SetAlpha(hp.barAlpha or 1)
+            healthBar:SetAlpha(ns.ResolveBarAlpha(hp))
         else
             EllesmereUI.SetElementVisibility(healthBar, false)
         end
@@ -5226,7 +5247,7 @@ local function UpdateVisibility()
         if not hidePower and pp and pp.enabled ~= false and not IsSpecDisabled(pp) and cachedPrimary and ShouldShowBar(pp) and not inVehicle then
             primaryBar:Show()
             EllesmereUI.SetElementVisibility(primaryBar, true)
-            primaryBar:SetAlpha(pp.barAlpha or 1)
+            primaryBar:SetAlpha(ns.ResolveBarAlpha(pp))
         else
             EllesmereUI.SetElementVisibility(primaryBar, false)
         end
@@ -5238,9 +5259,7 @@ local function UpdateVisibility()
         if sp and sp.enabled ~= false and not IsSpecDisabled(sp) and cachedSecondary and ShouldShowSecondary() and not inVehicle then
             secondaryFrame:Show()
             EllesmereUI.SetElementVisibility(secondaryFrame, true)
-            local base = sp.barAlpha or 1
-            local ooc = isInCombat and 1 or (sp.oocAlpha or 1)
-            secondaryFrame:SetAlpha(base * ooc)
+            secondaryFrame:SetAlpha(ns.ResolveBarAlpha(sp))
         else
             EllesmereUI.SetElementVisibility(secondaryFrame, false)
         end
@@ -7212,6 +7231,9 @@ function ERB:ApplyAll()
     cachedClass = classFile
     cachedPrimary = GetPrimaryPowerType()
     cachedSecondary = GetSecondaryResource()
+    -- Seed combat state so a /reload mid-combat doesn't apply the OOC fade
+    -- during the fight (isInCombat otherwise only flips on PLAYER_REGEN).
+    isInCombat = InCombatLockdown()
 
     BuildMainFrame()
     BuildBars()
@@ -7369,7 +7391,7 @@ local function OnEvent(self, event, ...)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
         UpdateVisibility()
-    elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
+    elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" or event == "PLAYER_CAN_GLIDE_CHANGED" then
         UpdateVisibility()
     elseif event == "ZONE_CHANGED_NEW_AREA" then
         -- Re-check secondary max power: UnitPowerMax can change across zone
@@ -7667,6 +7689,7 @@ function ERB:OnEnable()
     eventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
     -- Visibility option events
     eventFrame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_CAN_GLIDE_CHANGED")
     eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     eventFrame:RegisterUnitEvent("UNIT_ABSORB_AMOUNT_CHANGED", "player")
