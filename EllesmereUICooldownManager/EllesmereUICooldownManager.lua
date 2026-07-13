@@ -8434,6 +8434,12 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
         -- (CheckSpecChange's reconcile also rebuilds the map, but a
         -- same-key fire means the data changed again after that rebuild.)
         if ns.RebuildSpellRouteMap then ns.RebuildSpellRouteMap() end
+        -- The tracked-buff catalog can change in the same churn, and the
+        -- login-pass reconcile may have consumed its dirty flag against a
+        -- still-empty viewer pool (the flag is cleared before the call and
+        -- an empty catalog no-ops). Re-arm so the queued reanchor
+        -- reconciles the buff display order against the populated catalog.
+        ns._cdmBuffOrderDirty = true
         if ns.QueueReanchor then ns.QueueReanchor() end
         return
     end

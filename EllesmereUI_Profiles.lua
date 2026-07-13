@@ -2141,6 +2141,13 @@ function EllesmereUI.ImportProfile(importStr, profileName)
                     if EllesmereUI.MigrateCdmHostedBuffSettings then
                         EllesmereUI.MigrateCdmHostedBuffSettings(specProf)
                     end
+                    -- Strings exported before _buffDisplayOrderUserModified
+                    -- existed carry a drag-arranged buffDisplayOrder without
+                    -- the flag; stamp it or the first live reconcile resyncs
+                    -- the imported order to Blizzard order (idempotent).
+                    if EllesmereUI.MigrateCdmBuffOrderUserFlag then
+                        EllesmereUI.MigrateCdmBuffOrderUserFlag(specProf)
+                    end
                 end
             end
         end

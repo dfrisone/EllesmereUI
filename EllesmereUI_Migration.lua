@@ -3524,6 +3524,36 @@ EllesmereUI.RegisterMigration({
     end,
 })
 
+-- The default buffs bar's displayed order (sd.buffDisplayOrder) is auto-resynced
+-- to Blizzard's current viewer order by ReconcileBuffDisplayOrder unless
+-- sd._buffDisplayOrderUserModified is set. The flag arrived together with the
+-- live-path reconcile and is only ever written by the options drag-reorder --
+-- but before the flag existed, buffDisplayOrder itself was created exclusively
+-- by a manual drag, so every pre-existing stable-key array IS a user's
+-- hand-arranged order. Stamp the flag so the first live reconcile after
+-- updating preserves that order instead of re-sorting it to Blizzard order.
+-- Numeric-format legacy arrays are skipped: the reconcile (and the old options
+-- build before it) discards that format outright, so there is no order a stamp
+-- could preserve. Shared with profile import so orders exported from older
+-- builds keep their protection.
+function EllesmereUI.MigrateCdmBuffOrderUserFlag(specProf)
+    local bs = type(specProf) == "table" and type(specProf.barSpells) == "table"
+        and specProf.barSpells.buffs
+    if type(bs) ~= "table" then return end
+    if type(bs.buffDisplayOrder) == "table" and type(bs.buffDisplayOrder[1]) == "string" then
+        bs._buffDisplayOrderUserModified = true
+    end
+end
+
+EllesmereUI.RegisterMigration({
+    id          = "cdm_buff_order_user_flag_v1",
+    scope       = "specProfile",
+    description = "Protect pre-existing manually-arranged Tracked Buffs orders from the live-path Blizzard-order resync by stamping _buffDisplayOrderUserModified on every stable-key buffDisplayOrder.",
+    body = function(ctx)
+        EllesmereUI.MigrateCdmBuffOrderUserFlag(ctx.specProfile)
+    end,
+})
+
 -- The Mythic+ Timer's Enemy Forces bar historically shared one bar texture with
 -- the main timer bar (both read barTexture / barBgTexture). The Forces bar now
 -- has its own enemyBarTexture / enemyBarBgTexture so the two can be styled
