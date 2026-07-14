@@ -996,6 +996,78 @@ local function SkinInspectSheet()
 
 end
 
+-- Replicates stock Blizzard's Inspect-docks-beside-Character layout, since
+-- nothing here pairs the two otherwise and InspectFrame's live model bleeds
+-- through CharacterFrame's when they overlap.
+local DOCK_MARGIN = 4
+
+-- Defers to an explicit Shifter pin on InspectFrame, or Shifter's own
+-- SetPoint hook fights this dock every time either frame shows or moves.
+local function InspectFrameIsUserPinned()
+    return EllesmereUIDB and EllesmereUIDB.shifterPositions
+        and EllesmereUIDB.shifterPositions["InspectFrame"] ~= nil
+end
+
+local function DockInspectFrame()
+    local frame = InspectFrame
+    local cf = _G.CharacterFrame
+    if not frame or not cf then return end
+    if not frame:IsShown() or not cf:IsShown() then return end
+    if InspectFrameIsUserPinned() then return end
+
+    -- Same room-check and scale-safe math as Shifter's DockToCharacterFrame,
+    -- so an edge-pinned CharacterFrame doesn't push this off-screen.
+    local cs  = cf:GetEffectiveScale() or 1
+    local es  = frame:GetEffectiveScale() or 1
+    local ues = UIParent:GetEffectiveScale() or 1
+    local wAbs = (frame:GetWidth() or 0) * es
+    local leftRoom  = (cf:GetLeft() or 0) * cs
+    local rightRoom = (GetScreenWidth() or 0) * ues - (cf:GetRight() or 0) * cs
+    local dockLeft = leftRoom >= wAbs + DOCK_MARGIN * es or leftRoom >= rightRoom
+
+    frame:ClearAllPoints()
+    if dockLeft then
+        frame:SetPoint("TOPRIGHT", cf, "TOPLEFT", -DOCK_MARGIN, 0)
+    else
+        frame:SetPoint("TOPLEFT", cf, "TOPRIGHT", DOCK_MARGIN, 0)
+    end
+end
+
+-- Blizzard's native anchor, captured before we ever dock, so it can be
+-- restored once CharacterFrame is no longer there to dock beside.
+local _defaultInspectPoint
+
+local function CaptureDefaultInspectPoint()
+    if _defaultInspectPoint or not InspectFrame then return end
+    local point, relativeTo, relativePoint, x, y = InspectFrame:GetPoint(1)
+    if point then
+        _defaultInspectPoint = { point, relativeTo, relativePoint, x, y }
+    end
+end
+
+local function RestoreDefaultInspectPoint()
+    if not _defaultInspectPoint or not InspectFrame then return end
+    if InspectFrameIsUserPinned() then return end
+    InspectFrame:ClearAllPoints()
+    InspectFrame:SetPoint(unpack(_defaultInspectPoint))
+end
+
+-- Safety net for overlaps the dock above doesn't catch (e.g. InspectFrame
+-- dragged onto CharacterFrame): bump CharacterFrame to "DIALOG", one tier
+-- above the "HIGH" strata both default to, so it always wins the z-order --
+-- same tier EllesmereUIQoL_Shifter.lua uses for the same reason.
+local function EnforceCharacterFramePriority()
+    local cf = _G.CharacterFrame
+    if not cf then return end
+    if InspectFrame and InspectFrame:IsShown() and cf:IsShown() then
+        if cf:GetFrameStrata() ~= "DIALOG" then
+            cf:SetFrameStrata("DIALOG")
+        end
+    elseif cf:GetFrameStrata() == "DIALOG" then
+        cf:SetFrameStrata("HIGH")
+    end
+end
+
 -- Main function to apply themed inspect sheet
 local function ApplyThemedInspectSheet()
     if EllesmereUIDB and EllesmereUIDB.themedInspectSheet == false then
@@ -1050,9 +1122,13 @@ if EllesmereUI then
         if _inspHooked or not InspectFrame then return end
         _inspHooked = true
 
+        CaptureDefaultInspectPoint()
+
         InspectFrame:HookScript("OnShow", function()
             skinned = false
             ApplyThemedInspectSheet()
+            DockInspectFrame()
+            EnforceCharacterFramePriority()
             C_Timer.After(0.1, function()
                 if not InspectFrame or not InspectFrame:IsShown() then return end
                 if EllesmereUI._refreshInspectItemLevelVisibility then
@@ -1069,7 +1145,22 @@ if EllesmereUI then
 
         InspectFrame:HookScript("OnHide", function()
             skinned = false
+            EnforceCharacterFramePriority()
         end)
+
+        -- CharacterFrame is core UI, already loaded here (unlike InspectFrame).
+        if _G.CharacterFrame then
+            _G.CharacterFrame:HookScript("OnShow", function()
+                DockInspectFrame()
+                EnforceCharacterFramePriority()
+            end)
+            hooksecurefunc(_G.CharacterFrame, "SetPoint", DockInspectFrame)
+            _G.CharacterFrame:HookScript("OnHide", function()
+                if InspectFrame and InspectFrame:IsShown() then
+                    RestoreDefaultInspectPoint()
+                end
+            end)
+        end
 
         local nineSliceHiddenFrame = CreateFrame("Frame")
         nineSliceHiddenFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
