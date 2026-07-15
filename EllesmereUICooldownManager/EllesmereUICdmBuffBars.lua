@@ -6,6 +6,7 @@
 --------------------------------------------------------------------------------
 local _, ns = ...
 
+local ceil    = math.ceil
 local floor   = math.floor
 local format  = string.format
 local GetTime = GetTime
@@ -94,9 +95,14 @@ ns.TBB_TEXTURE_NAMES = TBB_TEXTURE_NAMES
 --  Shared Helpers
 -------------------------------------------------------------------------------
 local function FormatTime(remaining)
+    -- Whole SECONDS display uses ceil, matching Blizzard's aura timers: a buff
+    -- with 16.5s left reads "17", not "16". Flooring the seconds showed every
+    -- buff one second below Blizzard's frame (reported/verified for Aug Evoker
+    -- Ebon Might). Minutes/hours stay floor -- their round-up isn't verified
+    -- against Blizzard and buffs seldom sit that high. Sub-10s keeps tenths.
     if remaining >= 3600 then return format("%dh", floor(remaining / 3600)) end
     if remaining >= 60   then return format("%dm", floor(remaining / 60))   end
-    if remaining >= 10   then return format("%d",  floor(remaining))        end
+    if remaining >= 10   then return format("%d",  ceil(remaining))         end
     return format("%.1f", remaining)
 end
 
