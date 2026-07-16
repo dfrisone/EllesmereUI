@@ -8015,8 +8015,15 @@ local function UpdateMerchantItemLevels()
     if not f then return end
     local show = EllesmereUIDB and EllesmereUIDB.merchantShowItemLevel == true
     local onSellTab = (f.selectedTab or 1) == 1
+    local numItems
+    if EllesmereUIDB.merchantShowAsList then
+        -- No need to check GetNumBuybackItems as the text is only visible on the sell tab
+        numItems = GetMerchantNumItems()
+    else
+        numItems = 12
+    end
     local render = show and onSellTab and f:IsVisible()
-    for i = 1, 12 do
+    for i = 1, numItems do
         local btn
         if EllesmereUIDB.merchantShowAsList then
             btn = _G["EUI_MerchantItem" .. i .. "ItemButton"]
