@@ -7777,16 +7777,20 @@ local function UpdateCustomMerchantList(sf, child)
             local isHeirloom = merchantItemID and C_Heirloom.IsItemHeirloom(merchantItemID)
 			local isKnownHeirloom = isHeirloom and C_Heirloom.PlayerHasHeirloom(merchantItemID)
 
+            local redTint = (not isUsable and not isHeirloom) or (not isBuyback and not isPurchasable)
+
             -- Fade if not usable/affordable/already known heirloom
-            row.SlotTexture:SetDesaturated(numAvailable == 0 or isKnownHeirloom)
-            if numAvailable == 0 or isKnownHeirloom then
-                row.Name:SetAlpha(0.6)
-            elseif (not isUsable and not isHeirloom) or (not isBuyback and not isPurchasable) then
-                row.SlotTexture:SetVertexColor(0.5, 0.1, 0.1)
-                row.Name:SetAlpha(0.6)
+            row.SlotTexture:SetDesaturated(not isBuyback and isKnownHeirloom)
+            if row.SlotTexture:IsDesaturated() then
+                if redTint then
+                    row.SlotTexture:SetVertexColor(0.5, 0, 0)
+                else
+                    row.SlotTexture:SetVertexColor(0.5, 0.5, 0.5)
+                end
+            elseif redTint then
+                row.SlotTexture:SetVertexColor(1, 0, 0)
             else
                 row.SlotTexture:SetVertexColor(1, 1, 1)
-                row.Name:SetAlpha(1)
             end
 
             row:Show()
