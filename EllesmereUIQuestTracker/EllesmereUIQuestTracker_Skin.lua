@@ -822,28 +822,27 @@ local function ProcessBlockChildren(frame, depth)
 
 end
 
--- Weak-keyed so pooled/recycled poiButtons don't leak or get double-hooked.
-local _hookedPOIButtons = setmetatable({}, { __mode = "k" })
+-- Suppress a POI button permanently. Hooks Show + SetAlpha so Blizzard
+-- can never make it visible again. The _euiSuppressed flag is on the
+-- frame object itself, so it persists even if the button is pooled.
+local _poiHiddenParent = CreateFrame("Frame")
+_poiHiddenParent:Hide()
 
 local function SuppressPOI(block)
+    -- "Show Quest Icons" on: leave Blizzard's native POI button visible and
+    -- skip installing the keep-hidden hook entirely. Reload-gated, so this is
+    -- read fresh per block; no live un-suppression needed.
     if EQT.Cfg("showQuestIcons") then return end
     local pb = block and block.poiButton
-    if not pb then return end
-    if pb:IsShown() then pb:Hide() end
+    if not pb or EllesmereUI._GetFFD(pb).suppressed then return end
+    EllesmereUI._GetFFD(pb).suppressed = true
+    pb:SetParent(_poiHiddenParent)
     pb:EnableMouse(false)
-
-    -- Re-hide synchronously whenever Blizzard shows this button again (e.g.
-    -- on SUPER_TRACKING_CHANGED from clicking a quest) so there's no visible
-    -- flash before the next SkinBlock/suppression pass. Hide() only, never
-    -- SetParent -- that's the taint-safe version of this pattern (see
-    -- InstallShowHook's otf Show-hook above, which does the same thing).
-    if not _hookedPOIButtons[pb] then
-        _hookedPOIButtons[pb] = true
-        hooksecurefunc(pb, "Show", function(self)
-            if EQT.Cfg("showQuestIcons") then return end
-            self:Hide()
-        end)
-    end
+    hooksecurefunc(pb, "SetParent", function(self, parent)
+        if parent ~= _poiHiddenParent then
+            self:SetParent(_poiHiddenParent)
+        end
+    end)
 end
 
 local function SkinBlock(block)
@@ -980,6 +979,34 @@ local function SkinExistingBlocks(tracker)
 end
 
 -------------------------------------------------------------------------------
+-- Blizzard anchors whichever module currently sits in the top slot with a
+-- fixed TOP/TOP offset relative to ObjectiveTrackerFrame. Verified via /dump
+-- across QuestObjectiveTracker and ProfessionsRecipeTracker: always -38,
+-- independent of module type and independent of Header's height (ruled out
+-- separately). We tighten this gap after each layout pass.
+-------------------------------------------------------------------------------
+local TOP_ANCHOR_OFFSET = -6  -- ASSUMPTION: Startwert, per Auge nachjustieren
+-- Shared with EllesmereUIQuestTracker_Visibility.lua (BG/top-divider offset)
+-- so both files derive the top gap from a single source instead of two
+-- independent magic numbers drifting apart.
+EQT.TOP_ANCHOR_OFFSET = TOP_ANCHOR_OFFSET
+
+local function TightenTopAnchor(tracker)
+    if not tracker or not tracker.GetPoint or not tracker.SetPoint then return end
+    if InCombatLockdown and InCombatLockdown() then return end
+    -- Nicht während Blizzards Collapse/Expand-Slide-Animation eingreifen,
+    -- sonst kollidiert unser SetPoint mit ObjectiveTrackerSlidingMixin.
+    if tracker.IsSliding and tracker:IsSliding() then return end
+
+    local point, relativeTo, relativePoint, xOfs, yOfs = tracker:GetPoint(1)
+    if point == "TOP" and relativePoint == "TOP" and relativeTo == _G.ObjectiveTrackerFrame then
+        if yOfs and math.abs(yOfs - TOP_ANCHOR_OFFSET) > 0.01 then
+            tracker:SetPoint("TOP", relativeTo, "TOP", xOfs or 0, TOP_ANCHOR_OFFSET)
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
 -- Hook a single sub-tracker.
 -------------------------------------------------------------------------------
 local function HookTracker(tracker)
@@ -1039,6 +1066,7 @@ local function HookTracker(tracker)
                 if ShouldSkipSkin() then return end
             
                 if tracker.Header then EnsureAccentDivider(tracker.Header) end
+                TightenTopAnchor(tracker)
                 if EQT.QueueResize then EQT.QueueResize() end
                 if tracker.usedBlocks then
                     for _, byTemplate in pairs(tracker.usedBlocks) do
@@ -1131,7 +1159,11 @@ function EQT.InitSkin()
         end
         if otf.Header and otf.Header ~= headerMenu then
             otf.Header:Hide()
-            otf.Header:HookScript("OnShow", function(self) self:Hide() end)
+            if otf.Header.SetHeight then otf.Header:SetHeight(0.001) end
+            otf.Header:HookScript("OnShow", function(self)
+                self:Hide()
+                if self.SetHeight then self:SetHeight(0.001) end
+            end)
         end
         -- Strip the parchment / nine-slice background behind the whole tracker.
         if otf.NineSlice then otf.NineSlice:Hide() end
