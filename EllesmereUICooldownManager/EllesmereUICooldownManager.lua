@@ -8131,21 +8131,31 @@ local function UpdateRotationHighlights()
 
     local newSet = {}
     if suggestedSpell then
-        -- Icons store BASE spell ids while GetNextCastSpell returns the
-        -- OVERRIDE (e.g. Maul stored, Raze suggested). Resolve the
-        -- suggestion's base ONCE per pass instead of querying an override
-        -- per icon -- this runs every assisted-highlight change in combat.
-        local suggestedBase = C_Spell and C_Spell.GetBaseSpell
-            and C_Spell.GetBaseSpell(suggestedSpell)
-        if suggestedBase == suggestedSpell then suggestedBase = nil end
+        -- A CDM icon and GetNextCastSpell can each hold EITHER the base or an
+        -- override spell id (e.g. Maul <-> Raze), and which side is which
+        -- varies by spec. The old code only resolved the suggestion's base and
+        -- compared it to the stored id, so it matched "icon=base, suggested=
+        -- override" but missed the reverse ("icon=override, suggested=base"),
+        -- leaving those icons un-highlighted. Compare on base ids in BOTH
+        -- directions. This is strictly a superset of the old exact-id match, so
+        -- anything that highlighted before still does.
+        local GetBaseSpell = C_Spell and C_Spell.GetBaseSpell
+        local suggestedBase = (GetBaseSpell and GetBaseSpell(suggestedSpell)) or suggestedSpell
         for _, icons in pairs(cdmBarIcons) do
             for _, icon in ipairs(icons) do
                 local ifc = _ecmeFC[icon]
                 local sid = ifc and ifc.spellID
-                if sid and (sid == suggestedSpell or (suggestedBase and sid == suggestedBase))
-                   and icon:IsShown() then
-                    _rotShow(icon)
-                    newSet[icon] = true
+                if sid and icon:IsShown() then
+                    -- Direct/base match first (cheap); only resolve the icon's
+                    -- own base if those miss, to keep the common path light.
+                    local match = (sid == suggestedSpell) or (sid == suggestedBase)
+                    if not match and GetBaseSpell then
+                        match = GetBaseSpell(sid) == suggestedBase
+                    end
+                    if match then
+                        _rotShow(icon)
+                        newSet[icon] = true
+                    end
                 end
             end
         end
