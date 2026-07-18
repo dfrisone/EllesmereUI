@@ -247,8 +247,20 @@ local function EnumerateCDMViewerSpells(includeBuffViewer)
             for frame in viewer.itemFramePool:EnumerateActive() do
                 if frame:IsShown() or frame.cooldownInfo then
                     local sid = GetCanonicalSpellIDForFrame(frame)
-                    if _IsUsableSID(sid) and not seen[sid] then
-                        seen[sid] = true
+                    -- Dedup identity. In the BUFF viewer each slot is a distinct
+                    -- cooldownID, and Blizzard can report the SAME canonical
+                    -- spellID for two DIFFERENT cooldownIDs (Diabolist: the
+                    -- Demonic Art slot reports Diabolic Ritual's id) -- deduping
+                    -- by sid there wrongly merges the two into one, so the user
+                    -- can't see or style them individually. Key on cooldownID so
+                    -- both survive. CD/util viewers keep sid-dedup to collapse a
+                    -- spell that shows up in two viewers. Non-colliding specs are
+                    -- unaffected: there a unique sid implies a unique cooldownID.
+                    local cd = frame.cooldownID
+                    local dkey = (includeBuffViewer and type(cd) == "number")
+                        and ("c" .. cd) or sid
+                    if _IsUsableSID(sid) and dkey ~= nil and not seen[dkey] then
+                        seen[dkey] = true
                         entries[#entries + 1] = {
                             sid          = sid,
                             cdID         = frame.cooldownID,
@@ -1014,17 +1026,19 @@ function ns.CollectDefaultBuffTrackEntries()
     local seen = {}
     local entries = ns.EnumerateCDMViewerSpells and ns.EnumerateCDMViewerSpells(true) or {}
     for _, e in ipairs(entries) do
-        if e.sid and not diverted[e.sid] and not seen[e.sid] then
-            seen[e.sid] = true
-            local key = BuffDisplayStableKey(e.sid, e.cdID)
-            if key then
-                out[#out + 1] = {
-                    key         = key,
-                    sid         = e.sid,
-                    cdID        = e.cdID,
-                    layoutIndex = e.layoutIndex or 0,
-                }
-            end
+        -- Dedup on the stable (cooldownID-derived) key, not e.sid: two viewer
+        -- slots can share a canonical spellID but are distinct cooldownIDs
+        -- (Diabolist Demonic Art vs Diabolic Ritual). Keying on sid here would
+        -- re-merge what EnumerateCDMViewerSpells now keeps separate.
+        local key = BuffDisplayStableKey(e.sid, e.cdID)
+        if e.sid and not diverted[e.sid] and key and not seen[key] then
+            seen[key] = true
+            out[#out + 1] = {
+                key         = key,
+                sid         = e.sid,
+                cdID        = e.cdID,
+                layoutIndex = e.layoutIndex or 0,
+            }
         end
     end
 
