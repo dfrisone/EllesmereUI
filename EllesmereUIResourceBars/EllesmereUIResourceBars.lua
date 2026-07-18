@@ -1118,7 +1118,7 @@ local DEFAULTS = {
             bgR         = 1, bgG = 1, bgB = 1, bgA = 0.1,
             showText    = true,
             showTextOnlyIfNoPower = false,  -- only show the resource text while the power bar is hidden (see IsPowerBarHidden)
-            showPercent = true,
+            showPercent = false,  -- secondary "Show %": OFF = value (default), ON = percent (Maelstrom/Insanity/Focus/Astral Power bars)
             showMaxStacks = true,
             textSize    = 11,
             textR       = 1, textG = 1, textB = 1,
@@ -4720,45 +4720,39 @@ local function UpdateSecondaryResource()
             end
             -- Count text
             if sp.showText and secondaryFrame._countText then
+                local ct = secondaryFrame._countText
                 local percentSuffix = (sp.showPercent == false) and "" or "%"
-                if not tainted then
-                    if powerType == "BREWMASTER_STAGGER" then
-                        -- Show stagger as percentage of max health
+                -- The power-based bar resources :"Show %" as a
+                -- value<->percent switch: ON = percent (secret-safe via the
+                -- ScaleTo100 declassifier; capped 0-100 by nature), OFF = the raw
+                -- value. Value is the default (showPercent defaults false for
+                -- the secondary). Both modes use SetFormattedText, which renders a
+                -- secret value's digits engine-side, so they work in instanced
+                -- combat with no Lua compare/concat on the secret.
+                local pType = (powerType == "MAELSTROM_BAR") and PT.MAELSTROM
+                           or (powerType == "INSANITY_BAR") and PT.INSANITY
+                           or (powerType == "FOCUS_BAR") and PT.FOCUS
+                           or (powerType == "LUNAR_POWER_BAR") and PT.LUNAR_POWER
+                           or nil
+                if powerType == "BREWMASTER_STAGGER" then
+                    -- Stagger always shows a percentage of max health
+                    -- The "%" sign is the only thing "Show %" toggles here
+                    if not tainted then
                         local pct = maxC > 0 and (cur / maxC * 100) or 0
-                        secondaryFrame._countText:SetText(format("%d", pct) .. percentSuffix)
-                    elseif powerType == "IGNOREPAIN_BAR" then
-                        -- Text is driven per-frame by IP.UpdateText (viewer
-                        -- capture preferred, fill-width fallback). No-op here.
-                    elseif sp.showMaxStacks == false then
-                        -- Devourer with Show Max Stacks off: current count only.
-                        secondaryFrame._countText:SetFormattedText("%s", cur)
+                        ct:SetText(format("%d", pct) .. percentSuffix)
                     else
-                        -- Current / max. SetFormattedText renders the (possibly
-                        -- secret) current and keeps the clean max -- no Lua concat
-                        -- of a secret value (see the note at the primary bar).
-                        secondaryFrame._countText:SetFormattedText("%s / %s", cur, maxC)
+                        local cp = secondaryBar._staggerPctCache
+                        if cp then ct:SetText(format("%d", cp) .. percentSuffix) else ct:SetText("") end
                     end
+                elseif powerType == "IGNOREPAIN_BAR" then
+                    -- Text is driven per-frame by IP.UpdateText. No-op here.
+                elseif pType and sp.showPercent and UnitPowerPercent then
+                    -- Percent
+                    local pct = UnitPowerPercent("player", pType, true, CurveConstants and CurveConstants.ScaleTo100) or 0
+                    ct:SetFormattedText("%d%%", pct)
                 else
-                    -- Secret value path: percent through the ScaleTo100 curve
-                    -- (bare UnitPowerPercent returns a 0-1 fraction).
-                    local pType = (powerType == "MAELSTROM_BAR") and PT.MAELSTROM
-                               or (powerType == "INSANITY_BAR") and PT.INSANITY
-                               or (powerType == "FOCUS_BAR") and PT.FOCUS
-                               or (powerType == "LUNAR_POWER_BAR") and PT.LUNAR_POWER
-                               or nil
-                    if pType and UnitPowerPercent then
-                        local pct = UnitPowerPercent("player", pType, true, CurveConstants and CurveConstants.ScaleTo100) or 0
-                        -- SetFormattedText formats engine-side, so a SECRET
-                        -- percent still renders; Lua format()/concat on a
-                        -- secret would error instead.
-                        secondaryFrame._countText:SetFormattedText("%d%s", pct, percentSuffix)
-                    elseif powerType == "IGNOREPAIN_BAR" then
-                        -- Text is driven per-frame by IP.UpdateText. No-op here.
-                    elseif sp.showMaxStacks == false then
-                        secondaryFrame._countText:SetFormattedText("%s", cur)
-                    else
-                        secondaryFrame._countText:SetFormattedText("%s / %s", cur, maxC)
-                    end
+                    -- Value
+                    ct:SetFormattedText("%s", cur)
                 end
             end
         end
