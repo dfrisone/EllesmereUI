@@ -4710,10 +4710,10 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Row 2: Frame Spacing | Group Spacing
         _, h = W:DualRow(parent, y,
-            { type="slider", text="Frame Spacing", min=-1, max=15, step=1,
+            { type="slider", pixel=true, text="Frame Spacing", min=-1, max=15, step=1,
               getValue=function() return SVal("cellSpacing", 2) end,
               setValue=function(v) SSet("cellSpacing", v) end },
-            { type="slider", text="Group Spacing", min=-1, max=15, step=1,
+            { type="slider", pixel=true, text="Group Spacing", min=-1, max=15, step=1,
               getValue=function() return SVal("groupSpacing", 8) end,
               setValue=function(v) SSet("groupSpacing", v) end });  y = y - h
 
@@ -5375,7 +5375,7 @@ initFrame:SetScript("OnEvent", function(self)
               values={ __placeholder = "All" }, order={ "__placeholder" },
               getValue=function() return "__placeholder" end,
               setValue=function() end },
-            { type="slider", text="Frame Spacing", min=-1, max=15, step=1,
+            { type="slider", pixel=true, text="Frame Spacing", min=-1, max=15, step=1,
               getValue=function() return SVal("partyCellSpacing", db.profile.cellSpacing or 2) end,
               setValue=function(v) PSSet("partyCellSpacing", v) end });  y = y - h
         -- Overlay the checkbox dropdown onto the LEFT region (Auto Resize Icons
@@ -5841,7 +5841,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Row 3: Spacing | Border Size (+ swatch)
         local defBdrRow
         defBdrRow, h = W:DualRow(parent, y,
-            { type="slider", text="Spacing", min=-1, max=10, step=1,
+            { type="slider", pixel=true, text="Spacing", min=-1, max=10, step=1,
               disabled=DefDisabled, disabledTooltip="Show Defensives & Externals",
               getValue=function() return SVal("defSpacing", 1) end,
               setValue=function(v) SSet("defSpacing", v) end },
@@ -6056,7 +6056,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="slider", text="Icon Size", min=10, max=40, step=1,
               getValue=function() return SVal("paSize", 20) end,
               setValue=function(v) SSet("paSize", v) end },
-            { type="slider", text="Spacing", min=-1, max=10, step=1,
+            { type="slider", pixel=true, text="Spacing", min=-1, max=10, step=1,
               getValue=function() return SVal("paSpacing", 0) end,
               setValue=function(v) SSet("paSpacing", v) end });  y = y - h
 
@@ -6316,7 +6316,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Row 2: Spacing | Show Stacks (+ swatch + cog)
         local dbStacksRow
         dbStacksRow, h = W:DualRow(parent, y,
-            { type="slider", text="Spacing", min=-1, max=10, step=1,
+            { type="slider", pixel=true, text="Spacing", min=-1, max=10, step=1,
               disabled=function() return SVal("debuffFilter", "all") == "none" end,
               disabledTooltip="Show Debuffs",
               getValue=function() return SVal("debuffSpacing", 1) end,

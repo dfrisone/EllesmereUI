@@ -4803,7 +4803,7 @@ initFrame:SetScript("OnEvent", function(self)
         do
             local classGapRow
             classGapRow, h = W:DualRow(parent, y,
-                { type = "slider", text = "Bar Spacing", min = 0, max = 20, step = 1,
+                { type = "slider", pixel = true, text = "Bar Spacing", min = 0, max = 20, step = 1,
                   disabled = classOff,
                   disabledTooltip = "Class Resource",
                   getValue = function() local c = cfg(); return c and c.pipSpacing or 3 end,
@@ -8976,7 +8976,7 @@ initFrame:SetScript("OnEvent", function(self)
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Icon Settings",
                 rows = {
-                    { type = "slider", label = "Spacing", min = 0, max = 20, step = 1,
+                    { type = "slider", pixel = true, label = "Spacing", min = 0, max = 20, step = 1,
                       get = function() local p = DB(); return p and (p.totemBar.spacing or 2) end,
                       set = function(v)
                           local p = DB(); if not p then return end

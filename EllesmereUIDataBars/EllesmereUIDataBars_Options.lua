@@ -2307,7 +2307,7 @@ initFrame:SetScript("OnEvent", function(self)
                       end,
                       setValue = function(v) b.align = v; Apply() end },
                     MkToggle("Hide Blizzard Micro Menu", "disableBlizzardMicroMenu", "Hides Blizzard's own micro menu while any bar has this on."),
-                    { type = "slider", text = "Menu Spacing", min = 0, max = 16, step = 1,
+                    { type = "slider", pixel = true, text = "Menu Spacing", min = 0, max = 16, step = 1,
                       tooltip = "Gap between the main menu button and the icon row.",
                       getValue = function()
                           local v = s.mainMenuSpacing
@@ -2315,7 +2315,7 @@ initFrame:SetScript("OnEvent", function(self)
                           return v
                       end,
                       setValue = function(v) s.mainMenuSpacing = v; Apply() end },
-                    { type = "slider", text = "Icon Spacing", min = 0, max = 16, step = 1,
+                    { type = "slider", pixel = true, text = "Icon Spacing", min = 0, max = 16, step = 1,
                       tooltip = "Gap between the micro menu icons.",
                       getValue = function()
                           local v = s.iconSpacing

@@ -4245,7 +4245,7 @@ initFrame:SetScript("OnEvent", function(self)
                       ns.BuildTrackedBuffBars()
                       EllesmereUI:RefreshPage()
                   end },
-                { type = "slider", text = "Bar Spacing", min = -2, max = 20, step = 1,
+                { type = "slider", pixel = true, text = "Bar Spacing", min = -2, max = 20, step = 1,
                   getValue = function() return ns.TBBGroupSpacing(gid) end,
                   setValue = function(v)
                       ns.TBBSetGroupSpacing(gid, v)
@@ -16273,7 +16273,7 @@ initFrame:SetScript("OnEvent", function(self)
                       BD().buffGlowType = v; ns.BuildAllCDMBars(); Refresh()
                       C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
                   end },
-                { type="slider", text="Icon Spacing",
+                { type="slider", pixel=true, text="Icon Spacing",
                   min=-10, max=20, step=1,
                   getValue=function() return BD().spacing or 2 end,
                   setValue=function(v)
@@ -16729,7 +16729,7 @@ initFrame:SetScript("OnEvent", function(self)
                   bd._matchStrideH = nil
                   ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
               end },
-            { type="slider", text="Icon Spacing",
+            { type="slider", pixel=true, text="Icon Spacing",
               min=-10, max=20, step=1,
               getValue=function() return BD().spacing or 2 end,
               setValue=function(v)

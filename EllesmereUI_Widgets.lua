@@ -1605,6 +1605,47 @@ local function BuildSliderCore(parent, trackW, trackH, thumbSz, inputW, inputH, 
 end
 
 -------------------------------------------------------------------------------
+--  Pixel-unit sliders  (cfg.pixel = true)
+--
+--  The saved value stays in WoW coordinate units (profile format unchanged);
+--  the slider displays and edits whole physical screen pixels, so "1" is one
+--  on-screen pixel at any resolution/UI scale. min/max are declared in
+--  coordinate units and converted at build time, keeping the physical range
+--  identical to the pre-pixel slider. At a pixel-perfect UI scale
+--  (PP.mult == 1) every conversion is the identity and nothing changes.
+--  Supports both accessor conventions: getValue/setValue (row configs) and
+--  get/set (cog popup rows). Returns the cfg untouched when the flag is off,
+--  so callers can pass every slider cfg through unconditionally.
+-------------------------------------------------------------------------------
+local function PixelizeSliderCfg(cfg)
+    -- Conversions run against the GAME screen grid (EllesmereUI.PP), not this
+    -- file's panel-scale PP (PanelPP) -- the saved values live in UIParent
+    -- coordinate units.
+    local gamePP = EllesmereUI.PP
+    if not (cfg and cfg.pixel and gamePP) then return cfg end
+    local px = {}
+    for k, v in pairs(cfg) do px[k] = v end
+    px.min, px.max, px.step = gamePP.ToPixels(cfg.min or 0), gamePP.ToPixels(cfg.max or 0), 1
+    local get, set = cfg.getValue or cfg.get, cfg.setValue or cfg.set
+    local pxGet = get and function()
+        local v = get()
+        return v and gamePP.ToPixels(v)
+    end
+    local pxSet = set and function(v) return set(gamePP.FromPixels(v)) end
+    if cfg.getValue then px.getValue = pxGet end
+    if cfg.get then px.get = pxGet end
+    if cfg.setValue then px.setValue = pxSet end
+    if cfg.set then px.set = pxSet end
+    return px
+end
+
+-- Localized label with the pixel-unit suffix. The suffix is appended after
+-- localization so the L() lookup key stays the untouched English string.
+local function PixelLabel(text)
+    return EllesmereUI.L(text or "") .. " (px)"
+end
+
+-------------------------------------------------------------------------------
 --  Shared Tooltip  (single frame, lazily created, reused by all widgets)
 -------------------------------------------------------------------------------
 local tooltipFrame
@@ -2296,7 +2337,7 @@ function WidgetFactory:Toggle(parent, text, yOffset, getValue, setValue, tooltip
 end
 
 -- Slider with teal fill bar
-function WidgetFactory:Slider(parent, text, yOffset, minVal, maxVal, step, getValue, setValue, tooltip)
+function WidgetFactory:Slider(parent, text, yOffset, minVal, maxVal, step, getValue, setValue, tooltip, pixel)
     local ROW_H = 50
     local frame = CreateFrame("Frame", nil, parent)
     PP.Size(frame, parent:GetWidth() - CONTENT_PAD * 2, ROW_H)
@@ -2305,8 +2346,9 @@ function WidgetFactory:Slider(parent, text, yOffset, minVal, maxVal, step, getVa
     TagOptionRow(frame, parent, text, tooltip)
     local label = MakeFont(frame, 14, nil, TEXT_WHITE_R, TEXT_WHITE_G, TEXT_WHITE_B)
     PP.Point(label, "LEFT", frame, "LEFT", 20, 0)
-    label:SetText(EllesmereUI.L(text))
-    local trackFrame, valBox = BuildSliderCore(frame, 320, 4, 14, 40, 26, 13, SL.INPUT_A, minVal, maxVal, step, getValue, setValue)
+    label:SetText(pixel and PixelLabel(text) or EllesmereUI.L(text))
+    local scfg = PixelizeSliderCfg({ pixel = pixel, min = minVal, max = maxVal, step = step, getValue = getValue, setValue = setValue })
+    local trackFrame, valBox = BuildSliderCore(frame, 320, 4, 14, 40, 26, 13, SL.INPUT_A, scfg.min, scfg.max, scfg.step, scfg.getValue, scfg.setValue)
     PP.Point(valBox, "RIGHT", frame, "RIGHT", -20, 0)
     PP.Point(trackFrame, "RIGHT", valBox, "LEFT", -16, 0)
     AttachLabelHover(frame, label, (ClampRowLabel(label, trackFrame, "LEFT", 12, text, tooltip)))
@@ -3435,8 +3477,10 @@ function WidgetFactory:DualRow(parent, yOffset, leftCfg, rightCfg)
 
         if t == "slider" then
             local defaultTrackW = isRussian and 120 or 160
+            local scfg = PixelizeSliderCfg(cfg)
+            if scfg ~= cfg then label:SetText(PixelLabel(cfg.text)) end
             local trackFrame, valBox, _, slThumb = BuildSliderCore(region, cfg.trackWidth or defaultTrackW, 4, 14, 40, 26, 13, SL.INPUT_A,
-                cfg.min, cfg.max, cfg.step, cfg.getValue, cfg.setValue, true, cfg.snapPoints)
+                scfg.min, scfg.max, scfg.step, scfg.getValue, scfg.setValue, true, cfg.snapPoints)
             PP.Point(valBox, "RIGHT", region, "RIGHT", -SIDE_PAD, 0)
             PP.Point(trackFrame, "RIGHT", valBox, "LEFT", -12, 0)
             controlFrame = nil  -- slider handles its own disabled state; don't let generic handler disable mouse
@@ -3857,8 +3901,10 @@ function WidgetFactory:TripleRow(parent, yOffset, leftCfg, midCfg, rightCfg, spl
 
         if t == "slider" then
             local defaultTrackW = isRussian and 100 or 130
+            local scfg = PixelizeSliderCfg(cfg)
+            if scfg ~= cfg then label:SetText(PixelLabel(cfg.text)) end
             local trackFrame, valBox, _, slThumb = BuildSliderCore(region, cfg.trackWidth or defaultTrackW, 4, 14, 40, 26, 13, SL.INPUT_A,
-                cfg.min, cfg.max, cfg.step, cfg.getValue, cfg.setValue, true, cfg.snapPoints)
+                scfg.min, scfg.max, scfg.step, scfg.getValue, scfg.setValue, true, cfg.snapPoints)
             PP.Point(valBox, "RIGHT", region, "RIGHT", -SIDE_PAD, 0)
             PP.Point(trackFrame, "RIGHT", valBox, "LEFT", -12, 0)
             RegisterWidgetRefresh(function()
@@ -4539,7 +4585,7 @@ local function BuildCogPopup(opts)
         local maxDDLblW = 0
         for _, row in ipairs(opts.rows) do
             if row.type == "slider" or row.type == "input" then
-                tmpFS:SetText(EllesmereUI.L(row.label))
+                tmpFS:SetText(row.pixel and PixelLabel(row.label) or EllesmereUI.L(row.label))
                 local w = tmpFS:GetStringWidth()
                 if w > maxLblW then maxLblW = w end
             elseif row.type == "dropdown" or row.type == "segmented" then
@@ -4625,12 +4671,13 @@ local function BuildCogPopup(opts)
             if i > 1 then curY = curY - GAP end
 
             if row.type == "slider" then
+                local srow = PixelizeSliderCfg(row)
                 local lbl = MakeFont(pf, 11, nil, 1, 1, 1); lbl:SetAlpha(0.6)
-                lbl:SetText(EllesmereUI.L(row.label))
+                lbl:SetText(srow ~= row and PixelLabel(row.label) or EllesmereUI.L(row.label))
                 lbl:SetPoint("LEFT", pf, "TOPLEFT", SIDE_PAD, curY - ROW_H / 2 - 1)
 
                 local track, valBox, updateVisual = BuildSliderCore(pf, SLIDER_W, 4, 12, INPUT_W, ROW_H, 11, POPUP_INPUT_A,
-                    row.min, row.max, row.step, row.get, row.set, true)
+                    srow.min, srow.max, srow.step, srow.get, srow.set, true)
                 track:SetPoint("LEFT", pf, "TOPLEFT", SLIDER_LEFT, curY - ROW_H / 2)
                 valBox:ClearAllPoints()
                 valBox:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, curY - ROW_H / 2)
@@ -4655,7 +4702,7 @@ local function BuildCogPopup(opts)
                     sliderDis:SetScript("OnLeave", function() if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip() end end)
                 end
 
-                rowWidgets[#rowWidgets + 1] = { type = "slider", updateVisual = updateVisual, get = row.get, disOverlay = sliderDis, disCheck = row.disabled }
+                rowWidgets[#rowWidgets + 1] = { type = "slider", updateVisual = updateVisual, get = srow.get, disOverlay = sliderDis, disCheck = row.disabled }
                 curY = curY - ROW_H
 
             elseif row.type == "toggle" then

@@ -2263,12 +2263,12 @@ initFrame:SetScript("OnEvent", function(self)
             { type = "slider", text = "Width", min = 80, max = 600, step = 1,
               getValue = function() return EDR_Cfg("width") end,
               setValue = function(v) EDR_Set("width", v); EDR_Rebuild() end },
-            { type = "slider", text = "Element Spacing", min = 0, max = 12, step = 1,
+            { type = "slider", pixel = true, text = "Element Spacing", min = 0, max = 12, step = 1,
               getValue = function() return EDR_Cfg("gap") end,
               setValue = function(v) EDR_Set("gap", v); EDR_Rebuild() end }
         ); y = y - h
         _, h = W:DualRow(parent, y,
-            { type = "slider", text = "Stack Spacing", min = 0, max = 10, step = 1,
+            { type = "slider", pixel = true, text = "Stack Spacing", min = 0, max = 10, step = 1,
               getValue = function() return EDR_Cfg("stackSpacing") end,
               setValue = function(v) EDR_Set("stackSpacing", v); EDR_Rebuild() end },
             { type = "toggle", text = "Show Icon Cooldown Text",

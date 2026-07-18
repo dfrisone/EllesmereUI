@@ -7103,7 +7103,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Row 3: Bar Spacing + Background Color (with alpha)
         local classResourceRow3
         classResourceRow3, h = W:DualRow(parent, y,
-            { type="slider", text="Bar Spacing", min=0, max=10, step=1,
+            { type="slider", pixel=true, text="Bar Spacing", min=0, max=10, step=1,
               disabled=classPowerDisabled,
               disabledTooltip="Show Class Resource",
               getValue=function() return DBVal("classPowerGap") or defaults.classPowerGap end,

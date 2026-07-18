@@ -2076,7 +2076,12 @@ do
         local m = PP.mult
         if m == 1 then return x end
         local pixels = x / m
-        pixels = x > 0 and math.floor(pixels) or math.ceil(pixels)
+        -- Epsilon-guarded truncation: values saved by pixel-unit sliders sit
+        -- exactly ON a grid boundary (px * mult), and float dust from the
+        -- multiply/divide round trip can land them a hair below it -- without
+        -- the guard the floor drops a whole pixel. 0.001 px is far below any
+        -- legitimate mid-interval distance, so ordinary values are unaffected.
+        pixels = x > 0 and math.floor(pixels + 0.001) or math.ceil(pixels - 0.001)
         return pixels * m
     end
 
@@ -11700,7 +11705,7 @@ initFrame:SetScript("OnEvent", function(self, event)
                     _, h = W:SectionHeader(parent, "LAYOUT", y);                                          y = y - h
                     _, h = W:Slider(parent, "Button Spacing", y, 0, 12, 1,
                         function() return dS[k].spacing end,
-                        function(v) dS[k].spacing = v end);                                              y = y - h
+                        function(v) dS[k].spacing = v end, nil, true);                                   y = y - h
                     _, h = W:Slider(parent, "Global Scale", y, 50, 200, 5,
                         function() return dS[k].scale end,
                         function(v) dS[k].scale = v end);                                                y = y - h
