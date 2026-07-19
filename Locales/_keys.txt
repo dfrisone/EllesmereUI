@@ -103,6 +103,8 @@ Bands
 Bank
 Bar %d
 BoE
+Border Style is only configurable when the Power Bar is detached. Attached Power Bars always use Solid.
+Border is only available when the Power Bar is shown.
 Boundaries are resource counts
 Brightness
 Browse community presets.

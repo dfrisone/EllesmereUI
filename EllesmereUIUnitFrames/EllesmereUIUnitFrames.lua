@@ -4049,11 +4049,10 @@ local function CreateAbsorbBar(frame, unit, settings)
     return backfillBar
 end
 
--- Detached power bar border: create lazily, then restyle/show/hide from the
--- current settings. Lazy creation is what lets a bar switched to a detached
--- position (or a Border Size raised from 0) gain its border live -- the old
--- create-only-at-spawn path needed a /reload. Shown only while the position is
--- detached AND Border Size > 0. Shared by the creation path and the player/
+-- Power bar border: detached bars use the selected full border style; attached
+-- bars use a solid divider only along the edge shared with the health bar.
+-- Lazy creation lets a newly detached/attached bar (or a Border Size raised
+-- from 0) gain its border live. Shared by the creation path and the player/
 -- target/focus refresh branches (the target branch previously tested a local
 -- that only existed in the player branch, so its border was force-hidden on
 -- every refresh; focus had no refresh at all). On ns (not a new file-scope
@@ -4062,25 +4061,38 @@ function ns.UpdatePowerBorder(power, settings)
     if not power or not settings then return end
     local pos = settings.powerPosition or "below"
     local isDet = (pos == "detached_top" or pos == "detached_bottom")
+    local isAttached = (pos == "above" or pos == "below")
     local size = settings.powerBorderSize or 0
     local border = power._pbBorder
     if not border then
         -- Nothing to render and nothing to hide: stay lazy.
-        if not (isDet and size > 0) then return end
+        if not ((isDet or isAttached) and size > 0) then return end
         border = CreateFrame("Frame", nil, power)
         PP.Point(border, "TOPLEFT", power, "TOPLEFT", 0, 0)
         PP.Point(border, "BOTTOMRIGHT", power, "BOTTOMRIGHT", 0, 0)
         power._pbBorder = border
     end
     local c = settings.powerBorderColor or { r = 0, g = 0, b = 0 }
-    EllesmereUI.ApplyBorderStyle(border, size, c.r, c.g, c.b,
-        settings.powerBorderAlpha or 1, settings.powerBorderStyle or "solid",
+    local alpha = settings.powerBorderAlpha or 1
+    -- Attached bars are always Solid. Their unused edges are hidden below so
+    -- only the health/power seam remains visible.
+    local style = isAttached and "solid" or (settings.powerBorderStyle or "solid")
+    EllesmereUI.ApplyBorderStyle(border, size, c.r, c.g, c.b, alpha, style,
         settings.powerBorderOffsetX, settings.powerBorderOffsetY,
         settings.powerBorderShiftX, settings.powerBorderShiftY, "unitframes", size)
+    if isAttached then
+        local edges = PP.GetBorders(border)
+        if edges then
+            if edges._left then edges._left:SetAlpha(0) end
+            if edges._right then edges._right:SetAlpha(0) end
+            if edges._top then edges._top:SetAlpha(pos == "below" and alpha or 0) end
+            if edges._bottom then edges._bottom:SetAlpha(pos == "above" and alpha or 0) end
+        end
+    end
     local borderLevel = settings.powerBorderBehind
         and math.max(0, power:GetFrameLevel() - 1) or (power:GetFrameLevel() + 5)
     border:SetFrameLevel(borderLevel)
-    local showBorder = isDet and size > 0
+    local showBorder = (isDet or isAttached) and size > 0
     if showBorder then border:Show() else border:Hide() end
 
     -- Power text overlay must clear the border: it shares the bar's strata and can
@@ -4451,7 +4463,7 @@ local function CreatePowerBar(frame, unit, settings)
         end
     end
 
-    -- Power bar border (detached positions only; lazily created in the helper)
+    -- Power bar border (full border detached, divider attached; lazily created)
     ns.UpdatePowerBorder(power, settings)
 
     return power

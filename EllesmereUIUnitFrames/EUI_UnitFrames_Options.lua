@@ -2437,6 +2437,9 @@ initFrame:SetScript("OnEvent", function(self)
                     PP.Point(power, "TOPRIGHT", health, "BOTTOMRIGHT", 0, 0)
                     if ph > 0 then power:Show() else power:Hide() end
                 end
+                -- Match the live frame: attached bars get only the Solid seam
+                -- facing health; detached bars retain their selected full style.
+                if ns.UpdatePowerBorder then ns.UpdatePowerBorder(power, s) end
                 if pf._powerFill then
                     pf._powerFill:ClearAllPoints()
                     if s.powerReverseFill then
@@ -7400,7 +7403,9 @@ initFrame:SetScript("OnEvent", function(self)
                   local pos = SVal("powerPosition", "below")
                   return pos ~= "detached_top" and pos ~= "detached_bottom"
               end,
-              disabledTooltip="Border is only available when Power Bar is detached.", rawTooltip=true,
+              disabledTooltip=function()
+                  return EllesmereUI.L("Border Style is only configurable when the Power Bar is detached. Attached Power Bars always use Solid.")
+              end, rawTooltip=true,
               values=pbTexValues, order=pbTexOrder,
               getValue=function() return SGet("powerBorderStyle") or "solid" end,
               setValue=function(v)
@@ -7423,9 +7428,11 @@ initFrame:SetScript("OnEvent", function(self)
             { type="slider", text="Border Size",
               disabled=function()
                   local pos = SVal("powerPosition", "below")
-                  return pos ~= "detached_top" and pos ~= "detached_bottom"
+                  return pos == "none"
               end,
-              disabledTooltip="Border is only available when Power Bar is detached.", rawTooltip=true,
+              disabledTooltip=function()
+                  return EllesmereUI.L("Border is only available when the Power Bar is shown.")
+              end, rawTooltip=true,
               min=0, max=4, step=1, trackWidth=120,
               getValue=function() return SVal("powerBorderSize", 0) end,
               setValue=function(v)
