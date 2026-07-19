@@ -177,10 +177,11 @@ function EQT.RefreshFonts()
 end
 
 -- Forces Blizzard to fully recompute block heights/positions after we
--- resize existing FontStrings (RestyleAll) or Blizzard only partially
--- relayouts around a focus change -- both leave stale cached block heights
--- that overlap the next block until a full ObjectiveTrackerFrame:Update()
--- runs (normally only happens on /reload).
+-- resize existing FontStrings (RestyleAll) -- resizing leaves stale cached
+-- block heights that overlap the next block until a full
+-- ObjectiveTrackerFrame:Update() runs (normally only happens on /reload).
+-- Only reachable from options-panel / profile / accent changes; never from
+-- gameplay events (see the removed SUPER_TRACKING_CHANGED trigger below).
 --
 -- Deferred via C_Timer.After(0) so this never runs inline inside whatever
 -- callback triggered it: the documented SplashFrame taint (see
@@ -220,6 +221,19 @@ local function DoTrackerRelayout()
         _relayoutRetryFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
         return
     end
+    -- A forced Update() runs Blizzard's ENTIRE tracker pipeline under our
+    -- taint. While ScenarioObjectiveTracker / UIWidgetObjectiveTracker have
+    -- content (M+, delves, zone events like void assaults), that pipeline
+    -- registers shared UI-widget state and QuestEventListener quest-name
+    -- callbacks, and the tainted entries later surface as "secret number"
+    -- arithmetic errors / blocked SetPassThroughButtons when the world map
+    -- or GameTooltip reads them (AreaPOI hover, map pin refresh -- see
+    -- SharesWidgetPool). Skip the relayout entirely while they have content;
+    -- Blizzard's next native Update relayouts anyway.
+    local scen = _G.ScenarioObjectiveTracker
+    local widg = _G.UIWidgetObjectiveTracker
+    if (scen and scen.hasContents) or (widg and widg.hasContents) then return end
+
     local otf = _G.ObjectiveTrackerFrame
     if otf and otf.Update then
         -- 12.1: Blizzard's scenario layout probes player auras during Update
@@ -1226,15 +1240,17 @@ function EQT.InitSkin()
     -- Quest events just need a BG resize. Block skinning is handled by
     -- AddBlock/AddObjective/GetProgressBar/GetTimerBar hooks, so we no
     -- longer need to walk the entire tracker tree on every event.
-    evt:SetScript("OnEvent", function(_, event)
+    evt:SetScript("OnEvent", function()
         if EQT.QueueResize then EQT.QueueResize() end
-        -- Focusing a quest can expand its objective text without Blizzard
-        -- relayouting sibling blocks underneath it; force a full relayout
-        -- for this event specifically (not the frequent quest-log events,
-        -- which already go through Blizzard's own native Update()).
-        if event == "SUPER_TRACKING_CHANGED" and EQT.ForceTrackerRelayout then
-            EQT.ForceTrackerRelayout()
-        end
+        -- SUPER_TRACKING_CHANGED -> ForceTrackerRelayout REMOVED: zone-wide
+        -- events (e.g. void assaults) auto-supertrack constantly, and every
+        -- forced Update() ran Blizzard's whole tracker pipeline tainted --
+        -- contaminating shared widget/QuestEventListener state that the world
+        -- map and tooltips read later ("secret number" error spam + blocked
+        -- SetPassThroughButtons; see the guard in DoTrackerRelayout). The
+        -- relayout is now options-driven only; focus changes rely on
+        -- Blizzard's native relayout, and the focus highlight itself is
+        -- color-only via ApplyFocusHighlight.
     end)
     if not EQT._eventFrames then EQT._eventFrames = {} end
     if not EQT._eventRegistrations then EQT._eventRegistrations = {} end
