@@ -164,12 +164,16 @@ qolFrame:SetScript("OnEvent", function(self)
         local _openableCache = {}  -- itemID -> true/false
         local _failedItems = {}   -- itemID -> true (items that failed to open, skip forever)
         local _cacheBuilt = false
-        -- Self-tracked in-flight opens, keyed by bag/slot. Set synchronously in
-        -- the same tick as UseContainerItem (Lua is single-threaded, so no other
-        -- open pass can slip between the use and this write) and cleared at the
-        -- 0.5s recheck. This -- not Blizzard's isLocked flag, which isn't set
-        -- until a server round-trip completes -- is what stops two overlapping
-        -- passes from double-using the same slot and stranding it greyed.
+        -- Self-tracked in-flight opens, keyed by bag/slot, valued
+        -- { id = item GUID (itemID fallback), t = use time }. Set synchronously
+        -- in the same tick as UseContainerItem (Lua is single-threaded, so no
+        -- other open pass can slip between the use and this write) and kept
+        -- until the slot's contents actually change -- NOT cleared on a timer.
+        -- The 0.5s clear let a payout container that resolves slower than that
+        -- (or lingers looted-but-not-yet-removed after LOOT_CLOSED) be re-used
+        -- by the next cycle and stranded greyed. The GUID identity frees the
+        -- flag when a different item (even the same itemID sliding in on a bag
+        -- collapse) occupies the slot.
         local _openInProgress = {}
         -- Many payout containers (e.g. Artisan's Consortium Payouts) open a loot
         -- window and linger in the bag until looted. Opening another container --
@@ -222,6 +226,42 @@ qolFrame:SetScript("OnEvent", function(self)
             return C_Bank.IsItemAllowedInBankType(Enum.BankType.Account, loc) and true or false
         end
         local SLOTS_PER_FRAME = 3  -- check 3 slots per OnUpdate tick
+
+        local function SlotIdentity(bag, slot)
+            if ItemLocation and C_Item and C_Item.DoesItemExist and C_Item.GetItemGUID then
+                local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
+                if loc and C_Item.DoesItemExist(loc) then
+                    return C_Item.GetItemGUID(loc)
+                end
+            end
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            return info and info.itemID
+        end
+
+        -- True while one of our own opens is still resolving. No cycle may
+        -- start (and use another slot) while one is pending: a second
+        -- UseContainerItem before the first open's loot session resolves --
+        -- even on a DIFFERENT slot -- collides with it and strands the second
+        -- container greyed (tester: 1 of 9 payout bags, on the build that
+        -- already serialized same-slot uses). Entries self-clear when the
+        -- slot's contents change; a 30s ceiling stops a dead attempt from
+        -- halting the feature (if it settled unlocked, it genuinely failed).
+        local function HasUnresolvedOpen()
+            local now = GetTime()
+            for key, pending in pairs(_openInProgress) do
+                local bag, slot = math.floor(key / 1000), key % 1000
+                local info = C_Container.GetContainerItemInfo(bag, slot)
+                if not info or SlotIdentity(bag, slot) ~= pending.id then
+                    _openInProgress[key] = nil
+                elseif now - pending.t > 30 then
+                    _openInProgress[key] = nil
+                    if not info.isLocked then _failedItems[info.itemID] = true end
+                else
+                    return true
+                end
+            end
+            return false
+        end
 
         local function IsOpenableByID(itemID, bag, slot)
             local cached = _openableCache[itemID]
@@ -341,6 +381,9 @@ qolFrame:SetScript("OnEvent", function(self)
             -- A cycle is already running; its finish() re-scan will pick up
             -- anything this trigger would have started.
             if _openBusy then return end
+            -- An earlier open hasn't resolved yet: stay hands-off. The bag
+            -- update from its resolution (or LOOT_CLOSED) re-triggers us.
+            if HasUnresolvedOpen() then return end
 
             local toOpen = {}
             for bag = BACKPACK_CONTAINER, NUM_BAG_SLOTS do
@@ -364,10 +407,14 @@ qolFrame:SetScript("OnEvent", function(self)
 
             -- The single place _openBusy is cleared. Every step() exit routes
             -- through here so the flag can never leak (a leak would freeze
-            -- auto-open until reload).
-            local function finish()
+            -- auto-open until reload). skipRescan: the cycle halted on an
+            -- unresolved open -- a timed re-scan would race the very
+            -- resolution it's waiting for; the resolution's own bag update
+            -- (or LOOT_CLOSED) restarts instead.
+            local function finish(skipRescan)
                 _openBusy = false
-                if madeProgress and IsEnabled() and not InCombatLockdown()
+                if not skipRescan and madeProgress and IsEnabled()
+                    and not InCombatLockdown()
                     and not MerchantOpen() and not _lootOpen then
                     C_Timer.After(0.3, function() ScanAndOpen(false) end)
                 end
@@ -391,24 +438,36 @@ qolFrame:SetScript("OnEvent", function(self)
                     if _openableCache[info.itemID] and not _failedItems[info.itemID] then
                         local prevID = info.itemID
                         local prevCount = info.stackCount or 1
-                        _openInProgress[key] = true
+                        _openInProgress[key] = {
+                            id = SlotIdentity(item.bag, item.slot) or prevID,
+                            t = GetTime(),
+                        }
                         C_Container.UseContainerItem(item.bag, item.slot)
                         C_Timer.After(0.5, function()
-                            _openInProgress[key] = nil
                             local after = C_Container.GetContainerItemInfo(item.bag, item.slot)
                             local progressed = (not after) or after.itemID ~= prevID
                                 or (after.stackCount or 1) < prevCount
                             if progressed then
+                                _openInProgress[key] = nil
                                 madeProgress = true
-                            elseif after and after.itemID == prevID and not after.isLocked
+                                step(idx + 1)
+                            elseif after.itemID == prevID and not after.isLocked
                                 and not _lootOpen then
                                 -- Unchanged, unlocked, no loot window => genuine
                                 -- failure. A still-locked slot is in-flight (slow
                                 -- container), not failed, so it isn't cached -- a
                                 -- later cycle retries it.
+                                _openInProgress[key] = nil
                                 _failedItems[prevID] = true
+                                step(idx + 1)
+                            else
+                                -- Still resolving: locked, or its loot window is
+                                -- up (or about to be). Keep the slot flagged and
+                                -- halt the cycle -- issuing another use now, on
+                                -- ANY slot, collides with the pending loot
+                                -- session and strands a container greyed.
+                                finish(true)
                             end
-                            step(idx + 1)
                         end)
                         return
                     end
