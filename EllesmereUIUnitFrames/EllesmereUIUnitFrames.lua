@@ -70,7 +70,9 @@ local defaults = {
             iconSize      = 32,
             showText      = true,
             textSize      = 11,
+            borderTexture = "solid",
             borderSize    = 1,
+            borderBehind  = false,
             borderR       = 0, borderG = 0, borderB = 0, borderA = 1,
             noBorderDebuffs = true,
             buffIconZoom   = 0.055,
@@ -84,7 +86,9 @@ local defaults = {
             growDirection = "right",  -- "right" | "left": which way icons extend from the frame edge
             showText      = true,
             textSize      = 11,
+            borderTexture = "solid",
             borderSize    = 1,
+            borderBehind  = false,
             borderR       = 0, borderG = 0, borderB = 0, borderA = 1,
             durationFormat = "blizzard",
             unlockPos     = nil,
@@ -143,6 +147,11 @@ local defaults = {
             buffSize = 22,
             buffOffsetX = 0,
             buffOffsetY = 0,
+            auraBorderTexture = "solid",
+            auraBorderSize = 1,
+            auraBorderR = 0, auraBorderG = 0, auraBorderB = 0, auraBorderA = 1,
+            auraBorderBehind = false,
+            auraBorderBehindUnitFrame = false,
             buffShowCooldownText = false,
             buffCooldownTextSize = 10,
             debuffAnchor = "none",
@@ -405,6 +414,11 @@ local defaults = {
             buffSize = 22,
             buffOffsetX = 0,
             buffOffsetY = 0,
+            auraBorderTexture = "solid",
+            auraBorderSize = 1,
+            auraBorderR = 0, auraBorderG = 0, auraBorderB = 0, auraBorderA = 1,
+            auraBorderBehind = false,
+            auraBorderBehindUnitFrame = false,
             buffShowCooldownText = false,
             buffCooldownTextSize = 10,
             debuffSize = 22,
@@ -952,6 +966,11 @@ local defaults = {
             simpleDebuffCooldownTextSize = 14,
             simpleDebuffs = "left",  -- "none"/"left"/"right": simple display forces that-side anchor + frame-height-matched debuff size (legacy boolean true=left / false=none honored at read time)
             simpleBuffs = "none",  -- "none"/"left"/"right": simple BUFF display (mirrors simpleDebuffs but defaults off)
+            auraBorderTexture = "solid",
+            auraBorderSize = 1,
+            auraBorderR = 0, auraBorderG = 0, auraBorderB = 0, auraBorderA = 1,
+            auraBorderBehind = false,
+            auraBorderBehindUnitFrame = false,
             simpleBuffShowCooldownText = false,
             simpleBuffCooldownTextSize = 14,
             buffSpacing = 1,
@@ -6059,6 +6078,45 @@ local function CreateTargetAuras(frame, unit)
         ns.UF_GetProfile = ns.UF_GetProfile or function() return db and db.profile end
         return ns.UF_CreateAuraContainers(frame, unit or "target")
     end
+    -- Live (12.0) oUF recycles aura buttons. Border styling must therefore run
+    -- on updates as well as creation; otherwise pooled buttons keep their old
+    -- border (or no border at all) after settings/profile changes.
+    local function ApplyLegacyAuraBorder(button)
+        if not button then return end
+        local s = GetSettingsForUnit(unit or "target")
+        if not button._euiAuraBorder then
+            button._euiAuraBorder = CreateFrame("Frame", nil, button)
+            button._euiAuraBorder:SetAllPoints()
+        end
+        local border = button._euiAuraBorder
+        local auraBorderSize = (s and s.auraBorderSize) or 1
+        if s and s.auraBorderBehindUnitFrame then
+            border:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
+        else
+            border:SetFrameLevel(s and s.auraBorderBehind
+                and math.max(0, button:GetFrameLevel() - 1) or (button:GetFrameLevel() + 1))
+        end
+        EllesmereUI.ApplyBorderStyle(border, auraBorderSize,
+            (s and s.auraBorderR) or 0, (s and s.auraBorderG) or 0,
+            (s and s.auraBorderB) or 0, (s and s.auraBorderA) or 1,
+            (s and s.auraBorderTexture) or "solid",
+            s and s.auraBorderTextureOffset, s and s.auraBorderTextureOffsetY,
+            s and s.auraBorderTextureShiftX, s and s.auraBorderTextureShiftY,
+            "unitframes", auraBorderSize)
+        -- Some live oUF builds provide their own border region. Retire it so it
+        -- cannot cover the configurable frame, then retain the established
+        -- alias used by the legacy dispel-color code below.
+        if button.Border and button.Border ~= border and button.Border.Hide then
+            button.Border:Hide()
+        end
+        button.Border = border
+        if button.Cooldown then
+            button.Cooldown:SetFrameLevel(border:GetFrameLevel() + 2)
+            local countFrame = button.Count and button.Count:GetParent()
+            if countFrame then countFrame:SetFrameLevel(button.Cooldown:GetFrameLevel() + 1) end
+        end
+    end
+
     local function SetupAuraIcon(container, button)
         if not button then return end
 
@@ -6142,12 +6200,7 @@ local function CreateTargetAuras(frame, unit)
             ns.ApplyStackAnchor(button.Count, button, sPos, sOffX, sOffY)
         end
 
-        if not button.Border then
-            button.Border = CreateFrame("Frame", nil, button)
-            button.Border:SetAllPoints()
-            button.Border:SetFrameLevel(button:GetFrameLevel() + 1)
-            PP.CreateBorder(button.Border, 0, 0, 0, 1)
-        end
+        ApplyLegacyAuraBorder(button)
 
         -- Keep the duration and stack text above the icon border. The PP border
         -- textures live on a container ONE level above button.Border, so lifting
@@ -6157,13 +6210,7 @@ local function CreateTargetAuras(frame, unit)
         -- container, then re-park oUF's stack-count frame one level above that so
         -- the stack number stays on top too (its creation-time level was relative
         -- to the cooldown's OLD level, so it no longer tracks after this bump).
-        if button.Cooldown and button.Border then
-            button.Cooldown:SetFrameLevel(button.Border:GetFrameLevel() + 2)
-            local countFrame = button.Count and button.Count:GetParent()
-            if countFrame then
-                countFrame:SetFrameLevel(button.Cooldown:GetFrameLevel() + 1)
-            end
-        end
+        -- Frame-level ordering is applied by ApplyLegacyAuraBorder above.
     end
 
     local gap = 1
@@ -6262,6 +6309,9 @@ local function CreateTargetAuras(frame, unit)
     buffs.growthY = bgy
     ns.ApplyEUIAuraFilter(buffs, "HELPFUL", settings)
     buffs.PostCreateButton = SetupAuraIcon
+    buffs.PostUpdateButton = function(_, button)
+        ApplyLegacyAuraBorder(button)
+    end
     if not showBuffs and not simpleBuffOn then
         buffs:Hide()
         buffs.num = 0
@@ -6347,6 +6397,7 @@ local function CreateTargetAuras(frame, unit)
         -- Dispel-type border recolor; reads the per-unit setting live so the
         -- options toggle applies on the next aura update without a rebuild.
         debuffs.PostUpdateButton = function(_, button, u, data)
+            ApplyLegacyAuraBorder(button)
             if ns.UF_ColorDebuffDispelBorder then ns.UF_ColorDebuffDispelBorder(button, u, data) end
         end
         if settings and settings.onlyPlayerDebuffs then
@@ -14141,7 +14192,9 @@ do
         -- recycle across auras; never churn untouched borders).
         if button._euiDispelTinted then
             button._euiDispelTinted = nil
-            PP.SetBorderColor(border, 0, 0, 0, 1)
+            PP.SetBorderColor(border,
+                (s and s.auraBorderR) or 0, (s and s.auraBorderG) or 0,
+                (s and s.auraBorderB) or 0, (s and s.auraBorderA) or 1)
         end
     end
 

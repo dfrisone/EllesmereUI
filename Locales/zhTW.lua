@@ -4,6 +4,7 @@
 -- to generate the full remaining key list. Untranslated keys fall back to English.
 local L = EllesmereUI.RegisterLocale("zhTW")
 if not L then return end
+L["Behind Unit Frame"] = "顯示於單位框架後方"
 
 -- == Common labels =========================================================
 L["Size"]               = "大小"
@@ -1731,6 +1732,7 @@ L["Shifts any elements anchored to the power bar up or down to offset the missin
 L["Show %"]                        = "顯示 %"
 L["Show a small glowing spark that moves along the leading edge of the fill."] = "顯示一個沿填充前緣移動的小型發光火花。"
 L["Show Behind"]                   = "顯示於後方"
+L["Show Expand Button"]            = "顯示展開按鈕"
 L["Show Hash Line"]                = "顯示刻度線"
 L["Show Hash Lines"]               = "顯示刻度線"
 L["Show Health Bar"]               = "顯示生命條"

@@ -8,6 +8,7 @@ local addon, ns = ...
 local GetFFD = EllesmereUI._GetFFD
 
 local ICON_ZOOM = 0.055  -- fallback crop (same as totem bar); user values in profile
+local BLIZZARD_AURA_ICON_SIZE = 30 -- visible icon inside the native 32px aura button
 
 -------------------------------------------------------------------------------
 --  Settings helper
@@ -145,62 +146,34 @@ local function SkinAuraButton(btn, isDebuff)
         EllesmereUI.ApplyIconTextFont(countFS, fontPath, cfg.textSize or 11, "unitFrames")
     end
 
-    -- Pixel-perfect border using raw texture edges. No BackdropTemplate,
-    -- no GetWidth() calls, so no taint from the Blizzard frame hierarchy.
+    -- The shared border-style engine requires a frame we own. Keep that frame
+    -- anchored to the icon instead of applying a backdrop to Blizzard's button.
     local anchorFrame = iconFrame or btn
-    local PP = EllesmereUI.PP
     local bs = cfg.borderSize or 1
     local skipBorder = isDebuff and cfg.noBorderDebuffs
-    if bs > 0 and PP and not skipBorder then
-        local edges = ffd._paEdges
-        if not edges then
-            edges = {}
-            for _, key in ipairs({ "top", "bottom", "left", "right" }) do
-                local tex = btn:CreateTexture(nil, "OVERLAY", nil, 7)
-                edges[key] = tex
-            end
-            ffd._paEdges = edges
-        end
-        local scaledBS = PP.Scale(bs)
-        local bR = cfg.borderR or 0
-        local bG = cfg.borderG or 0
-        local bB = cfg.borderB or 0
-        local bA = cfg.borderA or 1
-
-        local top = edges.top
-        top:SetColorTexture(bR, bG, bB, bA)
-        top:ClearAllPoints()
-        top:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
-        top:SetPoint("TOPRIGHT", anchorFrame, "TOPRIGHT", 0, 0)
-        top:SetHeight(scaledBS)
-        top:Show()
-
-        local bottom = edges.bottom
-        bottom:SetColorTexture(bR, bG, bB, bA)
-        bottom:ClearAllPoints()
-        bottom:SetPoint("BOTTOMLEFT", anchorFrame, "BOTTOMLEFT", 0, 0)
-        bottom:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
-        bottom:SetHeight(scaledBS)
-        bottom:Show()
-
-        local left = edges.left
-        left:SetColorTexture(bR, bG, bB, bA)
-        left:ClearAllPoints()
-        left:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
-        left:SetPoint("BOTTOMLEFT", anchorFrame, "BOTTOMLEFT", 0, 0)
-        left:SetWidth(scaledBS)
-        left:Show()
-
-        local right = edges.right
-        right:SetColorTexture(bR, bG, bB, bA)
-        right:ClearAllPoints()
-        right:SetPoint("TOPRIGHT", anchorFrame, "TOPRIGHT", 0, 0)
-        right:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
-        right:SetWidth(scaledBS)
-        right:Show()
-    elseif ffd._paEdges then
-        for _, tex in pairs(ffd._paEdges) do tex:Hide() end
+    local border = ffd._paBorder
+    if not border then
+        border = CreateFrame("Frame", nil, btn)
+        border:EnableMouse(false)
+        ffd._paBorder = border
     end
+    border:SetFrameLevel(cfg.borderBehind and math.max(0, btn:GetFrameLevel() - 1) or (btn:GetFrameLevel() + 10))
+    -- Never derive this frame's dimensions through SetAllPoints(anchorFrame):
+    -- Blizzard aura dimensions are secret on Midnight, and BackdropTemplate's
+    -- SetBackdrop then attempts arithmetic on that secret width. AuraContainer
+    -- applies the user's icon size as scale over Blizzard's native 32px button.
+    -- Its visible icon is 30px, so this public constant avoids both the secret
+    -- geometry read and the one-pixel gap left by sizing to the whole button.
+    border:ClearAllPoints()
+    border:SetPoint("CENTER", anchorFrame, "CENTER", 0, 0)
+    border:SetSize(BLIZZARD_AURA_ICON_SIZE, BLIZZARD_AURA_ICON_SIZE)
+    EllesmereUI.ApplySecretSafeBorderStyle(border, ffd,
+        (bs > 0 and not skipBorder) and bs or 0,
+        cfg.borderR or 0, cfg.borderG or 0, cfg.borderB or 0, cfg.borderA or 1,
+        cfg.borderTexture or "solid",
+        cfg.borderTextureOffset, cfg.borderTextureOffsetY,
+        cfg.borderTextureShiftX, cfg.borderTextureShiftY,
+        "unitframes", bs)
 
     ffd._paSkinned = true
 end
@@ -231,6 +204,44 @@ ns.RefreshPlayerAuras = RefreshAll
 --  Scale helper (applies iconSize via SetScale on AuraContainer)
 -------------------------------------------------------------------------------
 local _appliedBuffScale, _appliedDebuffScale
+local _nativeExpandEnabled
+local _appliedShowExpand
+local _savedExpandedState
+
+local function ApplyExpandButtonSetting()
+    local cfg = PA()
+    local button = BuffFrame and BuffFrame.CollapseAndExpandButton
+    if not (cfg and button) then return end
+    if _nativeExpandEnabled == nil then
+        _nativeExpandEnabled = button:IsEnabled() and true or false
+    end
+    local show = cfg.showExpandButton ~= false
+    if _appliedShowExpand == show then
+        if not show then button:Hide() end
+        return
+    end
+    _appliedShowExpand = show
+    if not show then
+        _savedExpandedState = BuffFrame.isExpanded
+        -- Keep the button logically enabled: Blizzard's IsExpanded() treats a
+        -- disabled button as consolidated/collapsed in some configurations.
+        -- Force the model open and hide only the visual control.
+        button:Enable()
+        BuffFrame.isExpanded = true
+        if BuffFrame.Update then pcall(BuffFrame.Update, BuffFrame) end
+        button:Hide()
+    else
+        if _savedExpandedState ~= nil then
+            BuffFrame.isExpanded = _savedExpandedState
+            _savedExpandedState = nil
+        end
+        if _nativeExpandEnabled then button:Enable() else button:Disable() end
+        if BuffFrame.RefreshConsolidationFrameVisibility then
+            BuffFrame:RefreshConsolidationFrameVisibility()
+        end
+    end
+    if BuffFrame.UpdateGridLayout then pcall(BuffFrame.UpdateGridLayout, BuffFrame) end
+end
 
 local function ApplyScale()
     local cfg = PA()
@@ -250,6 +261,7 @@ local function ApplyScale()
             _appliedDebuffScale = scale
         end
     end
+    ApplyExpandButtonSetting()
 end
 ns.ApplyPlayerAuraScale = ApplyScale
 
@@ -327,42 +339,15 @@ local function EDF_StyleButton(btn, cfg)
         EllesmereUI.ApplyIconTextFont(btn._count, fontPath, cfg.textSize or 11, "unitFrames")
     end
 
-    -- Pixel-perfect 4-edge border (same construction as the skin above; these
-    -- are our own frames, drawn on the text host so they render above the
-    -- cooldown swipe).
-    local PP = EllesmereUI.PP
     local bs = cfg.borderSize or 1
-    if bs > 0 and PP then
-        local scaledBS = PP.Scale(bs)
-        local bR, bG, bB, bA = cfg.borderR or 0, cfg.borderG or 0, cfg.borderB or 0, cfg.borderA or 1
-        local e = btn._edges
-        e.top:SetColorTexture(bR, bG, bB, bA)
-        e.top:ClearAllPoints()
-        e.top:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
-        e.top:SetPoint("TOPRIGHT", btn, "TOPRIGHT", 0, 0)
-        e.top:SetHeight(scaledBS)
-        e.top:Show()
-        e.bottom:SetColorTexture(bR, bG, bB, bA)
-        e.bottom:ClearAllPoints()
-        e.bottom:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 0)
-        e.bottom:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 0, 0)
-        e.bottom:SetHeight(scaledBS)
-        e.bottom:Show()
-        e.left:SetColorTexture(bR, bG, bB, bA)
-        e.left:ClearAllPoints()
-        e.left:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
-        e.left:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 0)
-        e.left:SetWidth(scaledBS)
-        e.left:Show()
-        e.right:SetColorTexture(bR, bG, bB, bA)
-        e.right:ClearAllPoints()
-        e.right:SetPoint("TOPRIGHT", btn, "TOPRIGHT", 0, 0)
-        e.right:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 0, 0)
-        e.right:SetWidth(scaledBS)
-        e.right:Show()
-    else
-        for _, tex in pairs(btn._edges) do tex:Hide() end
-    end
+    local host = btn._borderHost
+    host:SetFrameLevel(cfg.borderBehind and math.max(0, btn:GetFrameLevel() - 1) or (btn:GetFrameLevel() + 2))
+    EllesmereUI.ApplyBorderStyle(host, bs,
+        cfg.borderR or 0, cfg.borderG or 0, cfg.borderB or 0, cfg.borderA or 1,
+        cfg.borderTexture or "solid",
+        cfg.borderTextureOffset, cfg.borderTextureOffsetY,
+        cfg.borderTextureShiftX, cfg.borderTextureShiftY,
+        "unitframes", bs)
 end
 
 local function EDF_CreateButton(i)
@@ -380,6 +365,11 @@ local function EDF_CreateButton(i)
     if cd.SetDrawEdge then cd:SetDrawEdge(false) end
     btn._cd = cd
 
+    local borderHost = CreateFrame("Frame", nil, btn)
+    borderHost:SetAllPoints(btn)
+    borderHost:EnableMouse(false)
+    btn._borderHost = borderHost
+
     -- Count + border live on a host above the cooldown, so the permanent-aura
     -- alpha mask on the cd (see EDF_Update) never takes them down with it.
     local txtHost = CreateFrame("Frame", nil, btn)
@@ -388,10 +378,6 @@ local function EDF_CreateButton(i)
     local cnt = txtHost:CreateFontString(nil, "OVERLAY")
     cnt:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 1)
     btn._count = cnt
-    btn._edges = {}
-    for _, key in ipairs({ "top", "bottom", "left", "right" }) do
-        btn._edges[key] = txtHost:CreateTexture(nil, "OVERLAY", nil, 7)
-    end
 
     edfButtons[i] = btn
     local cfg = ED()
@@ -641,6 +627,15 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
                 hooksecurefunc(BuffFrame.AuraContainer, "UpdateGridLayout", function()
                     C_Timer.After(0, RefreshAll)
                 end)
+                if BuffFrame.RefreshConsolidationFrameVisibility then
+                    hooksecurefunc(BuffFrame, "RefreshConsolidationFrameVisibility", function()
+                        local cfgNow = PA()
+                        if cfgNow and cfgNow.showExpandButton == false
+                            and BuffFrame.CollapseAndExpandButton then
+                            BuffFrame.CollapseAndExpandButton:Hide()
+                        end
+                    end)
+                end
             end
             if DebuffFrame and DebuffFrame.AuraContainer then
                 hooksecurefunc(DebuffFrame.AuraContainer, "UpdateGridLayout", function()

@@ -3013,16 +3013,15 @@ do
         return false
     end
 
-    --- Border color + Show Behind to apply when the user picks a border style.
-    --- Shadow -> black + behind on; everything else -> behind off (Shadow is the
-    --- only style that renders behind). Solid/Shadow default to black, other
-    --- textured styles default to white. Returns (colorTable, behindBool).
+    --- Border color + layer defaults to apply when a border style is selected.
+    --- Shadow is the only style rendered behind both its icon and Unit Frame.
+    --- Returns (colorTable, behindBool, behindUnitFrameBool).
     function EllesmereUI.GetBorderStyleSelectDefaults(textureKey)
-        if textureKey == "shadow" then return { r = 0, g = 0, b = 0 }, true end
+        if textureKey == "shadow" then return { r = 0, g = 0, b = 0 }, true, true end
         if not textureKey or textureKey == "" or textureKey == "solid" then
-            return { r = 0, g = 0, b = 0 }, false
+            return { r = 0, g = 0, b = 0 }, false, false
         end
-        return { r = 1, g = 1, b = 1 }, false
+        return { r = 1, g = 1, b = 1 }, false, false
     end
 
     --- Resolve a border texture key to a file path.
@@ -3176,6 +3175,69 @@ do
             bdFrame:Show()
             borderFrame:Show()
         end
+    end
+
+    -- BackdropTemplate performs arithmetic on its owner's width/height and is
+    -- therefore unusable for frames anchored to secret aura geometry. This
+    -- variant renders textured borders as the same eight edge-file slices,
+    -- while retaining the normal PP path for Solid. `state` is any caller-owned
+    -- table used to cache the eight textures (FFD, AuraKit button data, etc.).
+    local SECRET_BORDER_UV = {
+        topLeft     = { 0.5078125, 0.0625, 0.5078125, 0.9375, 0.6171875, 0.0625, 0.6171875, 0.9375 },
+        topRight    = { 0.6328125, 0.0625, 0.6328125, 0.9375, 0.7421875, 0.0625, 0.7421875, 0.9375 },
+        bottomLeft  = { 0.7578125, 0.0625, 0.7578125, 0.9375, 0.8671875, 0.0625, 0.8671875, 0.9375 },
+        bottomRight = { 0.8828125, 0.0625, 0.8828125, 0.9375, 0.9921875, 0.0625, 0.9921875, 0.9375 },
+        top         = { 0.2578125, 0.9375, 0.3671875, 0.9375, 0.2578125, 0.0625, 0.3671875, 0.0625 },
+        bottom      = { 0.3828125, 0.9375, 0.4921875, 0.9375, 0.3828125, 0.0625, 0.4921875, 0.0625 },
+        left        = { 0.0078125, 0.0625, 0.0078125, 0.9375, 0.1171875, 0.0625, 0.1171875, 0.9375 },
+        right       = { 0.1328125, 0.0625, 0.1328125, 0.9375, 0.2421875, 0.0625, 0.2421875, 0.9375 },
+    }
+
+    function EllesmereUI.ApplySecretSafeBorderStyle(borderFrame, state, size, r, g, b, a,
+        textureKey, offsetX, offsetY, shiftX, shiftY, addonKey, sizeKey)
+        if not borderFrame or not state then return end
+        size, textureKey = size or 0, textureKey or "solid"
+        local edges = state._secretBorderEdges
+        local function HideEdges()
+            if edges then for _, tex in pairs(edges) do tex:Hide() end end
+        end
+        if textureKey == "" or textureKey == "solid" or size <= 0 then
+            HideEdges()
+            EllesmereUI.ApplyBorderStyle(borderFrame, size, r, g, b, a, "solid")
+            return
+        end
+        local path = EllesmereUI.ResolveBorderTexture(textureKey)
+        if not path then HideEdges(); EllesmereUI.ApplyBorderStyle(borderFrame, 0, 0, 0, 0, 0, "solid"); return end
+        -- Also hides any BackdropTemplate child left by an older live version.
+        EllesmereUI.ApplyBorderStyle(borderFrame, 0, 0, 0, 0, 0, "solid")
+        borderFrame:Show()
+        if not edges then
+            edges = {}
+            for key, uv in pairs(SECRET_BORDER_UV) do
+                local tex = borderFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+                tex:SetTexCoord(unpack(uv)); edges[key] = tex
+            end
+            state._secretBorderEdges = edges
+        end
+        local edgeSize = EDGE_MAP[size] or EDGE_MAP[1]
+        local ox, oy, sx, sy = EllesmereUI.GetBorderDefaults(addonKey, textureKey, sizeKey)
+        ox = offsetX ~= nil and offsetX or ox; oy = offsetY ~= nil and offsetY or oy
+        sx = shiftX ~= nil and shiftX or sx; sy = shiftY ~= nil and shiftY or sy
+        if EllesmereUI.BorderTextureUsesScaleOffset(textureKey) then
+            ox, oy = edgeSize / 2 + ox, edgeSize / 2 + oy
+        end
+        for _, tex in pairs(edges) do
+            tex:SetTexture(path, true, true); tex:SetVertexColor(r, g, b, a or 1)
+            tex:ClearAllPoints(); tex:Show()
+        end
+        edges.topLeft:SetSize(edgeSize, edgeSize); edges.topLeft:SetPoint("TOPLEFT", borderFrame, "TOPLEFT", -ox + sx, oy + sy)
+        edges.topRight:SetSize(edgeSize, edgeSize); edges.topRight:SetPoint("TOPRIGHT", borderFrame, "TOPRIGHT", ox + sx, oy + sy)
+        edges.bottomLeft:SetSize(edgeSize, edgeSize); edges.bottomLeft:SetPoint("BOTTOMLEFT", borderFrame, "BOTTOMLEFT", -ox + sx, -oy + sy)
+        edges.bottomRight:SetSize(edgeSize, edgeSize); edges.bottomRight:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", ox + sx, -oy + sy)
+        edges.top:SetHeight(edgeSize); edges.top:SetPoint("TOPLEFT", edges.topLeft, "TOPRIGHT"); edges.top:SetPoint("TOPRIGHT", edges.topRight, "TOPLEFT")
+        edges.bottom:SetHeight(edgeSize); edges.bottom:SetPoint("BOTTOMLEFT", edges.bottomLeft, "BOTTOMRIGHT"); edges.bottom:SetPoint("BOTTOMRIGHT", edges.bottomRight, "BOTTOMLEFT")
+        edges.left:SetWidth(edgeSize); edges.left:SetPoint("TOPLEFT", edges.topLeft, "BOTTOMLEFT"); edges.left:SetPoint("BOTTOMLEFT", edges.bottomLeft, "TOPLEFT")
+        edges.right:SetWidth(edgeSize); edges.right:SetPoint("TOPRIGHT", edges.topRight, "BOTTOMRIGHT"); edges.right:SetPoint("BOTTOMRIGHT", edges.bottomRight, "TOPRIGHT")
     end
 
     --- Set border color on whichever system is currently active (PP or backdrop).

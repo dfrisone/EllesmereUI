@@ -2171,6 +2171,39 @@ initFrame:SetScript("OnEvent", function(self)
             elseif unitKey == "focustarget" then s = db.profile.focustarget
             else s = db.profile.player end
 
+            -- Player/target preview: mirror the live shared aura border style.
+            if unitKey == "player" or unitKey == "target" or unitKey == "boss" then
+                local function ApplyPreviewAuraBorder(icon)
+                    if icon._iconTex then
+                        icon._iconTex:ClearAllPoints()
+                        local inset = (s.auraBorderSize or 1) > 0 and 1 or 0
+                        PP.Point(icon._iconTex, "TOPLEFT", icon, "TOPLEFT", inset, -inset)
+                        PP.Point(icon._iconTex, "BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, inset)
+                    end
+                    local border = icon._euiAuraBorder
+                    if not border then
+                        border = CreateFrame("Frame", nil, icon)
+                        border:SetAllPoints(icon)
+                        border:EnableMouse(false)
+                        icon._euiAuraBorder = border
+                    end
+                    if s.auraBorderBehindUnitFrame then
+                        border:SetFrameLevel(0)
+                    else
+                        border:SetFrameLevel(s.auraBorderBehind
+                            and math.max(0, icon:GetFrameLevel() - 1) or (icon:GetFrameLevel() + 1))
+                    end
+                    EllesmereUI.ApplyBorderStyle(border, s.auraBorderSize or 1,
+                        s.auraBorderR or 0, s.auraBorderG or 0, s.auraBorderB or 0, s.auraBorderA or 1,
+                        s.auraBorderTexture or "solid",
+                        s.auraBorderTextureOffset, s.auraBorderTextureOffsetY,
+                        s.auraBorderTextureShiftX, s.auraBorderTextureShiftY,
+                        "unitframes", s.auraBorderSize or 1)
+                end
+                for i = 1, #buffIcons do ApplyPreviewAuraBorder(buffIcons[i]) end
+                for i = 1, #debuffIcons do ApplyPreviewAuraBorder(debuffIcons[i]) end
+            end
+
             -- Donor settings for mini frames (border/texture/font inherit from focus player)
             local isMini = (unitKey == "pet" or unitKey == "boss" or unitKey == "targettarget" or unitKey == "focustarget")
             local ds = s
@@ -10276,6 +10309,99 @@ initFrame:SetScript("OnEvent", function(self)
         end
         end   -- close Debuff row 2 hidden-while-None gate
 
+        -- Built here with the aura section's helpers, but appended only after
+        -- all other buff/debuff controls so the border row stays last.
+        local function AddAuraBorderSettings()
+        if selectedUnit == "player" or selectedUnit == "target" then
+            local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
+            local borderSizeValues = {
+                none = "None", thin = "Thin", normal = "Normal",
+                heavy = "Heavy", strong = "Strong",
+            }
+            local borderSizeOrder = { "none", "thin", "normal", "heavy", "strong" }
+            local sizeToNumber = { none = 0, thin = 1, normal = 2, heavy = 3, strong = 4 }
+            local numberToSize = { [0] = "none", [1] = "thin", [2] = "normal", [3] = "heavy", [4] = "strong" }
+            local auraBorderRow
+            auraBorderRow, h = W:DualRow(parent, y,
+                { type="dropdown", text="Border Style", values=texValues, order=texOrder,
+                  getValue=function() return SVal("auraBorderTexture", "solid") end,
+                  setValue=function(v)
+                      local color, behind, behindUnitFrame = EllesmereUI.GetBorderStyleSelectDefaults(v)
+                      local s = SDB()
+                      s.auraBorderTexture = v
+                      s.auraBorderTextureOffset = nil; s.auraBorderTextureOffsetY = nil
+                      s.auraBorderTextureShiftX = nil; s.auraBorderTextureShiftY = nil
+                      s.auraBorderBehind = behind
+                      s.auraBorderBehindUnitFrame = behindUnitFrame
+                      s.auraBorderR = color.r; s.auraBorderG = color.g; s.auraBorderB = color.b; s.auraBorderA = 1
+                      local defSz = EllesmereUI.GetBorderDefaultSize("unitframes", v)
+                      if defSz then s.auraBorderSize = defSz end
+                      ReloadAndUpdate(); UpdatePreview()
+                  end },
+                { type="dropdown", text="Border Size", values=borderSizeValues, order=borderSizeOrder,
+                  getValue=function() return numberToSize[SVal("auraBorderSize", 1)] or "thin" end,
+                  setValue=function(v) SSetSupported("auraBorderSize", sizeToNumber[v] or 1) end }
+            ); y = y - h
+
+            do
+                local rgn = auraBorderRow._leftRegion
+                local _, cogShow = EllesmereUI.BuildCogPopup({
+                    title="Border Offset",
+                    rows={
+                        { type="slider", label="Offset X", min=-10, max=10, step=1,
+                          get=function()
+                              local v = SGet("auraBorderTextureOffset"); if v ~= nil then return v end
+                              return EllesmereUI.GetBorderDefaults("unitframes", SVal("auraBorderTexture", "solid"), SVal("auraBorderSize", 1))
+                          end,
+                          set=function(v) SSetSupported("auraBorderTextureOffset", v) end },
+                        { type="slider", label="Offset Y", min=-10, max=10, step=1,
+                          get=function()
+                              local v = SGet("auraBorderTextureOffsetY"); if v ~= nil then return v end
+                              local _, oy = EllesmereUI.GetBorderDefaults("unitframes", SVal("auraBorderTexture", "solid"), SVal("auraBorderSize", 1)); return oy
+                          end,
+                          set=function(v) SSetSupported("auraBorderTextureOffsetY", v) end },
+                        { type="slider", label="Shift X", min=-10, max=10, step=1,
+                          get=function()
+                              local v = SGet("auraBorderTextureShiftX"); if v ~= nil then return v end
+                              local _, _, sx = EllesmereUI.GetBorderDefaults("unitframes", SVal("auraBorderTexture", "solid"), SVal("auraBorderSize", 1)); return sx
+                          end,
+                          set=function(v) SSetSupported("auraBorderTextureShiftX", v == 0 and nil or v) end },
+                        { type="slider", label="Shift Y", min=-10, max=10, step=1,
+                          get=function()
+                              local v = SGet("auraBorderTextureShiftY"); if v ~= nil then return v end
+                              local _, _, _, sy = EllesmereUI.GetBorderDefaults("unitframes", SVal("auraBorderTexture", "solid"), SVal("auraBorderSize", 1)); return sy
+                          end,
+                          set=function(v) SSetSupported("auraBorderTextureShiftY", v == 0 and nil or v) end },
+                        { type="toggle", label="Show Behind",
+                          get=function() return SVal("auraBorderBehind", false) end,
+                          set=function(v) SSetSupported("auraBorderBehind", v) end },
+                        { type="toggle", label="Behind Unit Frame",
+                          get=function() return SVal("auraBorderBehindUnitFrame", false) end,
+                          set=function(v) SSetSupported("auraBorderBehindUnitFrame", v) end },
+                    },
+                })
+                local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
+                local function UpdateCogVis()
+                    if SVal("auraBorderTexture", "solid") == "solid" then cogBtn:Hide() else cogBtn:Show() end
+                end
+                EllesmereUI.RegisterWidgetRefresh(UpdateCogVis); UpdateCogVis()
+            end
+
+            do
+                local rgn = auraBorderRow._rightRegion
+                local swatch, refreshSwatch = EllesmereUI.BuildColorSwatch(
+                    rgn, auraBorderRow:GetFrameLevel() + 3,
+                    function() return SVal("auraBorderR", 0), SVal("auraBorderG", 0), SVal("auraBorderB", 0), SVal("auraBorderA", 1) end,
+                    function(r, g, b, a)
+                        local s = SDB(); s.auraBorderR = r; s.auraBorderG = g; s.auraBorderB = b; s.auraBorderA = a
+                        ReloadAndUpdate(); UpdatePreview()
+                    end, true, 20)
+                PP.Point(swatch, "RIGHT", rgn._control, "LEFT", -8, 0)
+                EllesmereUI.RegisterWidgetRefresh(refreshSwatch)
+            end
+        end
+        end
+
         -- Per-unit aura filters (NOT synced). Labels track the selected section
         -- (Player/Target/Focus). Each is a multi-select checkbox dropdown; checked
         -- classifications OR together at runtime (Own Only = PLAYER, Raid Frames =
@@ -10504,6 +10630,8 @@ initFrame:SetScript("OnEvent", function(self)
                 cogBtn:SetScript("OnClick", function(self) opShow(self) end)
             end
         end
+
+        AddAuraBorderSettings()
 
         -------------------------------------------------------------------
         --  PRIVATE AURAS (player frame only)
@@ -13998,6 +14126,66 @@ initFrame:SetScript("OnEvent", function(self)
                     BossCogBtn(rightRgn, debuffStackCogShow, nil, debuffOff)
                 end
                 end   -- close debuff sizing row hidden-while-None gate
+
+                -- Built alongside the aura controls, then appended at the end
+                -- of this section to keep border settings consistently last.
+                local function AddBossAuraBorderSettings()
+                    local B = db.profile.boss
+                    local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
+                    local sizeValues = { none="None", thin="Thin", normal="Normal", heavy="Heavy", strong="Strong" }
+                    local sizeOrder = { "none", "thin", "normal", "heavy", "strong" }
+                    local toNumber = { none=0, thin=1, normal=2, heavy=3, strong=4 }
+                    local toSize = { [0]="none", [1]="thin", [2]="normal", [3]="heavy", [4]="strong" }
+                    local borderRow
+                    borderRow, hh = Ww:DualRow(pp, yy,
+                        { type="dropdown", text="Border Style", values=texValues, order=texOrder,
+                          getValue=function() return B.auraBorderTexture or "solid" end,
+                          setValue=function(v)
+                              local color, behind, behindUnitFrame = EllesmereUI.GetBorderStyleSelectDefaults(v)
+                              B.auraBorderTexture = v
+                              B.auraBorderTextureOffset = nil; B.auraBorderTextureOffsetY = nil
+                              B.auraBorderTextureShiftX = nil; B.auraBorderTextureShiftY = nil
+                              B.auraBorderBehind = behind
+                              B.auraBorderBehindUnitFrame = behindUnitFrame
+                              B.auraBorderR=color.r; B.auraBorderG=color.g; B.auraBorderB=color.b; B.auraBorderA=1
+                              local ds=EllesmereUI.GetBorderDefaultSize("unitframes",v); if ds then B.auraBorderSize=ds end
+                              ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end
+                          end },
+                        { type="dropdown", text="Border Size", values=sizeValues, order=sizeOrder,
+                          getValue=function() return toSize[B.auraBorderSize or 1] or "thin" end,
+                          setValue=function(v) B.auraBorderSize=toNumber[v] or 1; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end }
+                    ); yy = yy - hh
+                    do
+                        local rgn=borderRow._leftRegion
+                        local _,show=EllesmereUI.BuildCogPopup({ title="Border Offset", rows={
+                            { type="slider",label="Offset X",min=-10,max=10,step=1,
+                              get=function() local v=B.auraBorderTextureOffset;if v~=nil then return v end;return EllesmereUI.GetBorderDefaults("unitframes",B.auraBorderTexture or "solid",B.auraBorderSize or 1) end,
+                              set=function(v) B.auraBorderTextureOffset=v;ReloadAndUpdate() end },
+                            { type="slider",label="Offset Y",min=-10,max=10,step=1,
+                              get=function() local v=B.auraBorderTextureOffsetY;if v~=nil then return v end;local _,y=EllesmereUI.GetBorderDefaults("unitframes",B.auraBorderTexture or "solid",B.auraBorderSize or 1);return y end,
+                              set=function(v) B.auraBorderTextureOffsetY=v;ReloadAndUpdate() end },
+                            { type="slider",label="Shift X",min=-10,max=10,step=1,
+                              get=function() local v=B.auraBorderTextureShiftX;if v~=nil then return v end;local _,_,x=EllesmereUI.GetBorderDefaults("unitframes",B.auraBorderTexture or "solid",B.auraBorderSize or 1);return x end,
+                              set=function(v) B.auraBorderTextureShiftX=v==0 and nil or v;ReloadAndUpdate() end },
+                            { type="slider",label="Shift Y",min=-10,max=10,step=1,
+                              get=function() local v=B.auraBorderTextureShiftY;if v~=nil then return v end;local _,_,_,y=EllesmereUI.GetBorderDefaults("unitframes",B.auraBorderTexture or "solid",B.auraBorderSize or 1);return y end,
+                              set=function(v) B.auraBorderTextureShiftY=v==0 and nil or v;ReloadAndUpdate() end },
+                            { type="toggle",label="Show Behind",get=function() return B.auraBorderBehind or false end,set=function(v) B.auraBorderBehind=v;ReloadAndUpdate() end },
+                            { type="toggle",label="Behind Unit Frame",get=function() return B.auraBorderBehindUnitFrame or false end,set=function(v) B.auraBorderBehindUnitFrame=v;ReloadAndUpdate() end },
+                        } })
+                        local btn=BossCogBtn(rgn,show,EllesmereUI.DIRECTIONS_ICON)
+                        local function vis() if (B.auraBorderTexture or "solid")=="solid" then btn:Hide() else btn:Show() end end
+                        EllesmereUI.RegisterWidgetRefresh(vis);vis()
+                    end
+                    do
+                        local rgn=borderRow._rightRegion
+                        local sw,upd=EllesmereUI.BuildColorSwatch(rgn,borderRow:GetFrameLevel()+3,
+                            function() return B.auraBorderR or 0,B.auraBorderG or 0,B.auraBorderB or 0,B.auraBorderA or 1 end,
+                            function(r,g,b,a) B.auraBorderR=r;B.auraBorderG=g;B.auraBorderB=b;B.auraBorderA=a;ReloadAndUpdate() end,true,20)
+                        PP.Point(sw,"RIGHT",rgn._control,"LEFT",-8,0)
+                        EllesmereUI.RegisterWidgetRefresh(upd)
+                    end
+                end
                 -- Boss Debuff Filter in slot 1. The right slot is the
                 -- 12.1-only Boss Buff Filter; on 12.0 it stays the blank
                 -- label it is today (boss buffs are never filtered there).
@@ -14176,6 +14364,8 @@ initFrame:SetScript("OnEvent", function(self)
                     EllesmereUI.RegisterWidgetRefresh(UpdateDebuffCogDisabled)
                 end
             end
+
+            AddBossAuraBorderSettings()
 
             -- Buff/Debuff text colors now live as inline swatches on the Buff Text
             -- Size / Debuff Text Size sliders above (Duration + Stack per side).
@@ -15136,22 +15326,104 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
         end
 
-        -- Row 3: Border Size (+ inline color swatch) | (empty)
+        -- Row 3: Border Style | Border Size (+ inline color swatch)
         do
+            local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
+            local borderSizeValues = {
+                none = "None", thin = "Thin", normal = "Normal",
+                heavy = "Heavy", strong = "Strong",
+            }
+            local borderSizeOrder = { "none", "thin", "normal", "heavy", "strong" }
+            local borderSizeToNumber = { none = 0, thin = 1, normal = 2, heavy = 3, strong = 4 }
+            local borderNumberToSize = { [0] = "none", [1] = "thin", [2] = "normal", [3] = "heavy", [4] = "strong" }
             local bsRow
             bsRow, h = W:DualRow(parent, y,
-                { type = "slider", text = "Border Size", min = 0, max = 4, step = 1,
-                  getValue = function() return PAGet("borderSize") or 1 end,
-                  setValue = function(v) PASet("borderSize", v) end },
-                { type = "toggle", text = "No Border on Debuffs",
-                  tooltip = "When enabled, debuff icons keep Blizzard's colored border instead of using the custom border.",
-                  getValue = function() return PAGet("noBorderDebuffs") ~= false end,
-                  setValue = function(v) PASet("noBorderDebuffs", v) end }
+                { type = "dropdown", text = "Border Style",
+                  values = texValues, order = texOrder,
+                  getValue = function() return PAGet("borderTexture") or "solid" end,
+                  setValue = function(v)
+                      local color, behind = EllesmereUI.GetBorderStyleSelectDefaults(v)
+                      PASet("borderTexture", v)
+                      PASet("borderTextureOffset", nil); PASet("borderTextureOffsetY", nil)
+                      PASet("borderTextureShiftX", nil); PASet("borderTextureShiftY", nil)
+                      PASet("borderBehind", behind)
+                      PASet("borderR", color.r); PASet("borderG", color.g); PASet("borderB", color.b)
+                      PASet("borderA", 1)
+                      local defSz = EllesmereUI.GetBorderDefaultSize("unitframes", v)
+                      if defSz then PASet("borderSize", defSz) end
+                  end },
+                { type = "dropdown", text = "Border Size",
+                  values = borderSizeValues, order = borderSizeOrder,
+                  getValue = function()
+                      return borderNumberToSize[PAGet("borderSize") or 1] or "thin"
+                  end,
+                  setValue = function(v) PASet("borderSize", borderSizeToNumber[v] or 1) end }
             );  y = y - h
 
-            -- Inline border color swatch on Border Size slider
+            -- Textured-border offset and layer controls.
             do
                 local rgn = bsRow._leftRegion
+                local _, cogShow = EllesmereUI.BuildCogPopup({
+                    title = "Border Offset",
+                    rows = {
+                        { type = "slider", label = "Offset X", min = -10, max = 10, step = 1,
+                          get = function()
+                              local v = PAGet("borderTextureOffset")
+                              if v ~= nil then return v end
+                              return EllesmereUI.GetBorderDefaults("unitframes", PAGet("borderTexture") or "solid", PAGet("borderSize") or 1)
+                          end,
+                          set = function(v) PASet("borderTextureOffset", v) end },
+                        { type = "slider", label = "Offset Y", min = -10, max = 10, step = 1,
+                          get = function()
+                              local v = PAGet("borderTextureOffsetY")
+                              if v ~= nil then return v end
+                              local _, oy = EllesmereUI.GetBorderDefaults("unitframes", PAGet("borderTexture") or "solid", PAGet("borderSize") or 1)
+                              return oy
+                          end,
+                          set = function(v) PASet("borderTextureOffsetY", v) end },
+                        { type = "slider", label = "Shift X", min = -10, max = 10, step = 1,
+                          get = function()
+                              local v = PAGet("borderTextureShiftX")
+                              if v ~= nil then return v end
+                              local _, _, sx = EllesmereUI.GetBorderDefaults("unitframes", PAGet("borderTexture") or "solid", PAGet("borderSize") or 1)
+                              return sx
+                          end,
+                          set = function(v) PASet("borderTextureShiftX", v == 0 and nil or v) end },
+                        { type = "slider", label = "Shift Y", min = -10, max = 10, step = 1,
+                          get = function()
+                              local v = PAGet("borderTextureShiftY")
+                              if v ~= nil then return v end
+                              local _, _, _, sy = EllesmereUI.GetBorderDefaults("unitframes", PAGet("borderTexture") or "solid", PAGet("borderSize") or 1)
+                              return sy
+                          end,
+                          set = function(v) PASet("borderTextureShiftY", v == 0 and nil or v) end },
+                        { type = "toggle", label = "Show Behind",
+                          get = function() return PAGet("borderBehind") or false end,
+                          set = function(v) PASet("borderBehind", v) end },
+                    },
+                })
+                local cogBtn = CreateFrame("Button", nil, rgn)
+                cogBtn:SetSize(26, 26)
+                cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+                rgn._lastInline = cogBtn
+                cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+                cogBtn:SetAlpha(0.4)
+                local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
+                cogTex:SetAllPoints()
+                cogTex:SetTexture(EllesmereUI.DIRECTIONS_ICON)
+                cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+                cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
+                cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
+                local function UpdateCogVis()
+                    if (PAGet("borderTexture") or "solid") == "solid" then cogBtn:Hide() else cogBtn:Show() end
+                end
+                EllesmereUI.RegisterWidgetRefresh(UpdateCogVis)
+                UpdateCogVis()
+            end
+
+            -- Inline border color swatch on Border Size dropdown
+            do
+                local rgn = bsRow._rightRegion
                 local borderSwatch, updateBorderSwatch = EllesmereUI.BuildColorSwatch(
                     rgn, bsRow:GetFrameLevel() + 3,
                     function()
@@ -15181,6 +15453,17 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdateBorderSwatchState()
             end
         end
+
+        -- Row 4: Blizzard debuff borders | buff-frame expand button.
+        _, h = W:DualRow(parent, y,
+            { type = "toggle", text = "No Border on Debuffs",
+              tooltip = "When enabled, debuff icons keep Blizzard's colored border instead of using the custom border.",
+              getValue = function() return PAGet("noBorderDebuffs") ~= false end,
+              setValue = function(v) PASet("noBorderDebuffs", v) end },
+            { type = "toggle", text = "Show Expand Button",
+              getValue = function() return PAGet("showExpandButton") ~= false end,
+              setValue = function(v) PASet("showExpandButton", v) end }
+        );  y = y - h
 
         -----------------------------------------------------------------------
         --  External Defensives Frame (our own frame; live enable, no reload)
@@ -15275,22 +15558,76 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
         end
 
-        -- Row 3: Border Size (+ inline color swatch) | (empty)
+        -- Row 3: Border Style (+ offset cog) | Border Size (+ color swatch)
         do
+            local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
+            local borderSizeValues = { none="None", thin="Thin", normal="Normal", heavy="Heavy", strong="Strong" }
+            local borderSizeOrder = { "none", "thin", "normal", "heavy", "strong" }
+            local sizeToNumber = { none=0, thin=1, normal=2, heavy=3, strong=4 }
+            local numberToSize = { [0]="none", [1]="thin", [2]="normal", [3]="heavy", [4]="strong" }
             local edBsRow
             edBsRow, h = W:DualRow(parent, y,
-                { type = "slider", text = "Border Size", min = 0, max = 4, step = 1,
-                  getValue = function() return EDGet("borderSize") or 1 end,
-                  setValue = function(v) EDSet("borderSize", v) end },
-                { type = "dropdown", text = "Growth Direction",
-                  tooltip = "Which direction new icons extend from the frame's edge.",
-                  values = { right = "Right", left = "Left" },
-                  order = { "right", "left" },
-                  getValue = function() return EDGet("growDirection") or "right" end,
-                  setValue = function(v) EDSet("growDirection", v) end }
+                { type="dropdown", text="Border Style", values=texValues, order=texOrder,
+                  getValue=function() return EDGet("borderTexture") or "solid" end,
+                  setValue=function(v)
+                      local color, behind = EllesmereUI.GetBorderStyleSelectDefaults(v)
+                      local p = db.profile.externalDefensives
+                      p.borderTexture = v
+                      p.borderTextureOffset = nil; p.borderTextureOffsetY = nil
+                      p.borderTextureShiftX = nil; p.borderTextureShiftY = nil
+                      p.borderBehind = behind
+                      p.borderR = color.r; p.borderG = color.g; p.borderB = color.b; p.borderA = 1
+                      local defSz = EllesmereUI.GetBorderDefaultSize("unitframes", v)
+                      if defSz then p.borderSize = defSz end
+                      if ns.RefreshExternalDefensives then ns.RefreshExternalDefensives() end
+                  end },
+                { type="dropdown", text="Border Size", values=borderSizeValues, order=borderSizeOrder,
+                  getValue=function() return numberToSize[EDGet("borderSize") or 1] or "thin" end,
+                  setValue=function(v) EDSet("borderSize", sizeToNumber[v] or 1) end }
             );  y = y - h
+
             do
                 local rgn = edBsRow._leftRegion
+                local _, cogShow = EllesmereUI.BuildCogPopup({
+                    title="Border Offset",
+                    rows={
+                        { type="slider", label="Offset X", min=-10, max=10, step=1,
+                          get=function()
+                              local v=EDGet("borderTextureOffset"); if v ~= nil then return v end
+                              return EllesmereUI.GetBorderDefaults("unitframes", EDGet("borderTexture") or "solid", EDGet("borderSize") or 1)
+                          end, set=function(v) EDSet("borderTextureOffset", v) end },
+                        { type="slider", label="Offset Y", min=-10, max=10, step=1,
+                          get=function()
+                              local v=EDGet("borderTextureOffsetY"); if v ~= nil then return v end
+                              local _,oy=EllesmereUI.GetBorderDefaults("unitframes", EDGet("borderTexture") or "solid", EDGet("borderSize") or 1); return oy
+                          end, set=function(v) EDSet("borderTextureOffsetY", v) end },
+                        { type="slider", label="Shift X", min=-10, max=10, step=1,
+                          get=function()
+                              local v=EDGet("borderTextureShiftX"); if v ~= nil then return v end
+                              local _,_,sx=EllesmereUI.GetBorderDefaults("unitframes", EDGet("borderTexture") or "solid", EDGet("borderSize") or 1); return sx
+                          end, set=function(v) EDSet("borderTextureShiftX", v == 0 and nil or v) end },
+                        { type="slider", label="Shift Y", min=-10, max=10, step=1,
+                          get=function()
+                              local v=EDGet("borderTextureShiftY"); if v ~= nil then return v end
+                              local _,_,_,sy=EllesmereUI.GetBorderDefaults("unitframes", EDGet("borderTexture") or "solid", EDGet("borderSize") or 1); return sy
+                          end, set=function(v) EDSet("borderTextureShiftY", v == 0 and nil or v) end },
+                        { type="toggle", label="Show Behind",
+                          get=function() return EDGet("borderBehind") or false end,
+                          set=function(v) EDSet("borderBehind", v) end },
+                    },
+                })
+                local cogBtn = CreateFrame("Button", nil, rgn)
+                cogBtn:SetSize(26,26); cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8,0)
+                rgn._lastInline=cogBtn; cogBtn:SetFrameLevel(rgn:GetFrameLevel()+5); cogBtn:SetAlpha(0.4)
+                local tex=cogBtn:CreateTexture(nil,"OVERLAY"); tex:SetAllPoints(); tex:SetTexture(EllesmereUI.DIRECTIONS_ICON)
+                cogBtn:SetScript("OnEnter",function(self) self:SetAlpha(0.7) end)
+                cogBtn:SetScript("OnLeave",function(self) self:SetAlpha(0.4) end)
+                cogBtn:SetScript("OnClick",function(self) cogShow(self) end)
+                local function UpdateCogVis() if (EDGet("borderTexture") or "solid") == "solid" then cogBtn:Hide() else cogBtn:Show() end end
+                EllesmereUI.RegisterWidgetRefresh(UpdateCogVis); UpdateCogVis()
+            end
+            do
+                local rgn = edBsRow._rightRegion
                 local borderSwatch, updateBorderSwatch = EllesmereUI.BuildColorSwatch(
                     rgn, edBsRow:GetFrameLevel() + 3,
                     function()
@@ -15319,6 +15656,16 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdateEDBorderSwatchState()
             end
         end
+
+        -- Row 4: icon growth direction.
+        _, h = W:DualRow(parent, y,
+            { type = "dropdown", text = "Growth Direction",
+              tooltip = "Which direction new icons extend from the frame's edge.",
+              values = { right = "Right", left = "Left" }, order = { "right", "left" },
+              getValue = function() return EDGet("growDirection") or "right" end,
+              setValue = function(v) EDSet("growDirection", v) end },
+            nil
+        ); y = y - h
 
         return math.abs(y)
     end

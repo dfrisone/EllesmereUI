@@ -5,6 +5,7 @@
 ---@diagnostic disable:undefined-global
 local L = EllesmereUI.RegisterLocale("zhCN")
 if not L then return end
+L["Behind Unit Frame"] = "显示在单位框体后方"
 
 -- == Common vocabulary (highest frequency) =================================
 L["Enable"]            = "启用"
@@ -1702,6 +1703,7 @@ L["Shift Elements if No Power"] = "无能量条时移动元素"
 L["Extra Y Offset"] = "额外 Y 偏移"
 L["Hide Power Bar if Resource"] = "显示职业资源条时隐藏能量条"
 L["Show Behind"] = "置于后方"
+L["Show Expand Button"] = "显示展开按钮"
 
 -- Gradient Settings
 L["Enable Gradient"] = "启用渐变"

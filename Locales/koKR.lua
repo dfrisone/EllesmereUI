@@ -6,6 +6,7 @@
 
 local L = EllesmereUI.RegisterLocale("koKR")
 if not L then return end
+L["Behind Unit Frame"] = "유닛 프레임 뒤에 표시"
 
 -- == Common labels (공용 라벨) =============================================
 L["Anchor"]            = "기준점"
@@ -427,6 +428,7 @@ L["Shift"] = "쉬프트"
 L["Shoulder"] = "어깨"
 L["Show %"] = "% 표시"
 L["Show Behind"] = "뒤에 표시"
+L["Show Expand Button"] = "확장 버튼 표시"
 L["Show Border"] = "테두리 표시"
 L["Show Cast Bar"] = "시전 바 표시"
 L["Show Class Resource"] = "직업 자원 표시"

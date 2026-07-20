@@ -5,6 +5,7 @@
 
 local L = EllesmereUI.RegisterLocale("itIT")
 if not L then return end
+L["Behind Unit Frame"] = "Dietro il riquadro unità"
 
 -- == Common labels =========================================================
 L["Size"]              = "Dimensione"
@@ -51,6 +52,11 @@ L["Offset Y"]          = "Scostamento Y"
 L["Shift X"]           = "Scostamento X"
 L["Shift Y"]           = "Scostamento Y"
 L["None"]              = "Nessuno"
+L["Border Offset"]     = "Scostamento bordo"
+L["Thin"]              = "Sottile"
+L["Normal"]            = "Normale"
+L["Heavy"]             = "Pesante"
+L["Strong"]            = "Marcato"
 L["All"]               = "Tutto"
 L["Multiple"]          = "Multiplo"
 L["Left"]              = "Sinistra"
@@ -141,5 +147,6 @@ L["Standard (5m / 32)"] = "Standard (5m / 32)"
 L["Header Bottom Border"] = "Bordo inferiore dell’intestazione"
 L["Include Headerbar"] = "Includi barra dell’intestazione"
 L["Show Behind"] = "Mostra dietro"
+L["Show Expand Button"] = "Mostra pulsante di espansione"
 L["Button Background"] = "Sfondo pulsante"
 L["Button Border Style"] = "Stile bordo pulsante"

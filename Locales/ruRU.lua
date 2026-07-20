@@ -6,6 +6,7 @@
 ---@diagnostic disable:undefined-global
 local L = EllesmereUI.RegisterLocale("ruRU")
 if not L then return end
+L["Behind Unit Frame"] = "За рамкой юнита"
 
 -- == Common vocabulary (highest frequency) =================================
 L["Enable"]            = "Включить"
@@ -1595,6 +1596,7 @@ L["Shift Elements if No Power"] = "Сдвигать без ресурса"
 L["Extra Y Offset"] = "Доп. смещение по Y"
 L["Hide Power Bar if Resource"] = "Скрывать полосу ресурса, если есть основной ресурс"
 L["Show Behind"] = "Показывать сзади"
+L["Show Expand Button"] = "Показывать кнопку разворачивания"
 
 -- Gradient Settings
 L["Enable Gradient"] = "Включить градиент"

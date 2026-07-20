@@ -5,6 +5,7 @@
 
 local L = EllesmereUI.RegisterLocale("deDE")
 if not L then return end
+L["Behind Unit Frame"] = "Hinter dem Einheitenfenster"
 
 L["    Enemy Units"] = "    Feindliche Einheiten"
 L["    Friendly Units"] = "    Freundliche Einheiten"
@@ -3604,6 +3605,7 @@ L["Show Auras Outside Instances"] = "Auren außerhalb von Instanzen anzeigen"
 L["Show Bag Space"] = "Taschenplatz anzeigen"
 L["Show Bags"]   = "Taschen anzeigen"
 L["Show Behind"]  = "Dahinter anzeigen"
+L["Show Expand Button"] = "Erweitern-Schaltfläche anzeigen"
 L["Show black backgrounds behind minimap indicator buttons (tracking, calendar, mail, crafting, addon buttons, flyout toggle)."] = "Zeigt schwarze Hintergründe hinter den Indikator-Buttons der Minimap (Aufspüren, Kalender, Post, Handwerk, Addon-Buttons, Flyout-Umschalter)."
 L["Show Blizzard Elements"]     = "Blizzard Elemente anzeigen"
 L["Show Blizzard Icon Background"] = "Blizzard Symbolhintergrund anzeigen"

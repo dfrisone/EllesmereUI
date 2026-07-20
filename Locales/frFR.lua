@@ -5,6 +5,7 @@
 
 local L = EllesmereUI.RegisterLocale("frFR")
 if not L then return end
+L["Behind Unit Frame"] = "Derrière le cadre d’unité"
 
 -- == Common labels =========================================================
 L["Size"]              = "Taille"
@@ -3401,6 +3402,7 @@ L["Show Auras In Open World"]   = "Afficher les auras en monde ouvert"
 L["Show Auras Outside Instances"] = "Afficher les auras hors des instances"
 L["Show Bags"]                  = "Afficher les sacs"
 L["Show Behind"]                = "Afficher derrière"
+L["Show Expand Button"]         = "Afficher le bouton de développement"
 L["Show Blizzard Elements"]     = "Afficher les éléments Blizzard"
 L["Show Blizzard Icon Background"] = "Afficher l'arrière-plan d'icône Blizzard"
 L["Show Blizzard's native quest type icons/buttons on the right instead of EllesmereUI's custom icons. Requires a UI reload."] = "Afficher les icônes/boutons de type de quête natifs de Blizzard à droite au lieu des icônes personnalisées d'EllesmereUI. Nécessite un rechargement de l'interface."
