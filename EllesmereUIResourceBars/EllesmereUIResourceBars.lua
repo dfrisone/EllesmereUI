@@ -6064,8 +6064,17 @@ BuildCastBar = function()
     else
         castBarFrame:SetSize(totalW, h)
         if not EllesmereUI._unlockActive then
-            castBarFrame:ClearAllPoints()
-            castBarFrame:SetPoint("CENTER", UIParent, "CENTER", cb.anchorX, cb.anchorY)
+            -- Mirror the unlockPos branch's anchor guard above: when the
+            -- anchor system owns this frame (unlockPos.point went missing,
+            -- e.g. a save that hit a bad position mid-cascade), don't slam
+            -- it back to a static CENTER/0,0 -- that fights the anchor
+            -- system and, with other anchored bars falling back the same
+            -- way, collapses them all onto the same point.
+            local anchored = EllesmereUI.IsUnlockAnchored("ERB_CastBar")
+            if not (anchored and castBarFrame:GetLeft()) then
+                castBarFrame:ClearAllPoints()
+                castBarFrame:SetPoint("CENTER", UIParent, "CENTER", cb.anchorX, cb.anchorY)
+            end
         end
     end
 
@@ -7088,8 +7097,13 @@ BuildGCDBar = function()
     else
         gcdBarFrame:SetSize(w, h)
         if not EllesmereUI._unlockActive then
-            gcdBarFrame:ClearAllPoints()
-            gcdBarFrame:SetPoint("CENTER", UIParent, "CENTER", g.anchorX or 0, g.anchorY or 0)
+            -- Same anchor guard as the unlockPos branch above -- see the
+            -- comment on the cast bar's equivalent fallback.
+            local anchored = EllesmereUI.IsUnlockAnchored("ERB_GCDBar")
+            if not (anchored and gcdBarFrame:GetLeft()) then
+                gcdBarFrame:ClearAllPoints()
+                gcdBarFrame:SetPoint("CENTER", UIParent, "CENTER", g.anchorX or 0, g.anchorY or 0)
+            end
         end
     end
 
@@ -7481,13 +7495,18 @@ local function BuildTotemBar()
         end
     else
         if not EllesmereUI._unlockActive then
-            totemBarFrame:ClearAllPoints()
-            -- Default: left-aligned 5px below the player unit frame
-            local playerUF = _G["oUF_EllesmerePlayer"]
-            if playerUF and playerUF:IsShown() then
-                totemBarFrame:SetPoint("TOPLEFT", playerUF, "BOTTOMLEFT", 0, -5)
-            else
-                totemBarFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -120)
+            -- Same anchor guard as the unlockPos branch above -- see the
+            -- comment on the cast bar's equivalent fallback.
+            local anchored = EllesmereUI.IsUnlockAnchored("ERB_TotemBar")
+            if not (anchored and totemBarFrame:GetLeft()) then
+                totemBarFrame:ClearAllPoints()
+                -- Default: left-aligned 5px below the player unit frame
+                local playerUF = _G["oUF_EllesmerePlayer"]
+                if playerUF and playerUF:IsShown() then
+                    totemBarFrame:SetPoint("TOPLEFT", playerUF, "BOTTOMLEFT", 0, -5)
+                else
+                    totemBarFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -120)
+                end
             end
         end
     end
