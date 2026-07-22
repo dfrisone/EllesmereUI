@@ -11239,7 +11239,11 @@ function InitializeFrames()
         frames._cbSuppressFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frames._cbSuppressFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
         frames._cbSuppressFrame:SetScript("OnEvent", function()
-            ApplyBlizzCastbarState()
+            -- Deferred: EDIT_MODE_LAYOUTS_UPDATED is dispatched from inside
+            -- Edit Mode's own operations; applying suppression state there
+            -- writes cast bar state mid-pass (same taint mechanism as the
+            -- DisableBlizzard override at the top of this file).
+            C_Timer.After(0, ApplyBlizzCastbarState)
         end)
         -- Edit Mode exit reparents the cast bar back into its layout frame
         -- (which gets hidden), so re-apply our state when the panel closes.
@@ -11491,26 +11495,46 @@ function InitializeFrames()
         if _blizzCPHooked then return end
         _blizzCPHooked = true
         local _cpSetParentGuard = false
-        -- Re-assert position when Blizzard reparents (form/spec changes).
-        hooksecurefunc(cpFrame, "SetParent", function(self, newParent)
-            if not _blizzCPActive or _cpSetParentGuard then return end
+        -- Both hooks defer their re-assert work: they can fire inside
+        -- Blizzard's secure Edit Mode layout pass (same taint mechanism as
+        -- the DisableBlizzard override at the top of this file), and while
+        -- the manager is open the re-assert waits for it to close.
+        local _cpReassertQueued = false
+        local ReassertClassPower
+        ReassertClassPower = function(self)
+            _cpReassertQueued = false
+            if not _blizzCPActive then return end
+            if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+                _cpReassertQueued = true
+                C_Timer.After(0.25, function() ReassertClassPower(self) end)
+                return
+            end
             local wanted = _cpExpectedParent or frames.player or UIParent
-            if newParent ~= wanted then
+            if self:GetParent() ~= wanted then
                 _cpSetParentGuard = true
                 PositionClassPowerBar(self)
                 -- Blizzard may have re-stolen during PositionClassPowerBar.
                 -- The anchor is already correct, so just fix the parent directly.
-                local cur = self:GetParent()
-                wanted = _cpExpectedParent or frames.player or UIParent
-                if cur ~= wanted then
+                if self:GetParent() ~= wanted then
                     self:SetParent(wanted)
                 end
                 _cpSetParentGuard = false
             end
+            if not self:IsShown() and not InCombatLockdown() then self:Show() end
+        end
+        -- Re-assert position when Blizzard reparents (form/spec changes).
+        hooksecurefunc(cpFrame, "SetParent", function(self, newParent)
+            if not _blizzCPActive or _cpSetParentGuard or _cpReassertQueued then return end
+            local wanted = _cpExpectedParent or frames.player or UIParent
+            if newParent ~= wanted then
+                _cpReassertQueued = true
+                C_Timer.After(0, function() ReassertClassPower(self) end)
+            end
         end)
         hooksecurefunc(cpFrame, "Hide", function(self)
-            if not _blizzCPActive then return end
-            if not InCombatLockdown() then self:Show() end
+            if not _blizzCPActive or _cpReassertQueued then return end
+            _cpReassertQueued = true
+            C_Timer.After(0, function() ReassertClassPower(self) end)
         end)
     end
 
