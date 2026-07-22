@@ -99,6 +99,7 @@ local L = {
     ON_COOLDOWN          = "On Cooldown",
     MYTHIC_TELEPORTS     = "Mythic+ Teleports",
     USE_HEARTHSTONE      = "Use Hearthstone",
+    RANDOM_HEARTHSTONE   = "Random Hearthstone",
     CURRENT_SPEC         = "Current Specialization",
     CHANGE_SPEC          = "Change Specialization",
     CHANGE_SPEC_SHORT    = "Change Spec",

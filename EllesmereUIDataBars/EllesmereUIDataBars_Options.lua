@@ -2728,8 +2728,8 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
                 typeRows = {
-                    { type = "dropdown", text = "Hearthstone",
-                      tooltip = "Which hearthstone the left-click uses. Random Hearthstone picks a random owned variant each cast.",
+                    { type = "dropdown", text = "Left Click",
+                      tooltip = "Which hearthstone the left click uses. Random Hearthstone picks a random owned variant each cast. Right click always rolls a random one.",
                       values = hsValues, order = hsOrder,
                       getValue = function()
                           local c = s.hsChoice
