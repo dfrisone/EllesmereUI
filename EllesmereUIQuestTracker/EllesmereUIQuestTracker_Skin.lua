@@ -770,6 +770,8 @@ local function ProcessBlockChildren(frame, depth)
     end
 end
 
+local _hookedPOIs = setmetatable({}, { __mode = "k" })
+
 local function SuppressPOI(block)
     if EQT.Cfg("showQuestIcons") then return end
     local pb = block and block.poiButton
@@ -777,6 +779,15 @@ local function SuppressPOI(block)
     if pb:IsShown() then pb:Hide() end
     pb:EnableMouse(false)
 
+    if not _hookedPOIs[pb] then
+        _hookedPOIs[pb] = true
+
+        hooksecurefunc(pb, "Show", function(self)
+            if not EQT.Cfg("showQuestIcons") then
+                self:Hide()
+            end
+        end)
+    end
     -- Do not hook Show on this Blizzard-owned pooled button. A post-hook runs
     -- addon code synchronously inside Blizzard's native POI show/update path,
     -- allowing taint to escape into later quest/map refresh work. Re-suppress
