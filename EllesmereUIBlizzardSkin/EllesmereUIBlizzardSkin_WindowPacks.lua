@@ -6012,9 +6012,12 @@ local function SkinOrderView(ov)
         -- OVERLAY texture region of OrderDetails, so the blanket region fade
         -- would otherwise alpha-zero it and the quality indicator vanishes
         -- under the skin (reported: quality not visible on crafting orders).
+        -- The keep set must also go into the restrip registry: the frame's
+        -- show hook re-fades registered frames, and a bare `true` there would
+        -- alpha-zero the icon again right after skin time.
         local keep = od.MinimumQualityIcon and { [od.MinimumQualityIcon] = true } or nil
         WSkin.FadeRegions(od, keep)
-        WSkin.Register(od, true)
+        WSkin.Register(od, keep)
         if od.Background then od.Background:SetAlpha(0) end
         SkinSchematic(od.SchematicForm)
     end
