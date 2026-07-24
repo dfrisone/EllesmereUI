@@ -138,7 +138,8 @@ function ns._appendDisplayPresetKeys(t)
         "ccDurationTextSize", "ccDurationTextX", "ccDurationTextY", "ccDurationTextColor",
         "buffTextSize", "buffTextColor", "ccTextSize", "ccTextColor",
         "raidMarkerPos", "classificationSlot", "classificationShowInInstances",
-        "castNameSize", "castNameColor", "castTargetSize", "castTargetClassColor", "castTargetColor",
+        "castNameSize", "castNameColor", "castCombineNameTarget",
+        "castTargetSize", "castTargetClassColor", "castTargetColor",
         "showCastTimer", "castTimerSize", "castTimerColor", "targetScale",
         "castNameSide", "castTargetSide", "castTimerSide",
         "castNameWidthPct", "castNameWrap", "castTargetWidthPct", "castTargetWrap",
@@ -366,6 +367,7 @@ local defaults = {
     -- the historical castW*0.42 clamp) and a wrap toggle (off = single line + ellipsis).
     castNameWidthPct = 42,
     castNameWrap = false,
+    castCombineNameTarget = false,
     castTargetSize = 10,
     castTargetClassColor = true,
     castTargetColor = { r = 1, g = 1, b = 1 },
@@ -5322,20 +5324,11 @@ castFallbackFrame:SetScript("OnUpdate", function(self, elapsed)
             if bc and bc:IsShown() then
                 plate.cast:SetMinMaxValues(bc:GetMinMaxValues())
                 plate.cast:SetValue(bc:GetValue())
-                -- Update cast target in fallback mode (not handled by UpdateCast)
-                if doText and plate.castTarget then
-                    local tgt
-                    if UnitShouldDisplaySpellTargetName and UnitShouldDisplaySpellTargetName(plate.unit) then
-                        tgt = UnitSpellTargetName and UnitSpellTargetName(plate.unit)
-                    end
-                    -- tgt may be a SECRET string: truthiness (tgt or "")
-                    -- would error; type() is the safe nil check and
-                    -- SetText accepts secret strings natively.
-                    if type(tgt) == "nil" then
-                        plate.castTarget:SetText("")
-                    else
-                        plate.castTarget:SetText(tgt)
-                    end
+                -- Keep spell name + target current in fallback mode.
+                if doText and plate.UpdateCastText then
+                    local castName = UnitCastingInfo(plate.unit)
+                    if type(castName) == "nil" then castName = UnitChannelInfo(plate.unit) end
+                    plate:UpdateCastText(castName)
                 end
             else
                 if not plate._interrupted then
@@ -5429,6 +5422,70 @@ end
 
 local NameplateFrame = {}
 
+function NameplateFrame:UpdateCastText(spellName)
+    local spellTarget, spellTargetClass
+    if UnitShouldDisplaySpellTargetName and UnitShouldDisplaySpellTargetName(self.unit) then
+        local rawTarget = UnitSpellTargetName and UnitSpellTargetName(self.unit)
+        -- Names may be SECRET: type() is safe, and SetText/SetFormattedText
+        -- accept secret strings without exposing them to Lua.
+        if type(rawTarget) ~= "nil" then
+            spellTarget = rawTarget
+            spellTargetClass = UnitSpellTargetClass and UnitSpellTargetClass(self.unit)
+        end
+    end
+
+    local hasTarget = type(spellTarget) ~= "nil"
+    local db = p or defaults
+    local combine = db.castCombineNameTarget == true
+    local useClassColor = defaults.castTargetClassColor
+    if db.castTargetClassColor ~= nil then useClassColor = db.castTargetClassColor end
+
+    local targetColor, targetHex
+    if useClassColor then
+        if type(spellTargetClass) ~= "nil" and C_ClassColor then
+            targetColor = C_ClassColor.GetClassColor(spellTargetClass)
+        end
+        targetHex = targetColor and targetColor.GenerateHexColor and targetColor:GenerateHexColor() or "ffffffff"
+    else
+        local c = db.castTargetColor or defaults.castTargetColor
+        targetHex = string.format("ff%02x%02x%02x",
+            math.floor(c.r * 255 + 0.5), math.floor(c.g * 255 + 0.5), math.floor(c.b * 255 + 0.5))
+    end
+
+    if type(spellName) == "nil" then
+        self.castName:SetText("")
+    elseif combine and hasTarget then
+        self.castName:SetFormattedText("%s - |c" .. targetHex .. "%s|r", spellName, spellTarget)
+    else
+        self.castName:SetText(spellName)
+    end
+    if combine or not hasTarget then
+        self.castTarget:SetText("")
+    else
+        self.castTarget:SetText(spellTarget)
+    end
+
+    if useClassColor then
+        if targetColor then
+            self.castTarget:SetTextColor(targetColor:GetRGB())
+        else
+            self.castTarget:SetTextColor(1, 1, 1, 1)
+        end
+    else
+        local c = db.castTargetColor or defaults.castTargetColor
+        self.castTarget:SetTextColor(c.r, c.g, c.b, 1)
+    end
+
+    local castW = self.cast:GetWidth()
+    if castW and castW > 0 then
+        local nameWidth = combine and 80 or (db.castNameWidthPct or defaults.castNameWidthPct)
+        self.castName:SetWidth(castW * nameWidth / 100)
+    end
+    self.castName:SetShown((db.castNameSide or defaults.castNameSide) ~= "none")
+    self.castTarget:SetShown(not combine and hasTarget
+        and (db.castTargetSide or defaults.castTargetSide) ~= "none")
+end
+
 -- Appearance generation: bumped by RefreshAllSettings so plates re-apply
 -- static appearance on next SetUnit. Plates stamp _appearanceGen after
 -- applying so cache-hit re-spawns skip the work entirely.
@@ -5489,6 +5546,7 @@ function NameplateFrame:ApplyAppearance()
     local nameSide   = (p and p.castNameSide)   or defaults.castNameSide
     local targetSide = (p and p.castTargetSide) or defaults.castTargetSide
     local timerSide  = (p and p.castTimerSide)  or defaults.castTimerSide
+    local combineNameTarget = p and p.castCombineNameTarget == true
     local castW = self.cast:GetWidth()
     local timerW = ctmSz * 2.2
     -- Per-element truncation: width as a % of the cast bar, plus a wrap toggle.
@@ -5506,7 +5564,7 @@ function NameplateFrame:ApplyAppearance()
     if castW and castW > 0 then
         if nameSide ~= "none" then
             local pt, xb, jh = ns.GetCastTextAnchor(nameSide, showTimer and timerSide == nameSide, timerW, false)
-            self.castName:SetWidth(castW * cnWPct / 100)
+            self.castName:SetWidth(castW * (combineNameTarget and 80 or cnWPct) / 100)
             self.castName:SetJustifyH(jh)
             self.castName:ClearAllPoints()
             self.castName:SetPoint(pt, self.cast, pt, xb + cnOX, cnOY)
@@ -5532,7 +5590,7 @@ function NameplateFrame:ApplyAppearance()
     end
     -- Base visibility by side (UpdateCast refines the target per cast on hasTarget).
     self.castName:SetShown(nameSide ~= "none")
-    self.castTarget:SetShown(targetSide ~= "none")
+    self.castTarget:SetShown(not combineNameTarget and targetSide ~= "none")
     self.castTimer:SetShown(showTimer)
     -- Force the new justify to take effect on text that is already rendered (e.g.
     -- changing the side while a plate is mid-cast). A fresh cast re-flows on its own
@@ -7648,11 +7706,6 @@ function NameplateFrame:UpdateCast()
     if isFullSetup then
         self.cast:Show()
         self:ApplyNameVisibility()
-        local castW = self.cast:GetWidth()
-        if castW and castW > 0 then
-            local cnWPct = (p and p.castNameWidthPct) or defaults.castNameWidthPct
-            self.castName:SetWidth(castW * cnWPct / 100)
-        end
         -- Icon and name must describe the SAME cast. Both are taken from this
         -- UnitCastingInfo/UnitChannelInfo snapshot: the icon comes straight from
         -- the live texture (which may be a secret value -- SetTexture accepts
@@ -7673,53 +7726,7 @@ function NameplateFrame:UpdateCast()
         else
             self.castIcon:SetTexture(nil)
         end
-        self.castName:SetText(type(name) ~= "nil" and name or "")
-
-        local spellTarget, spellTargetClass
-        if UnitShouldDisplaySpellTargetName and UnitShouldDisplaySpellTargetName(self.unit) then
-            local rawTarget = UnitSpellTargetName and UnitSpellTargetName(self.unit)
-            -- May be a SECRET string: type() is the only safe existence
-            -- check (truthiness on a secret errors); SetText/SetTextColor
-            -- accept secrets natively downstream.
-            if type(rawTarget) ~= "nil" then
-                spellTarget = rawTarget
-                spellTargetClass = UnitSpellTargetClass and UnitSpellTargetClass(self.unit)
-            end
-        end
-        local hasTarget = type(spellTarget) ~= "nil"
-        if hasTarget then
-            self.castTarget:SetText(spellTarget)
-        else
-            self.castTarget:SetText("")
-        end
-
-        local db = p or defaults
-        local useClassColor = defaults.castTargetClassColor
-        if db.castTargetClassColor ~= nil then useClassColor = db.castTargetClassColor end
-        if useClassColor then
-            local appliedCTC = false
-            -- spellTargetClass may be SECRET; GetClassColor accepts it and
-            -- returns a clean color object whose components stay secret-safe
-            -- through SetTextColor.
-            if type(spellTargetClass) ~= "nil" and C_ClassColor then
-                local c = C_ClassColor.GetClassColor(spellTargetClass)
-                if c then
-                    self.castTarget:SetTextColor(c:GetRGB())
-                    appliedCTC = true
-                end
-            end
-            if not appliedCTC then
-                self.castTarget:SetTextColor(1, 1, 1, 1)
-            end
-        else
-            local ctc = (db and db.castTargetColor) or defaults.castTargetColor
-            self.castTarget:SetTextColor(ctc.r, ctc.g, ctc.b, 1)
-        end
-
-        local nameSide   = db.castNameSide   or defaults.castNameSide
-        local targetSide = db.castTargetSide or defaults.castTargetSide
-        self.castName:SetShown(nameSide ~= "none")
-        self.castTarget:SetShown(hasTarget and targetSide ~= "none")
+        self:UpdateCastText(name)
         self.castTimer:SetShown(self._showCastTimer)
 
         if type(kickProtected) == "nil" then

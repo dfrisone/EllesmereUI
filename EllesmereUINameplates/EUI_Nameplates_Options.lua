@@ -1480,6 +1480,7 @@ initFrame:SetScript("OnEvent", function(self)
             local pvNameSide   = (dbRef and dbRef.castNameSide)   or defaults.castNameSide
             local pvTargetSide = (dbRef and dbRef.castTargetSide) or defaults.castTargetSide
             local pvTimerSide  = (dbRef and dbRef.castTimerSide)  or defaults.castTimerSide
+            local pvCombine = dbRef and dbRef.castCombineNameTarget == true
             local pvTimerW = ctmSz * 2.2
             -- Per-element cast text truncation (% of cast bar width + wrap), mirroring runtime.
             local pvNameTextW = barW * (DBVal("castNameWidthPct") or defaults.castNameWidthPct) / 100
@@ -1497,14 +1498,14 @@ initFrame:SetScript("OnEvent", function(self)
                 castParts.nameFS:Hide()
             else
                 local pt, xb, jh = ns.GetCastTextAnchor(pvNameSide, pvShowTimer and pvTimerSide == pvNameSide, pvTimerW, false)
-                castParts.nameFS:SetWidth(pvNameTextW)
+                castParts.nameFS:SetWidth(pvCombine and (barW * 0.80) or pvNameTextW)
                 castParts.nameFS:SetJustifyH(jh)
                 castParts.nameFS:SetPoint(pt, cast, pt, xb + cnOX, cnOY)
                 castParts.nameFS:Show()
             end
             -- Spell target
             castParts.targetFS:ClearAllPoints()
-            if pvTargetSide == "none" then
+            if pvCombine or pvTargetSide == "none" then
                 castParts.targetFS:Hide()
             else
                 local pt, xb, jh = ns.GetCastTextAnchor(pvTargetSide, pvShowTimer and pvTimerSide == pvTargetSide, pvTimerW, false)
@@ -1531,17 +1532,30 @@ initFrame:SetScript("OnEvent", function(self)
             ns.ReflowFontString(castParts.timerFS)
             local useClassColor = defaults.castTargetClassColor
             if dbRef and dbRef.castTargetClassColor ~= nil then useClassColor = dbRef.castTargetClassColor end
+            local pvTargetHex
             if useClassColor then
                 local _, pClass = UnitClass("player")
                 local c = pClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[pClass]
                 if c then
                     castParts.targetFS:SetTextColor(c.r, c.g, c.b, 1)
+                    pvTargetHex = (c.GenerateHexColor and c:GenerateHexColor()) or c.colorStr or "ffffffff"
                 else
                     castParts.targetFS:SetTextColor(1, 1, 1, 1)
+                    pvTargetHex = "ffffffff"
                 end
             else
                 local ctc = (dbRef and dbRef.castTargetColor) or defaults.castTargetColor
                 castParts.targetFS:SetTextColor(ctc.r, ctc.g, ctc.b, 1)
+                pvTargetHex = string.format("ff%02x%02x%02x",
+                    math.floor(ctc.r * 255 + 0.5), math.floor(ctc.g * 255 + 0.5), math.floor(ctc.b * 255 + 0.5))
+            end
+            local pvTargetText = UnitName("player") or EllesmereUI.L("Spell Target")
+            castParts.targetFS:SetText(pvTargetText)
+            if pvCombine then
+                castParts.nameFS:SetFormattedText("%s - |c" .. pvTargetHex .. "%s|r",
+                    EllesmereUI.L("Spell Name"), pvTargetText)
+            else
+                castParts.nameFS:SetText(EllesmereUI.L("Spell Name"))
             end
 
             -- Name/target/timer widths are set per-element above (each text uses its
@@ -7979,6 +7993,8 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI:RefreshPage()
               end },
             { type="dropdown", text="Spell Target", values=castTextPosValues, order=castTextPosOrder,
+              disabled=function() return DBVal("castCombineNameTarget") == true end,
+              disabledTooltip="This option requires Combine Spell Name and Target to be disabled.",
               getValue=function() return (DB() and DB().castTargetSide) or defaults.castTargetSide end,
               setValue=function(v)
                 DB().castTargetSide = v
@@ -8035,6 +8051,14 @@ initFrame:SetScript("OnEvent", function(self)
                         widthSet = function(v) DB().castNameWidthPct = v; ns.RefreshAllSettings(); UpdatePreview() end,
                         wrapGet = function() return DBVal("castNameWrap") == true end,
                         wrapSet = function(v) DB().castNameWrap = v; ns.RefreshAllSettings(); UpdatePreview() end,
+                        toggleLabel = "Combine Spell Name and Target",
+                        toggleGet = function() return DBVal("castCombineNameTarget") == true end,
+                        toggleSet = function(v)
+                            DB().castCombineNameTarget = v
+                            ns.RefreshAllSettings()
+                            UpdatePreview()
+                            EllesmereUI:RefreshPage()
+                        end,
                     })
                 end)
                 EllesmereUI.RegisterWidgetRefresh(function()
@@ -8996,6 +9020,7 @@ initFrame:SetScript("OnEvent", function(self)
             local colNameSide   = (dbRef and dbRef.castNameSide)   or defaults.castNameSide
             local colTargetSide = (dbRef and dbRef.castTargetSide) or defaults.castTargetSide
             local colTimerSide  = (dbRef and dbRef.castTimerSide)  or defaults.castTimerSide
+            local colCombine = dbRef and dbRef.castCombineNameTarget == true
             local colTimerW = colCtmSz * 2.2
             -- Per-element cast text truncation (% of bar width + wrap), mirroring runtime.
             local colNameW = BAR_W * ((dbRef and dbRef.castNameWidthPct) or defaults.castNameWidthPct) / 100
@@ -9014,7 +9039,7 @@ initFrame:SetScript("OnEvent", function(self)
                 nameFS:Hide()
             else
                 local pt, xb, jh = ns.GetCastTextAnchor(colNameSide, colShowTimer and colTimerSide == colNameSide, colTimerW, false)
-                nameFS:SetWidth(colNameW)
+                nameFS:SetWidth(colCombine and (BAR_W * 0.80) or colNameW)
                 nameFS:SetJustifyH(jh)
                 nameFS:SetPoint(pt, cast, pt, xb, 0)
             end
@@ -9041,22 +9066,32 @@ initFrame:SetScript("OnEvent", function(self)
             targetFS:SetWordWrap(colTgtWrap)
             targetFS:SetNonSpaceWrap(false)
             targetFS:SetMaxLines(colTgtWrap and 2 or 1)
-            targetFS:SetText(isHalf and (UnitName("player") or EllesmereUI.L("Target")) or (UnitName("player") or EllesmereUI.L("Spell Target")))
+            local colTargetText = isHalf and (UnitName("player") or EllesmereUI.L("Target")) or (UnitName("player") or EllesmereUI.L("Spell Target"))
+            targetFS:SetText(colTargetText)
             local useClassColor = defaults.castTargetClassColor
             if dbRef and dbRef.castTargetClassColor ~= nil then useClassColor = dbRef.castTargetClassColor end
+            local colTargetHex
             if useClassColor then
                 local _, pClass = UnitClass("player")
                 local c = pClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[pClass]
                 if c then
                     targetFS:SetTextColor(c.r, c.g, c.b, 1)
+                    colTargetHex = (c.GenerateHexColor and c:GenerateHexColor()) or c.colorStr or "ffffffff"
                 else
                     targetFS:SetTextColor(1, 1, 1, 1)
+                    colTargetHex = "ffffffff"
                 end
             else
                 local ctc = (dbRef and dbRef.castTargetColor) or defaults.castTargetColor
                 targetFS:SetTextColor(ctc.r, ctc.g, ctc.b, 1)
+                colTargetHex = string.format("ff%02x%02x%02x",
+                    math.floor(ctc.r * 255 + 0.5), math.floor(ctc.g * 255 + 0.5), math.floor(ctc.b * 255 + 0.5))
             end
-            if colTargetSide == "none" then
+            if colCombine then
+                nameFS:SetFormattedText("%s - |c" .. colTargetHex .. "%s|r",
+                    EllesmereUI.L("Spell Name"), colTargetText)
+            end
+            if colCombine or colTargetSide == "none" then
                 targetFS:Hide()
             else
                 local pt, xb, jh = ns.GetCastTextAnchor(colTargetSide, colShowTimer and colTimerSide == colTargetSide, colTimerW, false)
