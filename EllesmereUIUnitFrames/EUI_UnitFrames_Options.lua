@@ -13181,6 +13181,35 @@ initFrame:SetScript("OnEvent", function(self)
                 Upd()
                 RegisterWidgetRefresh(Upd)
             end
+
+            -- Power bar border size and color, matching Player/Target/Focus.
+            local pwrBorderRow
+            pwrBorderRow, h = W:DualRow(parent, y,
+                { type="slider", text="Border Size", min=0, max=4, step=1, trackWidth=120,
+                  getValue=function() return MVal("powerBorderSize", 0) end,
+                  setValue=function(v) MSet("powerBorderSize", v) end },
+                { type="label", text="" });  y = y - h
+            do
+                local rgn = pwrBorderRow._leftRegion
+                local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(
+                    rgn, pwrBorderRow:GetFrameLevel() + 3,
+                    function()
+                        local c = MGet("powerBorderColor") or { r=0, g=0, b=0 }
+                        return c.r, c.g, c.b, MVal("powerBorderAlpha", 1)
+                    end,
+                    function(r, g, b, a)
+                        settingsTable.powerBorderColor = { r=r, g=g, b=b }
+                        settingsTable.powerBorderAlpha = a
+                        ReloadAndUpdate()
+                    end,
+                    true, 20)
+                PP.Point(swatch, "RIGHT", rgn._control, "LEFT", -8, 0)
+                swatch:SetScript("OnEnter", function()
+                    EllesmereUI.ShowWidgetTooltip(swatch, "Border Color")
+                end)
+                swatch:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+                RegisterWidgetRefresh(updateSwatch)
+            end
         end
 
         -- Extra section rendered at the very bottom, below the Power Bar (boss "Indicators").
