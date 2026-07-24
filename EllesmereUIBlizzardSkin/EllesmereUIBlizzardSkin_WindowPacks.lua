@@ -3144,6 +3144,27 @@ local function Skin_Guild()
         end
         WSkin.ScrollBarsIn(csd)
     end
+    -- Guild recruitment settings dialog ("List My Guild in Guild Finder").
+    -- Parented INSIDE CommunitiesFrame like EditStreamDialog, so the art
+    -- sweeps strip its DialogBorderDark BG and it renders see-through
+    -- without the house popup pass.
+    local rd = f.RecruitmentDialog
+    if rd and not GetFFD(rd).rdSkinned then
+        GetFFD(rd).rdSkinned = true
+        SkinGuildPopup(rd)
+        for _, k in ipairs({ "Accept", "Cancel" }) do
+            local b = rd[k]
+            if b and b.GetObjectType and b:GetObjectType() == "Button" then
+                WSkin.Button(b)
+                local bfs = b.GetFontString and b:GetFontString()
+                if bfs then WSkin.White(bfs) end
+            end
+        end
+        for _, k in ipairs({ "ClubFocusDropdown", "LookingForDropdown", "LanguageDropdown" }) do
+            if rd[k] then WSkin.Dropdown(rd[k]) end
+        end
+        WSkin.ScrollBarsIn(rd)
+    end
     -- Create/Edit Channel dialog. Its fill vanished because it is parented
     -- INSIDE CommunitiesFrame: the recursive art sweeps that strip the
     -- window's decorative Bg-family art reach every dialog living in the
