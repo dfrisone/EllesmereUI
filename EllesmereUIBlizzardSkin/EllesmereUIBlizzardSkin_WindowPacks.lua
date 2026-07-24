@@ -3152,6 +3152,12 @@ local function Skin_Guild()
     if rd and not GetFFD(rd).rdSkinned then
         GetFFD(rd).rdSkinned = true
         SkinGuildPopup(rd)
+        -- Blizzard pins this dialog to the top of the SCREEN (UIParent), so
+        -- it ends up nowhere near a repositioned Communities window. Dock it
+        -- to the panel's right edge instead; nothing re-anchors it at
+        -- runtime. 38 = the 32px side tabs riding that edge + a 6px gap.
+        rd:ClearAllPoints()
+        rd:SetPoint("TOPLEFT", f, "TOPRIGHT", 38, 0)
         for _, k in ipairs({ "Accept", "Cancel" }) do
             local b = rd[k]
             if b and b.GetObjectType and b:GetObjectType() == "Button" then
