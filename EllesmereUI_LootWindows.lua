@@ -27,9 +27,6 @@
 --  so one screenshot taken while the rolls are missing says whether they were
 --  positioned off screen or never shown at all.
 -------------------------------------------------------------------------------
-local EUI = _G.EllesmereUI or {}
-_G.EllesmereUI = EUI
-
 local WINDOWS = {
     { name = "BonusRollFrame",     defY = 240 },
     { name = "GroupLootContainer", defY = 340 },
@@ -42,6 +39,34 @@ local rescued = {}
 local hooked  = {}
 local pending = {}
 local writing = {}
+
+-- Where a window was when we rescued it. The rescue lands within a tick of
+-- the show, so without this the dump would only ever show our own anchor and
+-- the evidence -- what Blizzard anchored it to, and where that put it --
+-- would be gone before anyone could type /euiloot.
+local lastBreak = {}
+
+local function NameOf(obj)
+    if not obj then return "nil" end
+    local ok, name = pcall(obj.GetName, obj)
+    if ok and name then return name end
+    return "<anon>"
+end
+
+local function PointsOf(frame)
+    local ok, n = pcall(frame.GetNumPoints, frame)
+    if not ok or not n or n == 0 then return "NO POINTS" end
+    local parts = {}
+    for i = 1, n do
+        local ok2, p, rel, rp, x, y = pcall(frame.GetPoint, frame, i)
+        if ok2 and p then
+            parts[#parts + 1] = ("%s->%s.%s %d,%d"):format(p, NameOf(rel),
+                tostring(rp), math.floor((x or 0) + 0.5), math.floor((y or 0) + 0.5))
+        end
+    end
+    if #parts == 0 then return "UNREADABLE" end
+    return table.concat(parts, " | ")
+end
 
 -- The live frame, only when repositioning it is safe.
 local function SafeFrame(name)
@@ -88,6 +113,14 @@ local function Check(info)
     -- own the position, including a deliberate park off screen.
     if frame.ignoreFramePositionManager and not rescued[info.name] then return end
     if IsOnScreen(frame) then return end
+    local cx, cy = Centre(frame)
+    lastBreak[info.name] = {
+        points = PointsOf(frame),
+        where  = cx and ("centre=%d,%d"):format(math.floor(cx + 0.5), math.floor(cy + 0.5))
+                    or "rect=UNRESOLVED",
+        combat = InCombatLockdown() and "incombat" or "nocombat",
+        count  = (lastBreak[info.name] and lastBreak[info.name].count or 0) + 1,
+    }
     writing[info.name] = true
     frame.ignoreFramePositionManager = true
     frame:ClearAllPoints()
@@ -142,28 +175,6 @@ end)
 do
     local function P(msg) print("|cff0cd29fEUI Loot|r " .. msg) end
 
-    local function NameOf(obj)
-        if not obj then return "nil" end
-        local ok, name = pcall(obj.GetName, obj)
-        if ok and name then return name end
-        return "<anon>"
-    end
-
-    local function PointsOf(frame)
-        local ok, n = pcall(frame.GetNumPoints, frame)
-        if not ok or not n or n == 0 then return "NO POINTS" end
-        local parts = {}
-        for i = 1, n do
-            local ok2, p, rel, rp, x, y = pcall(frame.GetPoint, frame, i)
-            if ok2 and p then
-                parts[#parts + 1] = ("%s->%s.%s %d,%d"):format(p, NameOf(rel),
-                    tostring(rp), math.floor((x or 0) + 0.5), math.floor((y or 0) + 0.5))
-            end
-        end
-        if #parts == 0 then return "UNREADABLE" end
-        return table.concat(parts, " | ")
-    end
-
     local function Dump(name, tag)
         local frame = _G[name]
         if not frame then P(("%s%s: MISSING"):format(name, tag or "")) return end
@@ -189,6 +200,11 @@ do
             where, tostring(frame.ignoreFramePositionManager),
             tostring(rescued[name] or false), tostring(frame:IsProtected())))
         P("   " .. PointsOf(frame))
+        local br = lastBreak[name]
+        if br then
+            P(("   WAS BROKEN x%d (%s): %s"):format(br.count, br.combat, br.where))
+            P("   WAS ANCHORED " .. br.points)
+        end
     end
 
     SLASH_EUILOOT1 = "/euiloot"
