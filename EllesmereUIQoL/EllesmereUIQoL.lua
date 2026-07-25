@@ -166,10 +166,16 @@ qolFrame:SetScript("OnEvent", function(self)
         local _cacheBuilt = false
         -- Self-tracked in-flight opens, keyed by bag/slot. Set synchronously in
         -- the same tick as UseContainerItem (Lua is single-threaded, so no other
-        -- open pass can slip between the use and this write) and cleared at the
-        -- 0.5s recheck. This -- not Blizzard's isLocked flag, which isn't set
-        -- until a server round-trip completes -- is what stops two overlapping
-        -- passes from double-using the same slot and stranding it greyed.
+        -- open pass can slip between the use and this write). This -- not
+        -- Blizzard's isLocked flag, which isn't set until a server round-trip
+        -- completes -- is what stops two overlapping passes from double-using
+        -- the same slot and stranding it greyed.
+        --
+        -- Each entry is { bag, slot, id, count, t } (identity + issue time) and
+        -- is held until the slot's CONTENTS actually change, not merely until the
+        -- 0.5s recheck: a payout container's server lock routinely outlives that
+        -- window, and releasing on a timer let a later cycle re-use a slot that
+        -- was still resolving. See HasUnresolvedOpen below.
         local _openInProgress = {}
         -- Many payout containers (e.g. Artisan's Consortium Payouts) open a loot
         -- window and linger in the bag until looted. Opening another container --
@@ -242,6 +248,53 @@ qolFrame:SetScript("OnEvent", function(self)
         -- closure is defined. Assigned (not re-declared) further down.
         local ScanAndOpen, RequestScan
         local function SlotKey(bag, slot) return bag * 1000 + slot end
+        -- Identity of what currently occupies a slot, as two comparable values.
+        -- The item GUID is the reliable half (it survives a bag collapse that
+        -- shuffles a same-itemID stack into this slot, which itemID alone
+        -- cannot distinguish); the count is the second half because a partial
+        -- decrement is progress too, and a stack keeps its GUID when it
+        -- shrinks. Returned separately rather than as one concatenated string
+        -- so neither value is ever string-converted -- == on a secret value is
+        -- legal, turning one into text is not. nil id means an empty slot.
+        local function SlotIdentity(bag, slot)
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if not info or not info.itemID then return nil, nil end
+            local base
+            if ItemLocation and C_Item and C_Item.DoesItemExist and C_Item.GetItemGUID then
+                local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
+                if loc and C_Item.DoesItemExist(loc) then base = C_Item.GetItemGUID(loc) end
+            end
+            return base or info.itemID, info.stackCount or 1
+        end
+        -- Ceiling on a single unresolved open. Without it one open that never
+        -- resolves (and whose slot never changes) would block the feature for
+        -- the rest of the session; with it the worst case is a pause.
+        local UNRESOLVED_CEILING = 30
+        -- True while any open is still unresolved, i.e. issued but its slot has
+        -- not changed yet. Doubles as the cleanup pass: entries whose slot HAS
+        -- moved on (resolved) or that have aged out are dropped here, so the
+        -- table cannot accumulate.
+        local function HasUnresolvedOpen()
+            local now = GetTime()
+            local blocked = false
+            for key, rec in pairs(_openInProgress) do
+                if type(rec) ~= "table" then
+                    _openInProgress[key] = nil
+                elseif now - rec.t >= UNRESOLVED_CEILING then
+                    AODbg(("dropping dead open bag=%d slot=%d (%.0fs)"):format(
+                        rec.bag, rec.slot, now - rec.t))
+                    _openInProgress[key] = nil
+                else
+                    local id, count = SlotIdentity(rec.bag, rec.slot)
+                    if id ~= rec.id or count ~= rec.count then
+                        _openInProgress[key] = nil
+                    else
+                        blocked = true
+                    end
+                end
+            end
+            return blocked
+        end
         local function IsEnabled()
             return EllesmereUIDB and EllesmereUIDB.autoOpenContainers == true
         end
@@ -374,6 +427,9 @@ qolFrame:SetScript("OnEvent", function(self)
                 _scanScheduled = false
                 _missedScan = false
                 _cycleGen = _cycleGen + 1
+                -- In-flight records belong to the cycle just killed; keeping
+                -- them would make a re-enable sit out the ceiling for nothing.
+                wipe(_openInProgress)
                 scanFrame:Hide()
             end
         end
@@ -405,6 +461,15 @@ qolFrame:SetScript("OnEvent", function(self)
             -- A cycle is already running; its finish() re-scan will pick up
             -- anything this trigger would have started.
             if _openBusy then return end
+            -- An earlier open is still resolving. Starting a cycle now is the
+            -- exact double-use that strands a slot: the candidate list would be
+            -- built from bag state that has not settled, and the very slot still
+            -- in flight can read as openable again. The resolution's own
+            -- BAG_UPDATE_DELAYED (or LOOT_CLOSED) brings us straight back here.
+            if HasUnresolvedOpen() then
+                AODbg("scan deferred: open still resolving")
+                return
+            end
 
             local toOpen = {}
             for bag = BACKPACK_CONTAINER, NUM_BAG_SLOTS do
@@ -471,18 +536,15 @@ qolFrame:SetScript("OnEvent", function(self)
                     if _openableCache[info.itemID] and not _failedItems[info.itemID] then
                         local prevID = info.itemID
                         local prevCount = info.stackCount or 1
-                        _openInProgress[key] = true
+                        local openID, openCount = SlotIdentity(item.bag, item.slot)
+                        _openInProgress[key] = { bag = item.bag, slot = item.slot,
+                            id = openID, count = openCount, t = GetTime() }
                         _pendingOpen = { bag = item.bag, slot = item.slot,
                             itemID = prevID, count = prevCount }
                         AODbg(("open bag=%d slot=%d item=%d streak=%d"):format(
                             item.bag, item.slot, prevID, openStreak))
                         C_Container.UseContainerItem(item.bag, item.slot)
                         C_Timer.After(0.5, function()
-                            -- Always release the slot flag (global bookkeeping),
-                            -- but a stale-generation chain goes no further: its
-                            -- progress/failure verdicts would race the cycle
-                            -- that replaced it.
-                            _openInProgress[key] = nil
                             -- The open resolved without spawning a loot window
                             -- (LOOT_OPENED would have claimed it by now): drop
                             -- the attribution so an unrelated later loot window
@@ -491,11 +553,19 @@ qolFrame:SetScript("OnEvent", function(self)
                                 and _pendingOpen.slot == item.slot then
                                 _pendingOpen = nil
                             end
-                            if myGen ~= _cycleGen then return end
+                            -- A stale-generation chain goes no further: its
+                            -- progress/failure verdicts would race the cycle
+                            -- that replaced it. Release the slot rather than
+                            -- leaving the newer cycle to wait out the ceiling.
+                            if myGen ~= _cycleGen then
+                                _openInProgress[key] = nil
+                                return
+                            end
                             local after = C_Container.GetContainerItemInfo(item.bag, item.slot)
                             local progressed = (not after) or after.itemID ~= prevID
                                 or (after.stackCount or 1) < prevCount
                             if progressed then
+                                _openInProgress[key] = nil
                                 madeProgress = true
                             elseif after and after.itemID == prevID and not after.isLocked
                                 and not _lootOpen then
@@ -503,8 +573,20 @@ qolFrame:SetScript("OnEvent", function(self)
                                 -- failure. A still-locked slot is in-flight (slow
                                 -- container), not failed, so it isn't cached -- a
                                 -- later cycle retries it.
+                                _openInProgress[key] = nil
                                 _failedItems[prevID] = true
                                 AODbg("genuine fail, item=" .. prevID)
+                            else
+                                -- Neither: the slot is still locked, or its loot
+                                -- window has yet to spawn. 0.5s is simply too
+                                -- short for a slow container, and issuing the
+                                -- next open underneath an unresolved one is what
+                                -- strands a slot greyed until relog. Halt the
+                                -- cycle and keep the in-flight record so no other
+                                -- trigger can start one either; the resolution's
+                                -- own bag event restarts us.
+                                AODbg("still resolving, halting cycle, item=" .. prevID)
+                                return finish()
                             end
                             -- A real open just resolved (progressed or genuine
                             -- fail): pace before advancing. The non-actionable
@@ -598,6 +680,12 @@ qolFrame:SetScript("OnEvent", function(self)
                             and (now.stackCount or 1) >= src.count then
                             _failedItems[src.itemID] = true
                         end
+                        -- That open's loot session is over either way, so it is
+                        -- resolved even when the item is still sitting there
+                        -- (un-lootable, just marked failed). Release it here or
+                        -- the unchanged slot would hold the scan gate shut for
+                        -- the whole ceiling.
+                        _openInProgress[SlotKey(src.bag, src.slot)] = nil
                     end
                     ScanAndOpen(false)
                 end)
