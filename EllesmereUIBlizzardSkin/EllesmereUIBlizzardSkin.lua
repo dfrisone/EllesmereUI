@@ -120,7 +120,7 @@ end
     end
 
     local function _applyConfiguredBorder(owner, prefix, legacySize)
-        if not owner or not EllesmereUI.ApplyBorderStyle then return end
+        if not owner or not EllesmereUI.ApplySecretSafeBorderStyle then return end
         local db = EllesmereUIDB or {}
         local key = db[prefix .. "BorderThickness"]
         local sizes = { none=0, thin=1, normal=2, heavy=3, strong=4 }
@@ -140,7 +140,10 @@ end
         if alpha == nil then alpha = (mode == "custom") and EllesmereUI.RESKIN.BRD_ALPHA or .5 end
         local data = GetFFD(owner)
         if not data.configBorder then
-            data.configBorder = CreateFrame("Frame", nil, owner, "BackdropTemplate")
+            -- Plain Frame, NOT BackdropTemplate: the border renderer below owns
+            -- its own textures, and a BackdropTemplate parented to a tooltip
+            -- runs Blizzard's OnShow arithmetic on the tooltip's width.
+            data.configBorder = CreateFrame("Frame", nil, owner)
             data.configBorder:SetAllPoints(owner)
             data.configBorder:EnableMouse(false)
             if not _PP then _PP = EllesmereUI.PP end
@@ -152,7 +155,12 @@ end
         -- wins the tie, and the border must never bury the glow.
         data.configBorder:SetFrameLevel(db[prefix .. "BorderBehind"]
             and math.max(0, owner:GetFrameLevel() - 1) or (owner:GetFrameLevel() + 4))
-        EllesmereUI.ApplyBorderStyle(data.configBorder, size, color.r, color.g, color.b, alpha,
+        -- Secret-safe renderer: a tooltip/popup can be sized from secret content
+        -- (loot-history rolls in a raid), and the BackdropTemplate path multiplies
+        -- the owner's width -- which throws once the frame carries our taint.
+        -- Same eight edge slices, anchors only, no arithmetic on the owner's size.
+        EllesmereUI.ApplySecretSafeBorderStyle(data.configBorder, data, size,
+            color.r, color.g, color.b, alpha,
             db[prefix .. "BorderTexture"] or "solid", db[prefix .. "BorderOffsetX"],
             db[prefix .. "BorderOffsetY"], db[prefix .. "BorderShiftX"], db[prefix .. "BorderShiftY"],
             "blizzardSkin", key)
