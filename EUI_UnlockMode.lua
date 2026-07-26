@@ -7885,16 +7885,15 @@ local function CreateMover(barKey)
                                 hasChanges = true
                                 return
                             end
-                            -- Seed a grow direction from the anchor side
-                            -- (orientation-aware: cross-axis sides map to CENTER)
-                            -- ONLY for a bar that has never had one set. Growth is
-                            -- independent of anchoring (unlock_grow_independent_v1):
-                            -- the runtime supports every side/direction pair --
-                            -- growing left while anchored to a bar's bottom edge is
-                            -- a supported layout, not a mistake -- so a direction the
-                            -- user picked is never overwritten by anchoring it. The
-                            -- unset markers are the pre-choice defaults: nil for CDM,
-                            -- nil/"up" for action bars.
+                            -- Default grow direction to match the anchor side
+                            -- (orientation-aware: cross-axis sides map to CENTER).
+                            -- CDM bars only seed this when they have never had a
+                            -- direction set: growth is independent of anchoring
+                            -- (unlock_grow_independent_v1) and the runtime supports
+                            -- every side/direction pair, so growing a bar left while
+                            -- anchored to another bar's bottom edge is a layout to
+                            -- preserve, not one to correct. Action bars keep the
+                            -- original always-match behaviour.
                             local isVert = false
                             if pmKey:sub(1, 4) == "CDM_" then
                                 local rawCdmKey = pmKey:sub(5)
@@ -7920,13 +7919,10 @@ local function CreateMover(barKey)
                                 local abCfg = abBars and abBars[pmKey]
                                 if abCfg then
                                     isVert = (abCfg.orientation == "vertical")
-                                    local cur = abCfg.growDirection
-                                    if cur == nil or cur == "up" then
-                                        local map = isVert
-                                            and { TOP = "up", BOTTOM = "down", LEFT = "center", RIGHT = "center" }
-                                            or  { LEFT = "left", RIGHT = "right", TOP = "center", BOTTOM = "center" }
-                                        abCfg.growDirection = map[sideVal] or "center"
-                                    end
+                                    local map = isVert
+                                        and { TOP = "up", BOTTOM = "down", LEFT = "center", RIGHT = "center" }
+                                        or  { LEFT = "left", RIGHT = "right", TOP = "center", BOTTOM = "center" }
+                                    abCfg.growDirection = map[sideVal] or "center"
                                 end
                             end
                             -- Set anchor relationship
