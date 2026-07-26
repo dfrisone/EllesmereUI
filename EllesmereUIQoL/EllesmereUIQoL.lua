@@ -240,6 +240,13 @@ qolFrame:SetScript("OnEvent", function(self)
         -- can try values in one session -- e.g. /run EllesmereUI._aoBurstCooldown = 2
         local OPEN_BURST_SIZE = 4
         local OPEN_BURST_COOLDOWN_DEFAULT = 4
+        -- Churn is re-checked in the tick that actually issues the open, not
+        -- just when the step was scheduled: pacing decided 0.4s ago says
+        -- nothing about the bag traffic happening right now, and the first
+        -- open of a cycle never went through PaceNext at all. Bounded so a
+        -- long mail dump (continuous churn) delays an open instead of
+        -- postponing it forever.
+        local MAX_CHURN_HOLDS = 3
         local function AODbg(...)
             if EllesmereUI._AODEBUG then print("|cff33ff99[AutoOpen]|r", ...) end
         end
@@ -548,7 +555,7 @@ qolFrame:SetScript("OnEvent", function(self)
             end
 
             local PaceNext  -- forward-declared: assigned after step, below
-            local function step(idx)
+            local function step(idx, churnHolds)
                 if myGen ~= _cycleGen then return end
                 if idx > #toOpen then return finish() end
                 if not IsEnabled() or InCombatLockdown() or MerchantOpen() then return finish() end
@@ -565,6 +572,23 @@ qolFrame:SetScript("OnEvent", function(self)
                         return step(idx + 1)
                     end
                     if _openableCache[info.itemID] and not _failedItems[info.itemID] then
+                        -- Hold if the bags are still moving underneath us. A
+                        -- mail attachment lands optimistically and only clears
+                        -- on the server's confirmation; using the container
+                        -- before that lands is what strands the slot greyed,
+                        -- and it takes exactly one open to do it (tester: one
+                        -- bag taken from the mailbox, stranded on the spot).
+                        local holds = churnHolds or 0
+                        if GetTime() - _lastBagChurn < CHURN_SETTLE_WINDOW
+                            and holds < MAX_CHURN_HOLDS then
+                            AODbg(("churn at open time, holding %d/%d"):format(
+                                holds + 1, MAX_CHURN_HOLDS))
+                            C_Timer.After(EllesmereUI._aoChurnDelay
+                                or CHURN_SETTLE_DELAY, function()
+                                step(idx, holds + 1)
+                            end)
+                            return
+                        end
                         local prevID = info.itemID
                         local prevCount = info.stackCount or 1
                         local openID, openCount = SlotIdentity(item.bag, item.slot)
@@ -647,7 +671,7 @@ qolFrame:SetScript("OnEvent", function(self)
                 openStreak = openStreak + 1
                 local extra, why = 0, nil
                 if GetTime() - _lastBagChurn < CHURN_SETTLE_WINDOW then
-                    extra, why = CHURN_SETTLE_DELAY, "churn"
+                    extra, why = EllesmereUI._aoChurnDelay or CHURN_SETTLE_DELAY, "churn"
                 end
                 if openStreak >= OPEN_BURST_SIZE then
                     openStreak = 0
