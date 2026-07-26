@@ -270,6 +270,14 @@ qolFrame:SetScript("OnEvent", function(self)
         -- resolves (and whose slot never changes) would block the feature for
         -- the rest of the session; with it the worst case is a pause.
         local UNRESOLVED_CEILING = 30
+        -- Re-arm delay for a scan that was refused because an open was still
+        -- resolving. Without it resumption depends on ANOTHER bag event
+        -- arriving later: the event that resolves the open is itself consumed
+        -- by the deferral, so the feature can sit idle indefinitely. This is
+        -- also what makes UNRESOLVED_CEILING real, since only HasUnresolvedOpen
+        -- prunes and nothing else would call it.
+        local DEFER_RETRY_DELAY = 1
+        local _deferRetry = false
         -- True while any open is still unresolved, i.e. issued but its slot has
         -- not changed yet. Doubles as the cleanup pass: entries whose slot HAS
         -- moved on (resolved) or that have aged out are dropped here, so the
@@ -294,6 +302,21 @@ qolFrame:SetScript("OnEvent", function(self)
                 end
             end
             return blocked
+        end
+        -- The one outstanding open, if there is exactly one. The design allows
+        -- no more than that, so a loot window with no attribution of its own
+        -- can only belong to this record.
+        local function SoleUnresolvedOpen()
+            local found
+            for _, rec in pairs(_openInProgress) do
+                if type(rec) == "table" then
+                    if found then return nil end
+                    found = rec
+                end
+            end
+            if not found then return nil end
+            return { bag = found.bag, slot = found.slot,
+                itemID = found.itemID, count = found.count }
         end
         local function IsEnabled()
             return EllesmereUIDB and EllesmereUIDB.autoOpenContainers == true
@@ -430,6 +453,7 @@ qolFrame:SetScript("OnEvent", function(self)
                 -- In-flight records belong to the cycle just killed; keeping
                 -- them would make a re-enable sit out the ceiling for nothing.
                 wipe(_openInProgress)
+                _deferRetry = false
                 scanFrame:Hide()
             end
         end
@@ -468,6 +492,13 @@ qolFrame:SetScript("OnEvent", function(self)
             -- BAG_UPDATE_DELAYED (or LOOT_CLOSED) brings us straight back here.
             if HasUnresolvedOpen() then
                 AODbg("scan deferred: open still resolving")
+                if not _deferRetry then
+                    _deferRetry = true
+                    C_Timer.After(DEFER_RETRY_DELAY, function()
+                        _deferRetry = false
+                        ScanAndOpen(false)
+                    end)
+                end
                 return
             end
 
@@ -538,7 +569,8 @@ qolFrame:SetScript("OnEvent", function(self)
                         local prevCount = info.stackCount or 1
                         local openID, openCount = SlotIdentity(item.bag, item.slot)
                         _openInProgress[key] = { bag = item.bag, slot = item.slot,
-                            id = openID, count = openCount, t = GetTime() }
+                            id = openID, count = openCount, itemID = prevID,
+                            t = GetTime() }
                         _pendingOpen = { bag = item.bag, slot = item.slot,
                             itemID = prevID, count = prevCount }
                         AODbg(("open bag=%d slot=%d item=%d streak=%d"):format(
@@ -656,7 +688,12 @@ qolFrame:SetScript("OnEvent", function(self)
                 _lootOpen = true
                 -- Claim the window for the container we just used (if any) so
                 -- the LOOT_CLOSED verdict knows which slot to re-examine.
-                _lootSource = _pendingOpen
+                -- A window that takes longer than the 0.5s recheck to spawn has
+                -- had its attribution dropped by then, so fall back to the
+                -- outstanding open: that slot is precisely the one still
+                -- waiting for a verdict, and without this its record survives
+                -- LOOT_CLOSED and holds the scan gate shut.
+                _lootSource = _pendingOpen or SoleUnresolvedOpen()
                 _pendingOpen = nil
                 return
             end
