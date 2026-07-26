@@ -7885,8 +7885,16 @@ local function CreateMover(barKey)
                                 hasChanges = true
                                 return
                             end
-                            -- Default grow direction to match the anchor side
+                            -- Seed a grow direction from the anchor side
                             -- (orientation-aware: cross-axis sides map to CENTER)
+                            -- ONLY for a bar that has never had one set. Growth is
+                            -- independent of anchoring (unlock_grow_independent_v1):
+                            -- the runtime supports every side/direction pair --
+                            -- growing left while anchored to a bar's bottom edge is
+                            -- a supported layout, not a mistake -- so a direction the
+                            -- user picked is never overwritten by anchoring it. The
+                            -- unset markers are the pre-choice defaults: nil for CDM,
+                            -- nil/"up" for action bars.
                             local isVert = false
                             if pmKey:sub(1, 4) == "CDM_" then
                                 local rawCdmKey = pmKey:sub(5)
@@ -7896,10 +7904,12 @@ local function CreateMover(barKey)
                                     for _, bar in ipairs(cdmBars.bars) do
                                         if bar.key == rawCdmKey then
                                             isVert = bar.verticalOrientation == true
-                                            local map = isVert
-                                                and { TOP = "UP", BOTTOM = "DOWN", LEFT = "CENTER", RIGHT = "CENTER" }
-                                                or  { LEFT = "LEFT", RIGHT = "RIGHT", TOP = "CENTER", BOTTOM = "CENTER" }
-                                            bar.growDirection = map[sideVal] or "CENTER"
+                                            if bar.growDirection == nil then
+                                                local map = isVert
+                                                    and { TOP = "UP", BOTTOM = "DOWN", LEFT = "CENTER", RIGHT = "CENTER" }
+                                                    or  { LEFT = "LEFT", RIGHT = "RIGHT", TOP = "CENTER", BOTTOM = "CENTER" }
+                                                bar.growDirection = map[sideVal] or "CENTER"
+                                            end
                                             break
                                         end
                                     end
@@ -7910,10 +7920,13 @@ local function CreateMover(barKey)
                                 local abCfg = abBars and abBars[pmKey]
                                 if abCfg then
                                     isVert = (abCfg.orientation == "vertical")
-                                    local map = isVert
-                                        and { TOP = "up", BOTTOM = "down", LEFT = "center", RIGHT = "center" }
-                                        or  { LEFT = "left", RIGHT = "right", TOP = "center", BOTTOM = "center" }
-                                    abCfg.growDirection = map[sideVal] or "center"
+                                    local cur = abCfg.growDirection
+                                    if cur == nil or cur == "up" then
+                                        local map = isVert
+                                            and { TOP = "up", BOTTOM = "down", LEFT = "center", RIGHT = "center" }
+                                            or  { LEFT = "left", RIGHT = "right", TOP = "center", BOTTOM = "center" }
+                                        abCfg.growDirection = map[sideVal] or "center"
+                                    end
                                 end
                             end
                             -- Set anchor relationship
