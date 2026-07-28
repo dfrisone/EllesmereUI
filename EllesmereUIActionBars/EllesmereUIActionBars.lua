@@ -3021,7 +3021,21 @@ do
                 local val = 0
                 if active then
                     if useRealCurve then
-                        if durObj.EvaluateTotalDuration and desatCurveReal then
+                        -- Charge spells / items: grey only when the main
+                        -- cooldown is a REAL cooldown (the recharge mirror at
+                        -- 0 charges), not the GCD a banked-charge press shows.
+                        -- isActive/isOnGCD are the same plain booleans the
+                        -- non-charge branch below has relied on for months.
+                        -- The old total-duration step (>= 1.6s = real) assumed
+                        -- the main duration object is never recharge-length
+                        -- while a charge is banked; a hardcast charge spell on
+                        -- the 12.1 client broke that (field report: Mind Blast
+                        -- stuck grey with a charge available). Belt: fall back
+                        -- to the duration classification if isOnGCD is secret.
+                        local onGCD = cdInfo.isOnGCD
+                        if not (issecretvalue and issecretvalue(onGCD)) then
+                            val = (not onGCD) and 1 or 0
+                        elseif durObj.EvaluateTotalDuration and desatCurveReal then
                             val = durObj:EvaluateTotalDuration(desatCurveReal, 0)
                         elseif durObj.EvaluateRemainingDuration and desatCurveReal then
                             -- Client without the total evaluator: remaining is
@@ -3036,15 +3050,21 @@ do
                 end
                 -- val may be SECRET: never compare it; SetDesaturation
                 -- accepts secret numbers.
+                if ns._desatWatch and action == ns._desatWatch then
+                    ns.DesatProbe(action, cdInfo, durObj, chargeInfo, useRealCurve, val)
+                end
                 icon:SetDesaturation(val or 0)
             end
             if alphaOn then
                 if active then
-                    if useRealCurve and durObj.EvaluateTotalDuration then
-                        -- Same total-duration classification as desat. Also
-                        -- fixes banked-charge spells dimming during the GCD:
-                        -- the old IsZero gate had no real-vs-GCD test for the
-                        -- charge/item class.
+                    local onGCD = cdInfo.isOnGCD
+                    if useRealCurve and not (issecretvalue and issecretvalue(onGCD)) then
+                        -- Same plain-boolean classification as desat above
+                        -- (and the same broken total-duration assumption when
+                        -- it used the curve).
+                        icon:SetAlpha((not onGCD) and (cdAlpha / 100) or 1)
+                    elseif useRealCurve and durObj.EvaluateTotalDuration then
+                        -- Secret isOnGCD belt: total-duration classification.
                         local curve = GetCdAlphaCurve(cdAlpha)
                         if curve then
                             icon:SetAlpha(durObj:EvaluateTotalDuration(curve, 1) or 1)
@@ -3069,6 +3089,57 @@ do
         EAB._RefreshCooldownVisuals = function(btn)
             if btn and btn.GetAttribute then RefreshCooldownVisuals(btn) end
         end
+        -- /euidesat: trace the desat classification for one button (hover the
+        -- button, run the command; run again to stop). Change-only prints, and
+        -- every value goes through the issecretvalue belt so instance combat
+        -- cannot throw. On ns: file is at the 200-local cap.
+        function ns.DesatProbe(action, cdInfo, durObj, chargeInfo, useRealCurve, val)
+            local function s(v)
+                if issecretvalue and issecretvalue(v) then return "secret" end
+                return tostring(v)
+            end
+            local line = string.format(
+                "EUIdesat[%d] active=%s onGCD=%s dur=%s ch=%s/%s chActive=%s real=%s val=%s",
+                action,
+                s(cdInfo and cdInfo.isActive), s(cdInfo and cdInfo.isOnGCD),
+                durObj and "y" or "n",
+                s(chargeInfo and chargeInfo.currentCharges),
+                s(chargeInfo and chargeInfo.maxCharges),
+                s(chargeInfo and chargeInfo.isActive),
+                tostring(useRealCurve and true or false), s(val))
+            if line ~= ns._desatLastLine then
+                ns._desatLastLine = line
+                print(line)
+            end
+        end
+        SlashCmdList["EUIDESAT"] = function()
+            if ns._desatWatch then
+                ns._desatWatch = nil
+                ns._desatLastLine = nil
+                print("EUIdesat: off")
+                return
+            end
+            for _, info in ipairs(BAR_CONFIG) do
+                if not info.isStance and not info.isPetBar then
+                    local buttons = barButtons[info.key]
+                    if buttons then
+                        for _, btn in ipairs(buttons) do
+                            if btn:IsVisible() and btn:IsMouseOver() then
+                                local action = btn:GetAttribute("action")
+                                if action then
+                                    ns._desatWatch = action
+                                    ns._desatLastLine = nil
+                                    print("EUIdesat: watching action slot " .. action)
+                                    return
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            print("EUIdesat: hover an action button first")
+        end
+        SLASH_EUIDESAT1 = "/euidesat"
         dispatcher:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
         -- Dirty-trigger only (early return in the handler): a player cast is
         -- the reliable herald of new cooldowns, so it re-arms the heartbeat
