@@ -2822,6 +2822,40 @@ function ns.EnsureChargeCooldown(btn)
     return chargeCd
 end
 
+-- Recharge-number visibility for one charge cooldown. Extends the WoW "Show
+-- numbers for cooldowns" setting to recharging charge spells, but only while
+-- the MAIN cooldown is idle or GCD-only: at 0 charges the main cooldown
+-- mirrors the same recharge and shows its own countdown, and Blizzard hides
+-- charge-cooldown numbers unconditionally precisely because of that overlap.
+-- Un-hiding blindly stacked two countdowns on the button (the 8.6.4 "double
+-- cooldown text" report: the recharge number in Blizzard's default font over
+-- the main number in the user's cooldown font). cdInfo.isActive/isOnGCD are
+-- plain booleans, so no secret comparisons. Cached per chargeCd so repeat
+-- calls are near-free. On ns: file is at the 200-local cap.
+function ns.UpdateChargeNumbersVisibility(btn, chargeCd, cdInfo)
+    if not (chargeCd and chargeCd.SetHideCountdownNumbers) then return end
+    local hideNums = (EAB.db.profile.showChargeRechargeNumbers == false)
+        or (not GetCVarBool("countdownForCooldowns"))
+        or (cdInfo and cdInfo.isActive and not cdInfo.isOnGCD and true)
+        or false
+    local cfd = EFD(chargeCd)
+    if cfd.rechargeNumbersHidden ~= hideNums then
+        cfd.rechargeNumbersHidden = hideNums
+        chargeCd:SetHideCountdownNumbers(hideNums)
+        -- Lazily created charge cooldowns (EnsureChargeCooldown) never pass
+        -- through the login-time font application, so their countdown would
+        -- render in Blizzard's default font. Queue the font patch on un-hide;
+        -- the FontString exists by the time the deferred flush runs.
+        if not hideNums and not cfd.cdFontStamp then
+            EAB_VTABLE.CooldownFonts.pending[btn] = true
+            if not EAB_VTABLE.CooldownFonts.timerScheduled then
+                EAB_VTABLE.CooldownFonts.timerScheduled = true
+                C_Timer_After(0, EAB_VTABLE.CooldownFonts.FlushPatch)
+            end
+        end
+    end
+end
+
 -- Full per-button visual refresh for slot CONTENT changes (spec swap,
 -- drag-drop: slot numbers stay, contents change -- force-less UpdateAction
 -- short-circuits on that exact case).
@@ -3367,22 +3401,10 @@ do
                                             chargeCd = ns.EnsureChargeCooldown(btn)
                                         end
                                         if chargeCd then
-                                            -- Extend the WoW "Show numbers for cooldowns" setting to
-                                            -- recharging charge spells. Blizzard hides the countdown
-                                            -- number on the charge (recharge) cooldown unconditionally,
-                                            -- so a number normally only shows at 0 charges (the main
-                                            -- cooldown). Mirror the "Show numbers for cooldowns" CVar
-                                            -- here: un-hide the recharge timer only when the setting is
-                                            -- on, hide it when off. Cached per chargeCd so we only call
-                                            -- on a state change; CVAR_UPDATE re-applies it live on toggle.
-                                            if chargeCd.SetHideCountdownNumbers then
-                                                local hideNums = (EAB.db.profile.showChargeRechargeNumbers == false)
-                                                    or (not GetCVarBool("countdownForCooldowns"))
-                                                if EFD(chargeCd).rechargeNumbersHidden ~= hideNums then
-                                                    EFD(chargeCd).rechargeNumbersHidden = hideNums
-                                                    chargeCd:SetHideCountdownNumbers(hideNums)
-                                                end
-                                            end
+                                            -- Feature mirror + 0-charges occlusion rule; see
+                                            -- ns.UpdateChargeNumbersVisibility. cdInfo is fresh
+                                            -- this walk (fetched above, not generation-gated).
+                                            ns.UpdateChargeNumbersVisibility(btn, chargeCd, cdInfo)
                                             if chargeInfo.isActive then
                                                 local chargeDur = C_ActionBar.GetActionChargeDuration(action)
                                                 if chargeDur then chargeCd:SetCooldownFromDurationObject(chargeDur) end
@@ -3449,15 +3471,15 @@ do
                             -- "Show numbers for cooldowns" toggled: re-apply the recharge-number
                             -- visibility to every charge cooldown immediately (the main cooldown
                             -- numbers update natively; this keeps the recharge timer consistent).
-                            -- Cached per chargeCd, so unrelated CVAR_UPDATEs are near-free.
-                            local hideNums = (EAB.db.profile.showChargeRechargeNumbers == false)
-                                or (not GetCVarBool("countdownForCooldowns"))
+                            -- Only buttons that already own a charge cooldown pay the per-button
+                            -- fetch, so unrelated CVAR_UPDATEs stay near-free.
                             for _, btn in ipairs(btns) do
                                 local chargeCd = btn.chargeCooldown
-                                if chargeCd and chargeCd.SetHideCountdownNumbers
-                                   and EFD(chargeCd).rechargeNumbersHidden ~= hideNums then
-                                    EFD(chargeCd).rechargeNumbersHidden = hideNums
-                                    chargeCd:SetHideCountdownNumbers(hideNums)
+                                if chargeCd then
+                                    local action = btn:GetAttribute("action")
+                                    local cdInfo = action and HasAction(action)
+                                        and C_ActionBar.GetActionCooldown(action) or nil
+                                    ns.UpdateChargeNumbersVisibility(btn, chargeCd, cdInfo)
                                 end
                             end
                         elseif event == "ACTIONBAR_UPDATE_USABLE" then
@@ -3531,6 +3553,11 @@ do
                                             chargeCd = ns.EnsureChargeCooldown(btn)
                                         end
                                         if chargeCd then
+                                            -- Off-GCD charge spends can hit 0 charges without a
+                                            -- COOLDOWN walk in between; keep the occlusion rule
+                                            -- current from the charge tick too.
+                                            ns.UpdateChargeNumbersVisibility(btn, chargeCd,
+                                                C_ActionBar.GetActionCooldown(action))
                                             if chargeInfo.isActive then
                                                 local chargeDur = C_ActionBar.GetActionChargeDuration(action)
                                                 if chargeDur then chargeCd:SetCooldownFromDurationObject(chargeDur) end
@@ -5680,8 +5707,12 @@ function EAB_VTABLE.CooldownFonts.ApplyToButton(btn, fontPath, cdSize, cdOX, cdO
     if not btn then return end
 
     local applied = EAB_VTABLE.CooldownFonts.ApplyToFrame(btn.cooldown, fontPath, cdSize, cdOX, cdOY, cdColor)
-    EAB_VTABLE.CooldownFonts.ApplyToFrame(btn.chargeCooldown, fontPath, cdSize, cdOX, cdOY, cdColor)
-    if applied then return end
+    -- Retry when EITHER frame failed: the charge cooldown's FontString is
+    -- created later than the main one's, and the old main-only gate left the
+    -- recharge countdown in Blizzard's default font permanently.
+    local appliedCharge = (not btn.chargeCooldown)
+        or EAB_VTABLE.CooldownFonts.ApplyToFrame(btn.chargeCooldown, fontPath, cdSize, cdOX, cdOY, cdColor)
+    if applied and appliedCharge then return end
 
     -- Some cooldown frames create their countdown FontString lazily on the
     -- first update after SetCooldown(). Retry once on the next frame.
@@ -8736,9 +8767,11 @@ local function HookButtonCooldownEdge(btn)
             end
         end
         -- Cooldown font patch (shared hook to avoid double hooksecurefunc).
-        -- Skip if fonts were already applied to this button's cooldown frame
-        -- (stamp is set by ApplyToFrame and cleared on settings change).
-        if not (btn.cooldown and EFD(btn.cooldown).cdFontStamp) then
+        -- Skip only when BOTH cooldown frames carry the applied stamp (set by
+        -- ApplyToFrame, cleared on settings change); the charge cooldown can
+        -- appear after the main one is already stamped.
+        if not (btn.cooldown and EFD(btn.cooldown).cdFontStamp)
+           or (btn.chargeCooldown and not EFD(btn.chargeCooldown).cdFontStamp) then
             EAB_VTABLE.CooldownFonts.pending[btn] = true
             if not EAB_VTABLE.CooldownFonts.timerScheduled then
                 EAB_VTABLE.CooldownFonts.timerScheduled = true
@@ -8897,18 +8930,17 @@ end
 -- "Show Cooldown Numbers" cog toggle flips so the change is immediate (a DB
 -- toggle does not fire CVAR_UPDATE). Cached per chargeCd, so it is near-free.
 function EAB:RefreshChargeRechargeNumbers()
-    local hideNums = (self.db.profile.showChargeRechargeNumbers == false)
-        or (not GetCVarBool("countdownForCooldowns"))
     for _, info in ipairs(BAR_CONFIG) do
         if not info.isStance and not info.isPetBar then
             local buttons = barButtons[info.key]
             if buttons then
                 for _, btn in ipairs(buttons) do
                     local chargeCd = btn.chargeCooldown
-                    if chargeCd and chargeCd.SetHideCountdownNumbers
-                       and EFD(chargeCd).rechargeNumbersHidden ~= hideNums then
-                        EFD(chargeCd).rechargeNumbersHidden = hideNums
-                        chargeCd:SetHideCountdownNumbers(hideNums)
+                    if chargeCd then
+                        local action = btn:GetAttribute("action")
+                        local cdInfo = action and HasAction(action)
+                            and C_ActionBar.GetActionCooldown(action) or nil
+                        ns.UpdateChargeNumbersVisibility(btn, chargeCd, cdInfo)
                     end
                 end
             end
