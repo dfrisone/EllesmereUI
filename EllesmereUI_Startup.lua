@@ -169,17 +169,22 @@ end
 --  Only setups whose EUI scale differs from the CVar scale drift, which is
 --  why not every user sees it.
 --
---  Fix, two layers:
---    1. Re-assert the (correct) chat-cache position after the engine cache
---       has had its turn: deferred pass at login and on the chat-window
---       events whose handlers re-run Blizzard's restore (undocking fires
---       UPDATE_CHAT_WINDOWS, which restores every undocked window).
---    2. SetUserPlaced(false) on undocked chat windows so the engine stops
---       caching them at all -- persistence belongs to the chat-cache ratios.
---       Blizzard's restore re-flags true on every run and drag-stop re-flags
---       via StopMovingOrSizing, so this is re-applied from the same deferred
---       pass and from a deferred hook after FCF_SavePositionAndDimensions
---       (hook body only schedules; repo precedent: FCF_Close hook).
+--  Fix: re-assert the (correct) chat-cache position after the engine cache
+--  has had its turn -- a deferred pass at login (the only moment the engine
+--  misplaces anything) and on the chat-window events whose handlers re-run
+--  Blizzard's restore (undocking fires UPDATE_CHAT_WINDOWS, which restores
+--  every undocked window). The engine may still cache the frames at logout;
+--  its one wrong placement per login is corrected by the pass immediately.
+--
+--  Deliberately NOT part of the fix (both shipped briefly and were pulled
+--  after a tester hit the ChatFrameEditBox secret SetText taint error, the
+--  documented failure signature of widened taint in the FCF/chat family):
+--    - hooksecurefunc("FCF_SavePositionAndDimensions"): the hook body runs
+--      inside FCF_StopDragging's execution and taints its continuation
+--      (MOVING_CHATFRAME write). Chat-module rule: no synchronous FCF hooks.
+--    - SetUserPlaced(false) on the chat frames: insecure write to Blizzard
+--      frame state consumed by the engine/secure code; not needed, since the
+--      login reassert already corrects the engine's placement.
 -------------------------------------------------------------------------------
 do
     local function ReassertUndockedPositions()
@@ -196,7 +201,6 @@ do
                     cf:ClearAllPoints()
                     cf:SetPoint(point, UIParent, point, xOff * W, yOff * H)
                 end
-                if cf.SetUserPlaced then cf:SetUserPlaced(false) end
             end
         end
     end
@@ -233,20 +237,6 @@ do
         end
     end)
 
-    -- Drag-stop re-flags user-placed via StopMovingOrSizing; clear it again
-    -- so the engine never re-adopts the frame. The ratios Blizzard just
-    -- saved are already correct, nothing to rewrite.
-    if FCF_SavePositionAndDimensions then
-        hooksecurefunc("FCF_SavePositionAndDimensions", function(chatFrame)
-            C_Timer.After(0, function()
-                if chatFrame and chatFrame.SetUserPlaced and chatFrame ~= _G.ChatFrame1
-                   and not chatFrame.isDocked and not chatFrame.isTemporary then
-                    chatFrame:SetUserPlaced(false)
-                end
-            end)
-        end)
-    end
-
     -- Tester diagnostics: dump both coordinate spaces, each saved position,
     -- and each undocked window's LIVE anchors and rect. Field lesson from the
     -- first version: `local a, b, c = Fn and Fn(i)` truncates multiple
@@ -254,7 +244,7 @@ do
     local function DumpChatWindows(tag)
         local W, H = GetScreenWidth(), GetScreenHeight()
         local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
-        print(("EUI chatfix v3: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
+        print(("EUI chatfix v4: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
             :format(W or 0, H or 0, pw or 0, ph or 0,
                 UIParent:GetScale() or 0, tag or ""))
         for i = 2, NUM_CHAT_WINDOWS or 10 do
