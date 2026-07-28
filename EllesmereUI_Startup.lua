@@ -149,6 +149,66 @@ do
     end)
 end
 
+-------------------------------------------------------------------------------
+--  Undocked chat window drift
+--
+--  Undocked chat windows crept toward the bottom-left corner on every reload
+--  and login. Blizzard saves such a window as a screen-size RATIO
+--  (FCF_SavePositionAndDimensions) and restores it as
+--  ratio * GetScreenWidth/Height (FCF_RestorePositionAndDimensions). Both are
+--  correct on their own, but UIParent's size in UI units is 768 / scale, so it
+--  depends on which scale is in effect when the restore runs, and Blizzard's
+--  restore runs during login while the CVar scale is still active, before we
+--  apply the saved pixel-perfect scale at PLAYER_LOGIN. Measured on a 2560x1440
+--  reporter with our scale 0.5333 (UIParent 1440 tall) against a CVar scale of
+--  0.64 (1200 tall):
+--      correct  0.1566 * 1440 = 225.5   (where the window was dropped)
+--      restored 0.1566 * 1200 = 187.9   (where it reappeared)
+--  We then rescale UIParent to the 1440 space while the frame keeps that
+--  numeric 188 offset, which now points lower, and the next save records the
+--  new spot. Only setups whose EllesmereUI scale differs from the CVar scale
+--  are affected, which is why it does not reproduce for everyone.
+--
+--  Fix: recompute the position once per login, after both Blizzard's restore
+--  and our scale have settled, using Blizzard's own formula against the
+--  settled space. Applying our scale earlier instead does not work: Blizzard
+--  applies the CVar scale later in login and overwrites it.
+--
+--  Kept deliberately narrow, because anchoring a Blizzard chat frame from
+--  insecure code is a known taint hazard for this module (see the ledger in
+--  EllesmereUIChat.lua): one deferred pass per login, then the handler
+--  unregisters. No hooks on Blizzard chat functions, no writes to Blizzard
+--  frame state, and nothing that runs during a session, where Blizzard's own
+--  restore is already correct.
+-------------------------------------------------------------------------------
+do
+    local function ReassertUndockedPositions()
+        if not GetChatWindowSavedPosition then return end
+        local W, H = GetScreenWidth(), GetScreenHeight()
+        if not (W and H) then return end
+        for i = 2, NUM_CHAT_WINDOWS or 10 do
+            local cf = _G["ChatFrame" .. i]
+            if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
+                local point, xOff, yOff = GetChatWindowSavedPosition(i)
+                if point and xOff and yOff then
+                    cf:ClearAllPoints()
+                    cf:SetPoint(point, UIParent, point, xOff * W, yOff * H)
+                end
+            end
+        end
+    end
+
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    f:SetScript("OnEvent", function(self, _, initialLogin, reloadingUi)
+        if not (initialLogin or reloadingUi) then return end
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        C_Timer.After(0, ReassertUndockedPositions)
+        -- Belt for slow loads, still inside the login window.
+        C_Timer.After(2, ReassertUndockedPositions)
+    end)
+end
+
 -- Apply the saved combat text font immediately at file scope.
 -- DAMAGE_TEXT_FONT must be set before the engine caches it at login.
 -- CombatTextFont may not exist yet here, so we also hook ADDON_LOADED
