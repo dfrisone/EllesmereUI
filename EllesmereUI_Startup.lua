@@ -86,6 +86,14 @@ do
                 -- the saved value exists, so applying it here closes the
                 -- window: the engine decodes with the scale that encoded.
                 -- The PLAYER_LOGIN apply below stays as an idempotent belt.
+                --
+                -- FIELD RESULT (2026-07-28): this did NOT stop the drift.
+                -- Blizzard applies the user's CVar scale during login AFTER
+                -- addon ADDON_LOADED (this file's own PLAYER_ENTERING_WORLD
+                -- comment says so), so the chat restore still ran at the CVar
+                -- scale. Kept anyway: it is idempotent, costs nothing, and
+                -- closes the same window for anything restored before
+                -- Blizzard's CVar apply. The chat fix is below.
                 ApplyScaleSafe(EllesmereUIDB.ppUIScale)
             end
 
@@ -165,49 +173,69 @@ end
 -------------------------------------------------------------------------------
 --  Undocked chat window position fix
 --
---  Root cause (proven by field /euichatfix drift capture, 2026-07-28): the
---  ENGINE's user-placed layout cache, not Blizzard's chat-cache ratios. The
---  chat-cache save/restore (FCF_SavePositionAndDimensions / _Restore...) is
---  self-consistent -- GetScreenWidth/Height track UIParent's actual scale, so
---  its ratios always decode to the exact dropped position. But the restore
---  marks the frame SetUserPlaced(true), so the engine ALSO persists it in
---  layout-local: at logout it converts the anchor offsets out of UIParent
---  units using UIParent's CURRENT scale (our pixel-perfect SetScale value),
---  and at next login it converts back BEFORE our PLAYER_LOGIN SetScale runs,
---  i.e. with Blizzard's CVar scale -- and it applies AFTER the correct
---  chat-cache restore, so it is the last writer. Net effect: both offsets
---  multiply by (euiScale / cvarScale) every session. Field capture: CF4
---  offsets (9.9, 225.6) -> (8.2, 188.0), exactly x0.8333 = 0.5333/0.64, a
---  geometric creep toward the bottom-left corner on every reload or login.
---  Only setups whose EUI scale differs from the CVar scale drift, which is
---  why not every user sees it.
+--  Root cause, arithmetically pinned by the field drift capture (2026-07-28).
+--  UIParent's height in UI units is always 768 / scale, so it is 1440 at our
+--  pixel-perfect 0.5333 but 1200 at the tester's CVar scale 0.64. Blizzard
+--  stores an undocked window's position as a screen-height RATIO and restores
+--  it as ratio * GetScreenHeight(). Blizzard applies the CVar scale during
+--  login and we apply ours at PLAYER_LOGIN, AFTER the chat restore has
+--  already run -- so the restore resolves the ratio against the 1200 space:
+--      correct : 0.1566 * 1440 = 225.5   (where the user dropped it)
+--      restored: 0.1566 * 1200 = 187.9   (where it reappeared)
+--  Then we rescale UIParent to the 1440 space and the frame keeps that
+--  numeric 188 offset, which now points somewhere lower. Each session
+--  repeats it, so the window creeps toward the bottom-left by
+--  (cvarScale height / our height) per login. Only setups whose EUI scale
+--  differs from the CVar scale drift, which is why not everyone sees it.
 --
---  Fix: NONE of it lives here. The asymmetry is closed at its source by
---  applying our saved UI scale at ADDON_LOADED (see the scale block above)
---  instead of only at PLAYER_LOGIN, so the engine decodes its cache with the
---  same scale that encoded it and no frame is ever misplaced.
+--  Fixing the scale TIMING does not work: applying our scale at ADDON_LOADED
+--  (kept above, harmless) is overwritten by Blizzard's own CVar apply later
+--  in login, so the restore still runs at the CVar scale. The position has
+--  to be recomputed after both the restore and our final scale, which is what
+--  this pass does -- Blizzard's own formula, against the settled space.
 --
---  This block used to re-anchor the windows after the fact. Every version of
---  that (v1-v5) called ClearAllPoints/SetPoint on Blizzard chat frames from
---  insecure code, which is the injector class this module's own bisect ledger
---  convicted: anchor ties into the chat rect web poison the secure dock pass,
---  which re-fires tainted on whisper opens and blocks Blizzard's own secret
---  values (field: ChatFrameEditBox.lua:360 SetText, repeating every frame
---  because the failed call skips the setText=0 that would stop it). Fixing
---  the scale timing needs no chat frame at all, so the correction pass, the
---  FCF_SavePositionAndDimensions hook and the SetUserPlaced writes are all
---  gone. DO NOT reintroduce anchoring here.
---
---  What remains: read-only diagnostics (/euichatfix and the drift catcher).
---  They print and compare; they never write to a chat frame.
+--  TAINT NOTE -- anchoring a Blizzard chat frame from insecure code is the
+--  injector class this module's bisect ledger convicted, so this pass was
+--  suspected of causing the field ChatFrameEditBox.lua:360 secret-SetText
+--  error and was removed entirely in v6. The error reproduced on v6, a build
+--  whose only chat contact is read-only getters -- so the pass is NOT the
+--  vector and is restored here. That error is tracked separately as a
+--  pre-existing chat-module issue. Exposure is still kept minimal: ONE
+--  deferred pass per login, never during a session, no hooks, and nothing
+--  written to Blizzard frame state (SetPoint only). Do not add the
+--  FCF_SavePositionAndDimensions hook, the SetUserPlaced writes, or the
+--  UPDATE_CHAT_WINDOWS registration back -- all three were separately
+--  pulled, none of them bought anything.
 -------------------------------------------------------------------------------
 do
-    -- Obsolete v2 migration flag; the rebase it gated was a provable no-op.
-    local cleanupFrame = CreateFrame("Frame")
-    cleanupFrame:RegisterEvent("PLAYER_LOGIN")
-    cleanupFrame:SetScript("OnEvent", function(self)
-        self:UnregisterEvent("PLAYER_LOGIN")
+    local function ReassertUndockedPositions()
+        if not GetChatWindowSavedPosition then return end
+        local W, H = GetScreenWidth(), GetScreenHeight()
+        if not (W and H) then return end
+        for i = 2, NUM_CHAT_WINDOWS or 10 do
+            local cf = _G["ChatFrame" .. i]
+            if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
+                local point, xOff, yOff = GetChatWindowSavedPosition(i)
+                if point and xOff and yOff then
+                    -- Blizzard's own restore formula, re-run now that the
+                    -- scale (and therefore GetScreenWidth/Height) has settled.
+                    cf:ClearAllPoints()
+                    cf:SetPoint(point, UIParent, point, xOff * W, yOff * H)
+                end
+            end
+        end
+    end
+
+    local fixFrame = CreateFrame("Frame")
+    fixFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    fixFrame:SetScript("OnEvent", function(self, _, initialLogin, reloadingUi)
+        if not (initialLogin or reloadingUi) then return end
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        -- Obsolete v2 migration flag; the rebase it gated was a no-op.
         if EllesmereUIDB then EllesmereUIDB.chatPosRebased = nil end
+        C_Timer.After(0, ReassertUndockedPositions)
+        -- Belt for slow loads, still inside the login window.
+        C_Timer.After(2, ReassertUndockedPositions)
     end)
 
     -- Tester diagnostics: dump both coordinate spaces, each saved position,
@@ -217,7 +245,7 @@ do
     local function DumpChatWindows(tag)
         local W, H = GetScreenWidth(), GetScreenHeight()
         local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
-        print(("EUI chatfix v6: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
+        print(("EUI chatfix v7: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
             :format(W or 0, H or 0, pw or 0, ph or 0,
                 UIParent:GetScale() or 0, tag or ""))
         for i = 2, NUM_CHAT_WINDOWS or 10 do
