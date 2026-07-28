@@ -3092,11 +3092,45 @@ local function SkinEditBox(cf)
         if not CFD(eb).history then
             CFD(eb).history = {}
             CFD(eb).histIdx = 0
-            hooksecurefunc(eb, "AddHistoryLine", function(self, text)
+            -- Sent-line capture for the recall history above.
+            --
+            -- This used to be hooksecurefunc(eb, "AddHistoryLine", ...), which
+            -- reads as a function hook but is really a FIELD WRITE onto the
+            -- Blizzard edit box: hooksecurefunc(object, "method", fn) assigns
+            -- object.method = wrapper. That is exactly what this file's header
+            -- forbids ("All custom state is stored here instead of writing
+            -- properties onto Blizzard's chat frame tables (which taints them
+            -- ...)"), and the frame it wrote to is ChatFrame1EditBox -- the
+            -- frame in the field report where Blizzard's own
+            -- ChatFrameEditBoxMixin:OnUpdate is blocked from doing
+            -- SetText(self.text) on a secret whisper target. Secure code that
+            -- reads a tainted field runs tainted from that point on, and
+            -- Blizzard calls self:AddHistoryLine(text) from inside its send
+            -- path, so the tainted read lands in the middle of the chat
+            -- machinery rather than in our own execution.
+            --
+            -- Script hooks carry no such field write (they register C-side)
+            -- and this module's bisect ladder already cleared eb HookScripts.
+            -- OnEnterPressed alone is not enough: Blizzard's own handler runs
+            -- first and clears the box, so the text is shadowed on change and
+            -- committed on send.
+            eb:HookScript("OnTextChanged", function(self)
+                local t = self:GetText()
+                if issecretvalue and issecretvalue(t) then
+                    CFD(self).pendingLine = nil
+                    return
+                end
+                CFD(self).pendingLine = t
+            end)
+            eb:HookScript("OnEnterPressed", function(self)
+                local d = CFD(self)
+                local text = d.pendingLine
+                d.pendingLine = nil
+                if not text or text == "" then return end
                 if issecretvalue and issecretvalue(text) then return end
-                local cmd = text and text:match("^%s*(/%S+)")
+                local cmd = text:match("^%s*(/%S+)")
                 if cmd and IsSecureCmd and IsSecureCmd(cmd) then return end
-                local h = CFD(self).history
+                local h = d.history
                 if h[#h] ~= text then
                     h[#h + 1] = text
                     if #h > 50 then table.remove(h, 1) end
@@ -4644,15 +4678,30 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Enforce saved position when Blizzard tries to reposition.
             -- Skip during unlock mode so the user can drag freely.
-            local _toastIgnoreSP = false
-            hooksecurefunc(toast, "SetPoint", function()
-                if _toastIgnoreSP or EUI._unlockActive then return end
+            --
+            -- NOT hooksecurefunc(toast, "SetPoint", ...): that form assigns
+            -- toast.SetPoint = wrapper, a FIELD WRITE onto BNToastFrame's
+            -- table (see the same correction on the edit box in SkinEditBox).
+            -- Blizzard reads that field whenever it anchors the toast, so the
+            -- tainted read lands inside the Battle.net toast chain -- the same
+            -- chain that opens a BN whisper and puts a SECRET target name into
+            -- ChatFrame1EditBox.text, which is where the field report's
+            -- ChatFrameEditBox:360 SetText block surfaces.
+            --
+            -- OnShow is a script hook (C-side, no field write) and fires on
+            -- every toast, which is the only moment the position matters. The
+            -- deferred call lets Blizzard finish its own anchoring first.
+            -- Same shape as the FCFDock_SelectWindow hook this module already
+            -- replaced for taint reasons.
+            toast:HookScript("OnShow", function()
+                if EUI._unlockActive then return end
                 local cfg = ECHAT.DB()
-                if cfg and cfg.toastPosition then
-                    _toastIgnoreSP = true
-                    ApplyToastPosition()
-                    _toastIgnoreSP = false
-                end
+                if not (cfg and cfg.toastPosition) then return end
+                C_Timer.After(0, function()
+                    if EUI._unlockActive then return end
+                    local c = ECHAT.DB()
+                    if c and c.toastPosition then ApplyToastPosition() end
+                end)
             end)
 
             -- Apply saved position or set default (above chat frame)
