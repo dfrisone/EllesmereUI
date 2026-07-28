@@ -169,22 +169,33 @@ end
 --  Only setups whose EUI scale differs from the CVar scale drift, which is
 --  why not every user sees it.
 --
---  Fix: re-assert the (correct) chat-cache position after the engine cache
---  has had its turn -- a deferred pass at login (the only moment the engine
---  misplaces anything) and on the chat-window events whose handlers re-run
---  Blizzard's restore (undocking fires UPDATE_CHAT_WINDOWS, which restores
---  every undocked window). The engine may still cache the frames at logout;
---  its one wrong placement per login is corrected by the pass immediately.
+--  Fix: re-assert the (correct) chat-cache position once per login, deferred
+--  out of the login chain, after the engine cache has had its turn. Login is
+--  the ONLY moment the engine misplaces anything -- within a session its
+--  cache is not consulted, and Blizzard's own restore (which undocking and
+--  every other chat-window update runs) is exact.
 --
---  Deliberately NOT part of the fix (both shipped briefly and were pulled
---  after a tester hit the ChatFrameEditBox secret SetText taint error, the
---  documented failure signature of widened taint in the FCF/chat family):
+--  TAINT BUDGET -- read before extending this block. Anchoring a Blizzard
+--  chat frame from insecure code is the injector class this module's bisect
+--  ledger convicted (EllesmereUIChat.lua header: anchor ties into the chat
+--  rect web poison the secure dock pass, which later re-fires tainted on
+--  whisper opens and blocks Blizzard's own secret values). This fix cannot
+--  avoid SetPoint entirely, so it minimises exposure instead: ONE deferred
+--  pass per login, never during a session, nothing hooked, nothing written
+--  to Blizzard frame state. Deferred-out-of-login is the timing PR #941
+--  field-proved safe for the same module.
+--
+--  Deliberately NOT part of the fix (each shipped briefly, then was pulled
+--  after a tester hit the ChatFrameEditBox:360 secret SetText error):
 --    - hooksecurefunc("FCF_SavePositionAndDimensions"): the hook body runs
 --      inside FCF_StopDragging's execution and taints its continuation
 --      (MOVING_CHATFRAME write). Chat-module rule: no synchronous FCF hooks.
 --    - SetUserPlaced(false) on the chat frames: insecure write to Blizzard
---      frame state consumed by the engine/secure code; not needed, since the
---      login reassert already corrects the engine's placement.
+--      frame state consumed by the engine/secure code.
+--    - UPDATE_CHAT_WINDOWS / UPDATE_FLOATING_CHAT_WINDOWS registration: it
+--      re-anchored chat frames throughout the session, including around
+--      whisper-window activity, for no benefit (those events only ever
+--      follow a correct Blizzard restore).
 -------------------------------------------------------------------------------
 do
     local function ReassertUndockedPositions()
@@ -205,36 +216,19 @@ do
         end
     end
 
-    local loginDone = false
-    local fixPending = false
-    local function QueueReassert(alsoLate)
-        if not loginDone or fixPending then return end
-        fixPending = true
-        C_Timer.After(0, function()
-            fixPending = false
-            ReassertUndockedPositions()
-        end)
-        -- Login belt: the engine layout cache lands before PEW in practice,
-        -- but a second pass well after covers slow-load ordering. Idempotent.
-        if alsoLate then C_Timer.After(2, ReassertUndockedPositions) end
-    end
-
     local fixFrame = CreateFrame("Frame")
     fixFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    fixFrame:RegisterEvent("UPDATE_CHAT_WINDOWS")
-    fixFrame:RegisterEvent("UPDATE_FLOATING_CHAT_WINDOWS")
-    fixFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
-        if event == "PLAYER_ENTERING_WORLD" then
-            if arg1 or arg2 then
-                loginDone = true
-                -- Obsolete v2 migration flag; the rebase it gated was a
-                -- provable no-op (spaces agree) and was removed.
-                if EllesmereUIDB then EllesmereUIDB.chatPosRebased = nil end
-                QueueReassert(true)
-            end
-        else
-            QueueReassert(false)
-        end
+    fixFrame:SetScript("OnEvent", function(self, _, initialLogin, reloadingUi)
+        if not (initialLogin or reloadingUi) then return end
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        -- Obsolete v2 migration flag; the rebase it gated was a provable
+        -- no-op (the coordinate spaces agree) and was removed.
+        if EllesmereUIDB then EllesmereUIDB.chatPosRebased = nil end
+        C_Timer.After(0, ReassertUndockedPositions)
+        -- Belt for slow loads: the engine layout cache lands before PEW in
+        -- practice, but a late pass covers the ordering. Idempotent, and
+        -- still inside the login window (never mid-session).
+        C_Timer.After(2, ReassertUndockedPositions)
     end)
 
     -- Tester diagnostics: dump both coordinate spaces, each saved position,
@@ -244,7 +238,7 @@ do
     local function DumpChatWindows(tag)
         local W, H = GetScreenWidth(), GetScreenHeight()
         local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
-        print(("EUI chatfix v4: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
+        print(("EUI chatfix v5: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
             :format(W or 0, H or 0, pw or 0, ph or 0,
                 UIParent:GetScale() or 0, tag or ""))
         for i = 2, NUM_CHAT_WINDOWS or 10 do
