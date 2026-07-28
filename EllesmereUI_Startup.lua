@@ -260,28 +260,102 @@ do
         end)
     end
 
-    -- Tester diagnostics: dump both coordinate spaces and each saved position.
-    SlashCmdList["EUICHATFIX"] = function()
+    -- Tester diagnostics: dump both coordinate spaces, each saved position,
+    -- and each undocked window's LIVE anchors and rect. Field lesson from the
+    -- first version: `local a, b, c = Fn and Fn(i)` truncates multiple
+    -- returns to one -- call the API directly.
+    local function DumpChatWindows(tag)
         local W, H = GetScreenWidth(), GetScreenHeight()
         local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
         local charKey = UnitGUID and UnitGUID("player")
         local rebased = charKey and EllesmereUIDB and EllesmereUIDB.chatPosRebased
             and EllesmereUIDB.chatPosRebased[charKey] and true or false
-        print(("EUI chatfix: screen %.1fx%.1f, uiparent %.1fx%.1f, rebased=%s")
-            :format(W or 0, H or 0, pw or 0, ph or 0, tostring(rebased)))
+        print(("EUI chatfix%s: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f, rebased=%s")
+            :format(tag or "", W or 0, H or 0, pw or 0, ph or 0,
+                UIParent:GetScale() or 0, tostring(rebased)))
         for i = 2, NUM_CHAT_WINDOWS or 10 do
-            local point, x, y = GetChatWindowSavedPosition and GetChatWindowSavedPosition(i)
-            if point then
-                local cf = _G["ChatFrame" .. i]
-                print(("  CF%d %s x=%.4f y=%.4f docked=%s shown=%s temp=%s"):format(
-                    i, point, x or 0, y or 0,
+            local cf = _G["ChatFrame" .. i]
+            local point, x, y
+            if GetChatWindowSavedPosition then
+                point, x, y = GetChatWindowSavedPosition(i)
+            end
+            local interesting = point or (cf and cf:IsShown() and not cf.isDocked)
+            if interesting then
+                print(("  CF%d saved=%s x=%.4f y=%.4f docked=%s shown=%s temp=%s userplaced=%s"):format(
+                    i, tostring(point), x or 0, y or 0,
                     tostring(cf and cf.isDocked or false),
                     tostring(cf and cf:IsShown() or false),
-                    tostring(cf and cf.isTemporary or false)))
+                    tostring(cf and cf.isTemporary or false),
+                    tostring(cf and cf.IsUserPlaced and cf:IsUserPlaced() or false)))
+                if cf and cf:IsShown() and not cf.isDocked then
+                    print(("    rect L=%.1f B=%.1f T=%.1f %dx%d"):format(
+                        cf:GetLeft() or 0, cf:GetBottom() or 0, cf:GetTop() or 0,
+                        cf:GetWidth() or 0, cf:GetHeight() or 0))
+                    for j = 1, cf:GetNumPoints() do
+                        local p, rel, rp, px, py = cf:GetPoint(j)
+                        local relName = "nil"
+                        if rel then
+                            relName = (rel.GetName and rel:GetName()) or "<anon>"
+                        end
+                        print(("    pt%d %s -> %s.%s %.1f, %.1f"):format(
+                            j, tostring(p), relName, tostring(rp), px or 0, py or 0))
+                    end
+                end
             end
         end
     end
+    SlashCmdList["EUICHATFIX"] = function() DumpChatWindows("") end
     SLASH_EUICHATFIX1 = "/euichatfix"
+
+    -- Drift catcher: snapshot each undocked window's rect at logout (fires on
+    -- /reload too) and compare at next login. If a window moved between the
+    -- logout snapshot and the settled login state, print the delta
+    -- automatically -- the tester no longer has to capture before/after
+    -- screenshots, and the exact per-session delta identifies the mover.
+    local snapFrame = CreateFrame("Frame")
+    snapFrame:RegisterEvent("PLAYER_LOGOUT")
+    snapFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    snapFrame:SetScript("OnEvent", function(_, event, initialLogin, reloadingUi)
+        local charKey = UnitGUID and UnitGUID("player")
+        if not charKey then return end
+        if event == "PLAYER_LOGOUT" then
+            if not EllesmereUIDB then return end
+            local snap = {}
+            for i = 2, NUM_CHAT_WINDOWS or 10 do
+                local cf = _G["ChatFrame" .. i]
+                if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
+                    local l, b = cf:GetLeft(), cf:GetBottom()
+                    if l and b then
+                        snap[i] = { l = l, b = b, w = cf:GetWidth(), h = cf:GetHeight() }
+                    end
+                end
+            end
+            EllesmereUIDB.chatPosSnap = EllesmereUIDB.chatPosSnap or {}
+            EllesmereUIDB.chatPosSnap[charKey] = snap
+        elseif event == "PLAYER_ENTERING_WORLD" and (initialLogin or reloadingUi) then
+            -- Late enough that login-time restores, our rebase, and any
+            -- unknown mover have all had their turn.
+            C_Timer.After(2, function()
+                local snap = EllesmereUIDB and EllesmereUIDB.chatPosSnap
+                    and EllesmereUIDB.chatPosSnap[charKey]
+                if not snap then return end
+                for i, s in pairs(snap) do
+                    local cf = _G["ChatFrame" .. i]
+                    if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
+                        local l, b = cf:GetLeft(), cf:GetBottom()
+                        if l and b then
+                            local dx, dy = l - s.l, b - s.b
+                            if math.abs(dx) > 1 or math.abs(dy) > 1 then
+                                print(("EUI chatfix DRIFT: CF%d moved dx=%.1f dy=%.1f (was L=%.1f B=%.1f, now L=%.1f B=%.1f)")
+                                    :format(i, dx, dy, s.l, s.b, l, b))
+                                DumpChatWindows(" (drift)")
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
 end
 
 -- Apply the saved combat text font immediately at file scope.
