@@ -232,6 +232,7 @@ do
             showStatCategory_Crests      = true,
             showStatCategory_PvP         = true,
             showAdjustedStats            = false,
+            showManaStat                 = false,
         }
         for k, v in pairs(defaults) do
             if EllesmereUIDB[k] == nil then
@@ -1794,6 +1795,27 @@ local function SkinCharacterSheet()
             and EllesmereUIDB["showCrest_" .. stat.showCrestKey] == false)
     end
 
+    -- Opt-in stat rows. Unlike the crest filter above, this is NOT consulted
+    -- when rows are built -- the row is always created and only its visibility
+    -- is gated, so toggling one on applies immediately instead of waiting for
+    -- a /reload. Default is hidden (the DB flag must be explicitly true).
+    -- showIf adds a live capability check on top of the user's choice.
+    local function ShouldShowOptionalStat(stat)
+        if not stat then return true end
+        if stat.showKey and not (EllesmereUIDB and EllesmereUIDB[stat.showKey] == true) then
+            return false
+        end
+        if stat.showIf and not stat.showIf() then return false end
+        return true
+    end
+
+    -- Max mana pool. Reads 0 for classes that have none (Warrior, Rogue,
+    -- Death Knight, Demon Hunter), which is what gates the Mana row -- the
+    -- same check Blizzard's own PaperDollFrame uses for alternate mana.
+    local function PlayerMaxMana()
+        return UnitPowerMax("player", Enum.PowerType.Mana) or 0
+    end
+
     -- Determine which stats to show based on class/spec
     local function GetFilteredAttributeStats()
         local spec = GetSpecialization()
@@ -1808,11 +1830,17 @@ local function SkinCharacterSheet()
         local primaryStatNames = { "Strength", "Agility", "Stamina", "Intellect" }
         local primaryStat = primaryStatNames[primaryStatIndex]
 
-        -- Return fixed order: Primary Stat, Stamina, Health
+        -- Return fixed order: Primary Stat, Stamina, Health, Mana.
+        -- Mana is always in the list (even for classes without a pool) so the
+        -- row count stays stable -- RefreshAttributeStats pairs rows with this
+        -- list by index on a spec change. Visibility is handled separately.
         return {
             { name = primaryStat, func = function() return UnitStat("player", primaryStatIndex) end, statIndex = primaryStatIndex, tooltip = (primaryStatIndex == 1 and L("Increases melee attack power")) or (primaryStatIndex == 2 and L("Increases dodge chance and melee attack power")) or (primaryStatIndex == 4 and L("Increase the magnitude of your attacks and Abilities")) or L("Primary stat") },
             { name = "Stamina", func = function() return UnitStat("player", 3) end, statIndex = 3, tooltip = L("Increases health") },
             { name = "Health", func = function() return UnitHealthMax("player") end, tooltip = L("The amount of damage you can take") },
+            { name = "Mana", func = PlayerMaxMana, showKey = "showManaStat",
+              showIf = function() return PlayerMaxMana() > 0 end,
+              tooltip = L("The size of your mana pool") },
         }
     end
 
@@ -2047,9 +2075,10 @@ local function SkinCharacterSheet()
                 local visibleCount = 0
                 for si = 1, #sectionData.stats do
                     local stat = sectionData.stats[si]
-                    if stat.label and (stat.showWhen or stat.showCrestKey) then
+                    if stat.label and (stat.showWhen or stat.showCrestKey or stat.showKey) then
                         local shouldShow = ShouldShowStat(stat.showWhen)
                                        and ShouldShowCrest(stat)
+                                       and ShouldShowOptionalStat(stat)
                         stat.label:SetShown(shouldShow)
                         if stat.value then stat.value:SetShown(shouldShow) end
                         if stat.button then stat.button:SetShown(shouldShow) end
@@ -2531,7 +2560,7 @@ local function SkinCharacterSheet()
                 })
 
                 -- Store stat elements for collapse/expand (include showWhen for visibility checks)
-                table.insert(sectionData.stats, {label = label, value = value, button = valueButton, showWhen = stat.showWhen, showCrestKey = stat.showCrestKey})
+                table.insert(sectionData.stats, {label = label, value = value, button = valueButton, showWhen = stat.showWhen, showCrestKey = stat.showCrestKey, showKey = stat.showKey, showIf = stat.showIf})
 
                 -- Thin leader between label and value, vertically centered on
                 -- the row and physical-pixel-perfect.
@@ -2693,10 +2722,15 @@ local function SkinCharacterSheet()
         end
     end
 
-    -- Apply initial visibility settings
+    -- Apply initial visibility settings. RefreshStatsVisibility also settles
+    -- the opt-in rows (Mana), which are built unconditionally so they can be
+    -- toggled without a /reload -- without this they would show once, before
+    -- the first OnShow hook runs.
+    RefreshStatsVisibility()
     UpdateStatCategoryVisibility()
     -- Defer a call as some settings may not be fully initialized like section visibility
     C_Timer.After(0, function()
+        RefreshStatsVisibility()
         UpdateStatCategoryVisibility()
     end)
 
@@ -2743,6 +2777,7 @@ local function SkinCharacterSheet()
     local _STATS_EVENTS = {
         "UNIT_STATS", "COMBAT_RATING_UPDATE", "PLAYER_EQUIPMENT_CHANGED",
         "UNIT_ATTACK_POWER", "UNIT_RANGED_ATTACK_POWER", "UNIT_SPELL_HASTE",
+        "UNIT_MAXPOWER",
         "MASTERY_UPDATE", "SPELL_POWER_CHANGED", "PLAYER_DAMAGE_DONE_MODS",
         "PLAYER_SPECIALIZATION_CHANGED",
         "HONOR_XP_UPDATE", "HONOR_LEVEL_UPDATE", "CURRENCY_DISPLAY_UPDATE",

@@ -1072,6 +1072,18 @@ initFrame:SetScript("OnEvent", function(self)
                          if EllesmereUI._refreshStatsVisibility then EllesmereUI._refreshStatsVisibility() end
                      end }
         end
+        local attributesCogOpts = {
+            title = "Attributes",
+            rows = {
+                { type="toggle", label="Show Mana",
+                  get=function() return EllesmereUIDB and EllesmereUIDB.showManaStat == true end,
+                  set=function(v)
+                      if not EllesmereUIDB then EllesmereUIDB = {} end
+                      EllesmereUIDB.showManaStat = v
+                      if EllesmereUI._refreshStatsVisibility then EllesmereUI._refreshStatsVisibility() end
+                  end },
+            },
+        }
         local crestsCogOpts = {
             title = "Crests",
             rows = {
@@ -1092,7 +1104,8 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
         AttachDisabledOverlay(statRow1)
         AttachStatSwatch(statRow1._leftRegion, "Attributes",
-            { r = 0.047, g = 0.824, b = 0.616 }, StatCategoryEnabled("Attributes"))
+            { r = 0.047, g = 0.824, b = 0.616 }, StatCategoryEnabled("Attributes"),
+            attributesCogOpts)
         AttachStatSwatch(statRow1._rightRegion, "Secondary Stats",
             { r = 0.471, g = 0.255, b = 0.784 }, StatCategoryEnabled("SecondaryStats"),
             secondaryCogOpts)
