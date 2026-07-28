@@ -5715,6 +5715,18 @@ initFrame:SetScript("OnEvent", function(self)
               tooltip = "Only show this bar while the tracked buff/cooldown is active. Turn off to keep an empty bar on screen at all times." }
         );  y = y - h
 
+        -- Only In Combat | empty
+        _, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Only In Combat",
+              getValue = function() local bd = SelectedTBB(); return bd and bd.onlyInCombat == true end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  bd.onlyInCombat = v and true or false; RefreshTBB()
+              end,
+              tooltip = "Hide this bar completely while out of combat, even when the tracked buff/cooldown is active." },
+            { type = "label", text = "" }
+        );  y = y - h
+
         -----------------------------------------------------------------------
         --  EXTRAS
         -----------------------------------------------------------------------
