@@ -152,109 +152,96 @@ end
 -------------------------------------------------------------------------------
 --  Undocked chat window position fix
 --
---  Blizzard saves an undocked chat window's position as ratios of
---  GetScreenWidth()/GetScreenHeight() (FCF_SavePositionAndDimensions), using
---  TOP/RIGHT edge distances when the window sits in the top/right half of the
---  screen. The restore (FCF_RestorePositionAndDimensions) turns those ratios
---  back into SetPoint offsets that resolve against UIParent's rect.
---  GetScreenWidth/Height track the uiScale CVar only, while our pixel-perfect
---  scale is applied via UIParent:SetScale() directly, so the two coordinate
---  spaces disagree whenever the EUI scale differs from the CVar scale, and
---  every restore lands TOP/RIGHT-anchored windows shifted by the space
---  difference. The restore does not just run at login: undocking a window
---  (SetChatWindowDocked + FCF_SaveDock) re-fires UPDATE_CHAT_WINDOWS, and
---  FloatingChatFrame_Update re-restores EVERY undocked window, so chasing
---  restores with a post-hoc correction pass leaks (field report: windows
---  shifted down again each time another window was undocked).
+--  Root cause (proven by field /euichatfix drift capture, 2026-07-28): the
+--  ENGINE's user-placed layout cache, not Blizzard's chat-cache ratios. The
+--  chat-cache save/restore (FCF_SavePositionAndDimensions / _Restore...) is
+--  self-consistent -- GetScreenWidth/Height track UIParent's actual scale, so
+--  its ratios always decode to the exact dropped position. But the restore
+--  marks the frame SetUserPlaced(true), so the engine ALSO persists it in
+--  layout-local: at logout it converts the anchor offsets out of UIParent
+--  units using UIParent's CURRENT scale (our pixel-perfect SetScale value),
+--  and at next login it converts back BEFORE our PLAYER_LOGIN SetScale runs,
+--  i.e. with Blizzard's CVar scale -- and it applies AFTER the correct
+--  chat-cache restore, so it is the last writer. Net effect: both offsets
+--  multiply by (euiScale / cvarScale) every session. Field capture: CF4
+--  offsets (9.9, 225.6) -> (8.2, 188.0), exactly x0.8333 = 0.5333/0.64, a
+--  geometric creep toward the bottom-left corner on every reload or login.
+--  Only setups whose EUI scale differs from the CVar scale drift, which is
+--  why not every user sees it.
 --
---  Fix: make the SAVED DATA itself restore-consistent instead of correcting
---  after the fact. Offsets are stored measured from UIParent's edges (still
---  divided by GetScreen* so Blizzard's multiply reproduces them):
---      TOP:    yOff = (top - UIParent height) / GetScreenHeight()
---      BOTTOM: yOff = bottom / GetScreenHeight()
---  and the x-axis equivalents. With that form, Blizzard's own restore lands
---  exactly where the window was dropped, on every restore path, with no
---  post-restore correction to race against.
---
---  Two writers keep the data in that form:
---    1. A one-time per-character rebase at PLAYER_ENTERING_WORLD converts
---       legacy Blizzard-form ratios (flag: EllesmereUIDB.chatPosRebased) and
---       re-anchors shown undocked windows to their true positions.
---    2. A deferred hook after FCF_SavePositionAndDimensions rewrites each new
---       drag-drop save. The hook body only schedules (repo precedent: the
---       FCF_Close/FCF_OpenNewWindow hooks); the rewrite itself runs outside
---       the secure FCF chain via C_Timer.After(0).
+--  Fix, two layers:
+--    1. Re-assert the (correct) chat-cache position after the engine cache
+--       has had its turn: deferred pass at login and on the chat-window
+--       events whose handlers re-run Blizzard's restore (undocking fires
+--       UPDATE_CHAT_WINDOWS, which restores every undocked window).
+--    2. SetUserPlaced(false) on undocked chat windows so the engine stops
+--       caching them at all -- persistence belongs to the chat-cache ratios.
+--       Blizzard's restore re-flags true on every run and drag-stop re-flags
+--       via StopMovingOrSizing, so this is re-applied from the same deferred
+--       pass and from a deferred hook after FCF_SavePositionAndDimensions
+--       (hook body only schedules; repo precedent: FCF_Close hook).
 -------------------------------------------------------------------------------
 do
-    -- Rewrite one window's saved position from its live rect, in the
-    -- restore-consistent form described above. The frame is a plain UIParent
-    -- child with scale 1, so its rect getters share UIParent's space.
-    local function RewriteSavedPosition(cf, id)
-        if not (SetChatWindowSavedPosition and cf) then return end
+    local function ReassertUndockedPositions()
+        if not GetChatWindowSavedPosition then return end
         local W, H = GetScreenWidth(), GetScreenHeight()
-        local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
-        local left, right = cf:GetLeft(), cf:GetRight()
-        local top, bottom = cf:GetTop(), cf:GetBottom()
-        if not (W and H and pw and ph and left and right and top and bottom) then return end
-        local horiz = ((left + right) / 2 > pw / 2) and "RIGHT" or "LEFT"
-        local vert = ((top + bottom) / 2 > ph / 2) and "TOP" or "BOTTOM"
-        local xOff = (horiz == "RIGHT") and ((right - pw) / W) or (left / W)
-        local yOff = (vert == "TOP") and ((top - ph) / H) or (bottom / H)
-        SetChatWindowSavedPosition(id, vert .. horiz, xOff, yOff)
-    end
-
-    -- 1. One-time legacy rebase. Converts every saved position analytically
-    --    (docked and hidden windows included, so their stale saves are ready
-    --    for a future undock) and re-anchors shown undocked windows, which
-    --    Blizzard's login restore has already placed at the legacy-shifted
-    --    spot. Per character: chat window positions live in the
-    --    per-character chat-cache, not in our account-wide DB.
-    local rebaseFrame = CreateFrame("Frame")
-    rebaseFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    rebaseFrame:SetScript("OnEvent", function(self, _, initialLogin, reloadingUi)
-        if not (initialLogin or reloadingUi) then return end
-        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
-        C_Timer.After(0, function()
-            if not (GetChatWindowSavedPosition and SetChatWindowSavedPosition) then return end
-            if not EllesmereUIDB then EllesmereUIDB = {} end
-            local charKey = UnitGUID and UnitGUID("player")
-            if not charKey then return end
-            EllesmereUIDB.chatPosRebased = EllesmereUIDB.chatPosRebased or {}
-            if EllesmereUIDB.chatPosRebased[charKey] then return end
-            local W, H = GetScreenWidth(), GetScreenHeight()
-            local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
-            if not (W and H and pw and ph) then return end
-            for i = 2, NUM_CHAT_WINDOWS or 10 do
+        if not (W and H) then return end
+        for i = 2, NUM_CHAT_WINDOWS or 10 do
+            local cf = _G["ChatFrame" .. i]
+            if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
                 local point, xOff, yOff = GetChatWindowSavedPosition(i)
                 if point and xOff and yOff then
-                    local fx, fy = xOff, yOff
-                    if point:find("TOP") then fy = yOff + (H - ph) / H end
-                    if point:find("RIGHT") then fx = xOff + (W - pw) / W end
-                    SetChatWindowSavedPosition(i, point, fx, fy)
-                    local cf = _G["ChatFrame" .. i]
-                    if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
-                        -- Blizzard's restore formula applied to the rebased
-                        -- offsets = the true dropped position.
-                        cf:ClearAllPoints()
-                        cf:SetPoint(point, UIParent, point, fx * W, fy * H)
-                    end
+                    -- Blizzard's own restore formula; spaces agree, so this
+                    -- is the exact dropped position.
+                    cf:ClearAllPoints()
+                    cf:SetPoint(point, UIParent, point, xOff * W, yOff * H)
                 end
+                if cf.SetUserPlaced then cf:SetUserPlaced(false) end
             end
-            EllesmereUIDB.chatPosRebased[charKey] = true
+        end
+    end
+
+    local loginDone = false
+    local fixPending = false
+    local function QueueReassert(alsoLate)
+        if not loginDone or fixPending then return end
+        fixPending = true
+        C_Timer.After(0, function()
+            fixPending = false
+            ReassertUndockedPositions()
         end)
+        -- Login belt: the engine layout cache lands before PEW in practice,
+        -- but a second pass well after covers slow-load ordering. Idempotent.
+        if alsoLate then C_Timer.After(2, ReassertUndockedPositions) end
+    end
+
+    local fixFrame = CreateFrame("Frame")
+    fixFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    fixFrame:RegisterEvent("UPDATE_CHAT_WINDOWS")
+    fixFrame:RegisterEvent("UPDATE_FLOATING_CHAT_WINDOWS")
+    fixFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
+        if event == "PLAYER_ENTERING_WORLD" then
+            if arg1 or arg2 then
+                loginDone = true
+                -- Obsolete v2 migration flag; the rebase it gated was a
+                -- provable no-op (spaces agree) and was removed.
+                if EllesmereUIDB then EllesmereUIDB.chatPosRebased = nil end
+                QueueReassert(true)
+            end
+        else
+            QueueReassert(false)
+        end
     end)
 
-    -- 2. Deferred rewrite after every Blizzard save (drag-drop).
-    local pendingSave = {}
+    -- Drag-stop re-flags user-placed via StopMovingOrSizing; clear it again
+    -- so the engine never re-adopts the frame. The ratios Blizzard just
+    -- saved are already correct, nothing to rewrite.
     if FCF_SavePositionAndDimensions then
         hooksecurefunc("FCF_SavePositionAndDimensions", function(chatFrame)
-            if not chatFrame or pendingSave[chatFrame] then return end
-            pendingSave[chatFrame] = true
             C_Timer.After(0, function()
-                pendingSave[chatFrame] = nil
-                local id = chatFrame.GetID and chatFrame:GetID()
-                if id and id > 1 and not chatFrame.isDocked and not chatFrame.isTemporary then
-                    RewriteSavedPosition(chatFrame, id)
+                if chatFrame and chatFrame.SetUserPlaced and chatFrame ~= _G.ChatFrame1
+                   and not chatFrame.isDocked and not chatFrame.isTemporary then
+                    chatFrame:SetUserPlaced(false)
                 end
             end)
         end)
@@ -267,12 +254,9 @@ do
     local function DumpChatWindows(tag)
         local W, H = GetScreenWidth(), GetScreenHeight()
         local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
-        local charKey = UnitGUID and UnitGUID("player")
-        local rebased = charKey and EllesmereUIDB and EllesmereUIDB.chatPosRebased
-            and EllesmereUIDB.chatPosRebased[charKey] and true or false
-        print(("EUI chatfix%s: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f, rebased=%s")
-            :format(tag or "", W or 0, H or 0, pw or 0, ph or 0,
-                UIParent:GetScale() or 0, tostring(rebased)))
+        print(("EUI chatfix v3: screen %.1fx%.1f, uiparent %.1fx%.1f, scale %.4f%s")
+            :format(W or 0, H or 0, pw or 0, ph or 0,
+                UIParent:GetScale() or 0, tag or ""))
         for i = 2, NUM_CHAT_WINDOWS or 10 do
             local cf = _G["ChatFrame" .. i]
             local point, x, y
