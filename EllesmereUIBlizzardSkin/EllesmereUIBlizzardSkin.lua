@@ -792,22 +792,33 @@ end
         if not _pmEnabled() then return end
         -- Defer out of the secure context. The post-hook runs inside
         -- Blizzard's protected menu pipeline; touching Blizzard objects
-        -- here propagates taint to action bar buttons. 
-        -- By the next frame the secure execution
-        -- has finished so AddMenuAcquiredCallback is safe.
-        C_Timer.After(0, function()
+        -- here propagates taint to action bar buttons.
+        --
+        -- NO menuDescription:AddMenuAcquiredCallback(). Deferring the
+        -- REGISTRATION does not make the callback safe: it plants an insecure
+        -- Lua function inside Blizzard's menu description, and Blizzard then
+        -- CALLS it from inside its own menu pipeline, so the pipeline that
+        -- builds the menu (and owns the entry click handlers) runs tainted.
+        -- Field report 2026-07-28: right-clicking a unit and choosing Whisper
+        -- opened the chat edit box with a SECRET target name, and because that
+        -- ChatFrameUtil.OpenChat write (editBox.text / setText) happened under
+        -- that taint, Blizzard's own ChatFrameEditBoxMixin:OnUpdate was then
+        -- refused SetText(self.text) -- repeating every frame, since the
+        -- failed call skips the setText = 0 that would end it.
+        --
+        -- Self-owned staggered passes instead: the menu frame is fetched from
+        -- the manager and skinned by us, with nothing handed to Blizzard.
+        -- Several passes cover submenus and pooled frames acquired a little
+        -- after the open, which is what the callback was there for.
+        local function skinOpenMenu()
             local menu = manager.GetOpenMenu and manager:GetOpenMenu()
-            if menu then
+            if menu and not _menuSkinned[menu] then
                 _menuSkinFrame(menu)
             end
-            if menuDescription and menuDescription.AddMenuAcquiredCallback then
-                menuDescription:AddMenuAcquiredCallback(function(frame)
-                    C_Timer.After(0, function()
-                        _menuSkinFrame(frame)
-                    end)
-                end)
-            end
-        end)
+        end
+        C_Timer.After(0, skinOpenMenu)
+        C_Timer.After(0.05, skinOpenMenu)
+        C_Timer.After(0.15, skinOpenMenu)
     end
 
     local function _menuInit()
