@@ -149,6 +149,82 @@ do
     end)
 end
 
+-------------------------------------------------------------------------------
+--  Undocked chat window position fix
+--
+--  Blizzard saves an undocked chat window's position as ratios of
+--  GetScreenWidth()/GetScreenHeight() (FCF_SavePositionAndDimensions), using
+--  TOP/RIGHT edge distances when the window sits in the top/right half of the
+--  screen. The login restore (FCF_RestorePositionAndDimensions) turns those
+--  ratios back into SetPoint offsets that resolve against UIParent's rect.
+--  GetScreenWidth/Height track the uiScale CVar only, while our pixel-perfect
+--  scale is applied via UIParent:SetScale() directly, so the two coordinate
+--  spaces disagree whenever the EUI scale differs from the CVar scale. Every
+--  restore then lands a TOP-anchored window (GetScreenHeight() minus
+--  UIParent:GetHeight()) units below where the user dropped it, and a
+--  RIGHT-anchored window shifts sideways the same way -- the window creeps on
+--  every reload or login.
+--
+--  Fix: after login (and after any chat window update that re-runs Blizzard's
+--  restore), re-derive the dropped position from the saved ratios -- the exact
+--  inverse of Blizzard's save math -- and re-anchor in UIParent space. Runs
+--  deferred from our own event frame, never inside the secure FCF call chain
+--  (no hooksecurefunc: FCF hooks have a history of tainting the chat dock).
+-------------------------------------------------------------------------------
+do
+    local loginDone = false
+    local fixPending = false
+
+    local function FixUndockedChatPositions()
+        fixPending = false
+        if not GetChatWindowSavedPosition then return end
+        local W, H = GetScreenWidth(), GetScreenHeight()
+        local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
+        if not (W and H and pw and ph) then return end
+        -- Spaces agree (EUI scale matches the CVar scale): Blizzard's own
+        -- restore is correct, leave the frames untouched.
+        if math.abs(W - pw) < 0.5 and math.abs(H - ph) < 0.5 then return end
+        for i = 2, NUM_CHAT_WINDOWS or 10 do
+            local cf = _G["ChatFrame" .. i]
+            if cf and cf:IsShown() and not cf.isDocked and not cf.isTemporary then
+                local point, xOff, yOff = GetChatWindowSavedPosition(i)
+                if point and xOff and yOff then
+                    local x, y = xOff * W, yOff * H
+                    -- TOP/RIGHT offsets are distances from the GetScreen*
+                    -- edge; shift by the space difference so they measure
+                    -- from UIParent's edge instead.
+                    if point:find("TOP") then y = y + (H - ph) end
+                    if point:find("RIGHT") then x = x + (W - pw) end
+                    cf:ClearAllPoints()
+                    cf:SetPoint(point, UIParent, point, x, y)
+                end
+            end
+        end
+    end
+
+    local function QueueFix()
+        if not loginDone or fixPending then return end
+        fixPending = true
+        C_Timer.After(0, FixUndockedChatPositions)
+    end
+
+    local fixFrame = CreateFrame("Frame")
+    fixFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    fixFrame:RegisterEvent("UPDATE_CHAT_WINDOWS")
+    fixFrame:RegisterEvent("UPDATE_FLOATING_CHAT_WINDOWS")
+    fixFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
+        if event == "PLAYER_ENTERING_WORLD" then
+            -- Initial login or /reload only; plain zone-ins change nothing.
+            if arg1 or arg2 then
+                loginDone = true
+                QueueFix()
+            end
+        else
+            QueueFix()
+        end
+    end)
+end
+
 -- Apply the saved combat text font immediately at file scope.
 -- DAMAGE_TEXT_FONT must be set before the engine caches it at login.
 -- CombatTextFont may not exist yet here, so we also hook ADDON_LOADED
