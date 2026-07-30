@@ -143,16 +143,61 @@ end
 local origNamePlateFont, origNamePlateOutlined
 local fontOverrideApplied = false
 
+-- Capture face/size/outline AND the drop shadow. The override below drives the
+-- shadow too (it is what stands in for an outline in Drop Shadow mode), so a
+-- restore that only put the font back would leave our shadow on Blizzard's
+-- object. Returns nil when the object is not there yet, so SaveOriginalFonts
+-- retries on the next call rather than banking an empty snapshot.
+local function SnapshotFontObject(obj, fallbackFlags)
+    if not (obj and obj.GetFont) then return nil end
+    local file, height, flags = obj:GetFont()
+    local snap = { file = file, height = height, flags = flags or fallbackFlags }
+    if obj.GetShadowColor then
+        snap.sr, snap.sg, snap.sb, snap.sa = obj:GetShadowColor()
+    end
+    if obj.GetShadowOffset then
+        snap.sx, snap.sy = obj:GetShadowOffset()
+    end
+    return snap
+end
+
+local function RestoreFontObject(obj, snap)
+    if not (obj and snap and obj.SetFont) then return end
+    obj:SetFont(snap.file, snap.height, snap.flags or "")
+    if snap.sr and obj.SetShadowColor  then obj:SetShadowColor(snap.sr, snap.sg, snap.sb, snap.sa) end
+    if snap.sx and obj.SetShadowOffset then obj:SetShadowOffset(snap.sx, snap.sy) end
+end
+
+-- Apply the user's face, size and OUTLINE to one nameplate font object.
+--
+-- The outline must come from GetNPOutline() UNCONDITIONALLY. This previously
+-- read the object's current flags and passed `flags or GetNPOutline()`, which
+-- silently discarded the user's choice every time: GetFont returns "" for an
+-- unoutlined object, and in Lua every string -- "" included -- is truthy, so the
+-- fallback could never run. Friendly names kept whatever outline Blizzard's own
+-- object carried ("" here, "OUTLINE" on the _Outlined variant) while face and
+-- size applied normally, which is why only the outline looked broken.
+local function StyleNamePlateFontObject(obj, font, size, flags)
+    if not (obj and obj.SetFont) then return end
+    obj:SetFont(font, size, flags)
+    -- Drop Shadow / None mode resolves to no outline; carry a real shadow so the
+    -- names stay legible against the world instead of rendering flat now that
+    -- the outline is correctly cleared. These are font OBJECTS, so the shadow
+    -- renders from them directly and the 12.0.7 FontString restriction that
+    -- PrimeFontShadow works around does not apply.
+    if flags == "" then
+        if obj.SetShadowColor  then obj:SetShadowColor(0, 0, 0, 1) end
+        if obj.SetShadowOffset then obj:SetShadowOffset(1, -1) end
+    else
+        if obj.SetShadowColor  then obj:SetShadowColor(0, 0, 0, 0) end
+        if obj.SetShadowOffset then obj:SetShadowOffset(0, 0) end
+    end
+end
+
 local function SaveOriginalFonts()
     if origNamePlateFont then return end
-    if SystemFont_NamePlate and SystemFont_NamePlate.GetFont then
-        local file, height, flags = SystemFont_NamePlate:GetFont()
-        origNamePlateFont = { file = file, height = height, flags = flags }
-    end
-    if SystemFont_NamePlate_Outlined and SystemFont_NamePlate_Outlined.GetFont then
-        local file, height, flags = SystemFont_NamePlate_Outlined:GetFont()
-        origNamePlateOutlined = { file = file, height = height, flags = flags }
-    end
+    origNamePlateFont     = SnapshotFontObject(SystemFont_NamePlate, "")
+    origNamePlateOutlined = SnapshotFontObject(SystemFont_NamePlate_Outlined, "OUTLINE")
 end
 
 -- User-configurable size for friendly name-only player names. The names render
@@ -168,36 +213,25 @@ local function ApplyFriendlyFontOverride()
     -- Restore to known-good originals first so we read the correct height
     -- even if Blizzard reset the font objects after a CVar change.
     if fontOverrideApplied then
-        if origNamePlateFont and SystemFont_NamePlate and SystemFont_NamePlate.SetFont then
-            SystemFont_NamePlate:SetFont(origNamePlateFont.file, origNamePlateFont.height, origNamePlateFont.flags or "")
-        end
-        if origNamePlateOutlined and SystemFont_NamePlate_Outlined and SystemFont_NamePlate_Outlined.SetFont then
-            SystemFont_NamePlate_Outlined:SetFont(origNamePlateOutlined.file, origNamePlateOutlined.height, origNamePlateOutlined.flags or "OUTLINE")
-        end
+        RestoreFontObject(SystemFont_NamePlate, origNamePlateFont)
+        RestoreFontObject(SystemFont_NamePlate_Outlined, origNamePlateOutlined)
         fontOverrideApplied = false
     end
-    local font = GetFont()
-    local size = GetFriendlyNameSize()
-    if SystemFont_NamePlate and SystemFont_NamePlate.SetFont then
-        local _, _, flags = SystemFont_NamePlate:GetFont()
-        SystemFont_NamePlate:SetFont(font, size, flags or GetNPOutline())
-    end
-    if SystemFont_NamePlate_Outlined and SystemFont_NamePlate_Outlined.SetFont then
-        local _, _, flags = SystemFont_NamePlate_Outlined:GetFont()
-        SystemFont_NamePlate_Outlined:SetFont(font, size, flags or GetNPOutline())
-    end
+    local font  = GetFont()
+    local size  = GetFriendlyNameSize()
+    -- One resolved outline for both objects: GetNPOutline is the module's single
+    -- outline source (SetFSFont uses it too) and is already slug-gated.
+    local flags = GetNPOutline()
+    StyleNamePlateFontObject(SystemFont_NamePlate, font, size, flags)
+    StyleNamePlateFontObject(SystemFont_NamePlate_Outlined, font, size, flags)
     fontOverrideApplied = true
 end
 
 local function RestoreFriendlyFontOverride()
     if not fontOverrideApplied then return end
     fontOverrideApplied = false
-    if origNamePlateFont and SystemFont_NamePlate and SystemFont_NamePlate.SetFont then
-        SystemFont_NamePlate:SetFont(origNamePlateFont.file, origNamePlateFont.height, origNamePlateFont.flags or "")
-    end
-    if origNamePlateOutlined and SystemFont_NamePlate_Outlined and SystemFont_NamePlate_Outlined.SetFont then
-        SystemFont_NamePlate_Outlined:SetFont(origNamePlateOutlined.file, origNamePlateOutlined.height, origNamePlateOutlined.flags or "OUTLINE")
-    end
+    RestoreFontObject(SystemFont_NamePlate, origNamePlateFont)
+    RestoreFontObject(SystemFont_NamePlate_Outlined, origNamePlateOutlined)
 end
 
 -- Name-only fonts are applied globally via the SystemFont_NamePlate override
