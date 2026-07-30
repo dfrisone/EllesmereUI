@@ -17842,7 +17842,7 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function()
                   local cb = DB().cdmBars
                   local v = cb and cb.procGlowDefault
-                  if v == nil then return 6 end
+                  if type(v) ~= "number" then return ns.PROC_GLOW_STYLE or 6 end
                   return v
               end,
               setValue=function(v)

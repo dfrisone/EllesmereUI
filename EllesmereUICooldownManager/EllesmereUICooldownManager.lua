@@ -2532,6 +2532,10 @@ end
 --  Custom bars use SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE events instead.
 -------------------------------------------------------------------------------
 local PROC_GLOW_STYLE = 6  -- "Modern WoW Glow" flipbook
+-- Exported so the options page can show the same fallback in its Proc Glow
+-- dropdown instead of hardcoding the number a second time. The cdmBars default
+-- still has to spell out 6, since DEFAULTS is built above this line.
+ns.PROC_GLOW_STYLE = PROC_GLOW_STYLE
 
 -- Reverse lookup: Blizzard CDM viewer frame name  our bar key
 local _blizzViewerToBarKey = {
@@ -2647,8 +2651,8 @@ local function ShowProcGlow(icon, cr, cg, cb)
     -- off, or out while the rest are on.
     local _cb = ECME.db and ECME.db.profile and ECME.db.profile.cdmBars
     local eff = _cb and _cb.procGlowDefault
-    if eff == nil then eff = PROC_GLOW_STYLE end
-    local style = isCustomShape and 2 or ((eff and eff > 0) and eff or PROC_GLOW_STYLE)
+    if type(eff) ~= "number" then eff = PROC_GLOW_STYLE end
+    local style = isCustomShape and 2 or PROC_GLOW_STYLE
     local sid = fc and fc.spellID
     if sid then
         local bk = fc and fc.barKey
@@ -2664,11 +2668,18 @@ local function ShowProcGlow(icon, cr, cg, cb)
             -- Custom shapes are locked to Shape Glow: ignore the per-spell glow type
             -- (including "None") so a custom-shaped icon always shows Shape Glow. The
             -- per-spell glow COLOR below still applies.
-            -- Per-spell value overrides the global default resolved above; nil
-            -- means "Default", i.e. inherit the global. The enable/disable
-            -- decision itself is made AFTER this block so that a global "None"
-            -- also applies to icons that have no per-spell settings at all.
-            if not isCustomShape and ss.procGlow ~= nil then eff = ss.procGlow end
+            -- Per-spell value overrides the global default resolved above.
+            -- "Default" (inherit the global) is stored as nil OR as explicit
+            -- false -- see SetOwn in the options file: clearing a key writes
+            -- false rather than nil when nil would let a bar-tier value show
+            -- through. So test for a real number; `~= nil` would take false as
+            -- a style and blow up on the `eff > 0` comparison below.
+            -- The enable/disable decision itself is made AFTER this block so
+            -- that a global "None" also applies to icons that have no per-spell
+            -- settings at all.
+            if not isCustomShape and type(ss.procGlow) == "number" then
+                eff = ss.procGlow
+            end
             -- Unified glow color takes priority over per-type settings
             local ur, ug, ub = ResolveGlowColor(ss)
             if ur then
