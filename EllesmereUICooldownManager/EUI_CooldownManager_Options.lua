@@ -17827,7 +17827,8 @@ initFrame:SetScript("OnEvent", function(self)
             [7] = "Classic WoW Glow",
         }
         local PROC_GLOW_ORDER = { 0, "---", 1, 2, 3, 4, 5, 6, 7 }
-        _, h = W:DualRow(parent, y,
+        local procGlowRow
+        procGlowRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Proc Glow (All Bars)",
               tooltip="Proc glow style for every icon on every Cooldown Manager bar.\n\nChoose None to switch proc glows off entirely.\n\nA spell with its own Proc Glow set to something other than Default ignores this.",
               values=PROC_GLOW_VALUES, order=PROC_GLOW_ORDER,
@@ -17845,6 +17846,16 @@ initFrame:SetScript("OnEvent", function(self)
                   DB().cdmBars.procGlowDefault = v
               end },
             nil);  y = y - h
+        -- A full-width row anchors its control to the far right of the whole
+        -- row, which on this one strands the dropdown a page width away from
+        -- its own label. Pull it in next to the label instead.
+        do
+            local rgn = procGlowRow and procGlowRow._leftRegion
+            if rgn and rgn._control and rgn._label then
+                rgn._control:ClearAllPoints()
+                rgn._control:SetPoint("LEFT", rgn._label, "RIGHT", 16, 0)
+            end
+        end
 
         local isBuffGlowBar = isBuffBar or (barData.barType == "custom_buff")
         local scaleAnimRow
