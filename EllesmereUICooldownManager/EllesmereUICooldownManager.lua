@@ -536,6 +536,11 @@ local DEFAULTS = {
         cdmBars = {
             enabled = true,
             hideBlizzard = true,
+            -- Default proc glow style for every icon, overridden per spell by
+            -- that spell's own Proc Glow choice. 0 = no proc glow at all.
+            -- Defaults to PROC_GLOW_STYLE (6, Modern WoW Glow), the value this
+            -- was hardcoded to, so existing profiles are unchanged.
+            procGlowDefault = 6,
             hideBuffsWhenInactive = true,
             showInactiveBuffIcons = false,
             desaturateInactiveBuffs = true,
@@ -2635,7 +2640,15 @@ local function ShowProcGlow(icon, cr, cg, cb)
     -- Force Custom Shape Glow (style 2) for custom-shaped icons (any shape but none/cropped)
     local shapeName = (fc and fc.shapeApplied) and fc.shapeName or nil
     local isCustomShape = shapeName and shapeName ~= "none" and shapeName ~= "cropped"
-    local style = isCustomShape and 2 or PROC_GLOW_STYLE
+    -- Effective style resolves GLOBAL default -> per-spell override. The global
+    -- lives in cdmBars.procGlowDefault and may be 0 ("None") to switch proc
+    -- glows off everywhere without visiting every spell; a per-spell choice
+    -- still wins either way, so one spell can opt back in while the rest are
+    -- off, or out while the rest are on.
+    local _cb = ECME.db and ECME.db.profile and ECME.db.profile.cdmBars
+    local eff = _cb and _cb.procGlowDefault
+    if eff == nil then eff = PROC_GLOW_STYLE end
+    local style = isCustomShape and 2 or ((eff and eff > 0) and eff or PROC_GLOW_STYLE)
     local sid = fc and fc.spellID
     if sid then
         local bk = fc and fc.barKey
@@ -2651,10 +2664,11 @@ local function ShowProcGlow(icon, cr, cg, cb)
             -- Custom shapes are locked to Shape Glow: ignore the per-spell glow type
             -- (including "None") so a custom-shaped icon always shows Shape Glow. The
             -- per-spell glow COLOR below still applies.
-            if not isCustomShape then
-                if ss.procGlow == 0 then return end -- proc glow disabled
-                if ss.procGlow and ss.procGlow > 0 then style = ss.procGlow end
-            end
+            -- Per-spell value overrides the global default resolved above; nil
+            -- means "Default", i.e. inherit the global. The enable/disable
+            -- decision itself is made AFTER this block so that a global "None"
+            -- also applies to icons that have no per-spell settings at all.
+            if not isCustomShape and ss.procGlow ~= nil then eff = ss.procGlow end
             -- Unified glow color takes priority over per-type settings
             local ur, ug, ub = ResolveGlowColor(ss)
             if ur then
@@ -2669,6 +2683,14 @@ local function ShowProcGlow(icon, cr, cg, cb)
                 cr, cg, cb = ss.procGlowR, ss.procGlowG or 0.788, ss.procGlowB or 0.137
             end
         end
+    end
+
+    -- Final enable/disable, after global and per-spell have both been folded
+    -- into `eff`. Custom-shaped icons stay locked to Shape Glow and ignore both
+    -- (unchanged behaviour: the shape lock already overrode a per-spell "None").
+    if not isCustomShape then
+        if eff == 0 then return end -- proc glow disabled
+        if eff > 0 then style = eff end
     end
 
     -- Stop active glow if running (proc takes priority)

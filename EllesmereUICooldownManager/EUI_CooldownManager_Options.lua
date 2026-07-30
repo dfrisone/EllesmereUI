@@ -17811,6 +17811,41 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
+        -- Proc Glow default. GLOBAL, not per bar: it lives in cdmBars, so every
+        -- bar's page shows the same value and editing it here changes it
+        -- everywhere. Rendered full width (no right slot) to set it apart from
+        -- the paired per-bar rows below. Same labels as the per-spell Proc Glow
+        -- menu minus "Default", since a global has nothing to inherit from.
+        local PROC_GLOW_VALUES = {
+            [0] = "None",
+            [1] = "Pixel Glow",
+            [2] = "Shape Glow",
+            [3] = "Button Glow",
+            [4] = "Auto-Cast Shine",
+            [5] = "GCD",
+            [6] = "Modern WoW Glow",
+            [7] = "Classic WoW Glow",
+        }
+        local PROC_GLOW_ORDER = { 0, "---", 1, 2, 3, 4, 5, 6, 7 }
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Proc Glow (All Bars)",
+              tooltip="Proc glow style for every icon on every Cooldown Manager bar.\n\nChoose None to switch proc glows off entirely.\n\nA spell with its own Proc Glow set to something other than Default ignores this.",
+              values=PROC_GLOW_VALUES, order=PROC_GLOW_ORDER,
+              getValue=function()
+                  local cb = DB().cdmBars
+                  local v = cb and cb.procGlowDefault
+                  if v == nil then return 6 end
+                  return v
+              end,
+              setValue=function(v)
+                  -- Bare write, matching the per-spell Proc Glow setter:
+                  -- ShowProcGlow reads the setting when a proc fires, so the
+                  -- change lands on the next proc. A glow already on screen
+                  -- runs out its current animation either way.
+                  DB().cdmBars.procGlowDefault = v
+              end },
+            nil);  y = y - h
+
         local isBuffGlowBar = isBuffBar or (barData.barType == "custom_buff")
         local scaleAnimRow
         if isBuffGlowBar then
