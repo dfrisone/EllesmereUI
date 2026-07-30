@@ -3812,6 +3812,18 @@ EllesmereUI._FONT_KEY_GLOBAL = "\1global"
 
 function EllesmereUI.InvalidateFontCache()
     EllesmereUI._fontCacheDirty = true
+    -- _moduleFontCache holds REFERENCES to moduleFonts entry tables, and its own
+    -- guard is the list LENGTH -- which cannot see a profile apply/import that
+    -- swaps every entry for a same-sized set (DeepCopy makes new tables, so the
+    -- cached references go stale while #mfList is unchanged). Drop it here so
+    -- "invalidate" really does drop everything, as the header above promises.
+    -- Guarded: this function is reachable from the LSM callback registered
+    -- above, which is wired before _moduleFontCache is created further down.
+    local mc = EllesmereUI._moduleFontCache
+    if mc then wipe(mc) end
+    -- Never equals a real #mfList, so the next lookup re-syncs the version even
+    -- on the empty-list path that returns before the version check.
+    EllesmereUI._moduleFontCacheVer = -1
 end
 
 --- Returns the cache, cleared first if a font setting changed since last use.
@@ -4089,8 +4101,9 @@ do
 end
 
 -- "Apply to All Game Text": swaps Blizzard's default game fonts to the user's
--- global font face. This follows the proven, taint-safe approach: run once at
--- PLAYER_LOGIN (out of combat), set the global STANDARD_TEXT_FONT string, and
+-- global font face. This follows the proven, taint-safe approach: run first at
+-- PLAYER_LOGIN (out of combat) and again as each load-on-demand Blizzard panel
+-- registers its own font objects, set the global STANDARD_TEXT_FONT string, and
 -- call SetFont on Blizzard's named font OBJECTS. Font objects are not secure
 -- frames and we never write keys onto Blizzard frame tables, so this cannot
 -- taint secure execution. Each object keeps its native size and outline flags
@@ -4098,27 +4111,74 @@ end
 -- draws from these objects. Toggling the option requires a reload, so there is
 -- no "undo" path: when disabled this is skipped and the fresh UI keeps the
 -- Blizzard defaults.
-function EllesmereUI.ApplyGlobalFontToGameText()
-    local db = EllesmereUI.GetFontsDB()
-    if not db.applyToAllGameText then return end
-    local path = ResolveFontName(db.global or "Expressway")
-    if not path then return end
-
-    -- Universal fallback consumed by newly-created Blizzard/addon text.
-    _G.STANDARD_TEXT_FONT = path
+-- Wrapped in a do block (like PrimeFontShadow above) so the seen-set and the
+-- sweep helper do not consume file-scope locals: this file sits on Lua 5.1's
+-- 200-local limit.
+do
+    -- Font objects a previous sweep already swapped. Keyed by the object so a
+    -- re-run only touches NEWLY registered ones -- re-stomping an object that a
+    -- module (or another addon) restyled after login would silently undo that.
+    local swept = {}
 
     -- Enumerate every registered font object via the game's own font list,
     -- rather than maintaining a hardcoded list that goes stale across patches.
-    -- This covers all Blizzard (and other addon) font objects in one pass.
-    local fonts = (GetFonts and GetFonts()) or {}
-    for i = 1, #fonts do
-        local obj = _G[fonts[i]]
-        -- Swap the face on each object, preserving its native size and outline
-        -- flags so only the typeface changes. Guard each: GetFonts may list
-        -- entries that are not usable font objects.
-        if obj and type(obj) == "table" and obj.GetFont and obj.SetFont then
-            local _, size, flags = obj:GetFont()
-            if size and size > 0 then obj:SetFont(path, size, flags) end
+    local function SweepFontObjects(path)
+        local fonts = (GetFonts and GetFonts()) or {}
+        for i = 1, #fonts do
+            local obj = _G[fonts[i]]
+            -- Swap the face on each object, preserving its native size and
+            -- outline flags so only the typeface changes. Guard each: GetFonts
+            -- may list entries that are not usable font objects.
+            if obj and type(obj) == "table" and not swept[obj]
+               and obj.GetFont and obj.SetFont then
+                local _, size, flags = obj:GetFont()
+                if size and size > 0 then
+                    swept[obj] = true
+                    obj:SetFont(path, size, flags)
+                end
+            end
+        end
+    end
+
+    function EllesmereUI.ApplyGlobalFontToGameText()
+        local db = EllesmereUI.GetFontsDB()
+        if not db.applyToAllGameText then return end
+        local path = ResolveFontName(db.global or "Expressway")
+        if not path then return end
+
+        -- Universal fallback consumed by newly-created Blizzard/addon text.
+        _G.STANDARD_TEXT_FONT = path
+
+        SweepFontObjects(path)
+
+        -- One sweep at login is not enough: load-on-demand Blizzard panels
+        -- (Professions, Collections, Auction House, Encounter Journal, ...)
+        -- register their font objects when they FIRST OPEN, long after this
+        -- runs, and STANDARD_TEXT_FONT does not reach them because Blizzard XML
+        -- mostly hardcodes FRIZQT__.TTF. Without a re-sweep those panels keep
+        -- the default face while the rest of the UI carries the user's, which
+        -- reads as a broken font rather than a deliberate choice.
+        --
+        -- Only Blizzard_* addons re-trigger it. A third-party addon loading late
+        -- owns its own fonts, and widening the stomp to cover them would be a
+        -- new behaviour, not a fix -- the login sweep only ever caught the ones
+        -- that happened to load first. The seen-set keeps each re-sweep to
+        -- objects nothing has styled yet, so this stays O(new objects).
+        if not EllesmereUI._gameTextFontWatcher then
+            local w = CreateFrame("Frame")
+            EllesmereUI._gameTextFontWatcher = w
+            w:RegisterEvent("ADDON_LOADED")
+            w:SetScript("OnEvent", function(_, _, addonName)
+                if type(addonName) ~= "string"
+                   or addonName:sub(1, 9) ~= "Blizzard_" then return end
+                -- Re-read the setting: the user can switch it off mid-session
+                -- (it only takes full effect on reload, but a live sweep after
+                -- they turned it OFF would be the wrong direction entirely).
+                local f = EllesmereUI.GetFontsDB()
+                if not f.applyToAllGameText then return end
+                local p = ResolveFontName(f.global or "Expressway")
+                if p then SweepFontObjects(p) end
+            end)
         end
     end
 end

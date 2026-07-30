@@ -1626,19 +1626,89 @@ function EllesmereUI.OnProfileDeleted(profileName)
     end
 end
 
---- Returns true if applying profileData would change the global font or outline mode.
---- Used to decide whether to show a reload popup after a profile switch.
+--- Returns true if applying profileData would change any font setting that only
+--- takes full effect on a UI reload. Used to decide whether to show a reload
+--- popup after a profile switch -- this is the SOLE reload gate for every switch
+--- path (manual, spec auto-switch, character auto-switch), so it has to cover
+--- every key the options page treats as reload-required. It previously compared
+--- only global + outlineMode, which let a profile differing solely in per-module
+--- fonts or "Apply to All Game Text" switch in silently and render half-applied.
+---
+--- unitNameFont is deliberately NOT covered: it drives the UNIT_NAME_FONT global
+--- the engine reads once at startup, so it needs a full re-log and a reload
+--- prompt here would be a false promise (the options page says as much).
 function EllesmereUI.ProfileChangesFont(profileData)
     if not profileData or not profileData.fonts then return false end
     local cur = EllesmereUI.GetFontsDB()
-    local curFont    = cur.global      or "Expressway"
-    local curOutline = cur.outlineMode or "shadow"
-    local newFont    = profileData.fonts.global      or "Expressway"
-    local newOutline = profileData.fonts.outlineMode or "shadow"
+    local new = profileData.fonts
+
+    if (cur.global or "Expressway") ~= (new.global or "Expressway") then return true end
+
     -- "none" and "shadow" are both drop-shadow (no outline) -- treat as identical
+    local curOutline = cur.outlineMode or "shadow"
+    local newOutline = new.outlineMode or "shadow"
     if curOutline == "none" then curOutline = "shadow" end
     if newOutline == "none" then newOutline = "shadow" end
-    return curFont ~= newFont or curOutline ~= newOutline
+    if curOutline ~= newOutline then return true end
+
+    local function bool(v) return v and true or false end
+    if bool(cur.applyToAllGameText) ~= bool(new.applyToAllGameText) then return true end
+    if bool(cur.neverShowSlug)      ~= bool(new.neverShowSlug)      then return true end
+
+    -- Per-module overrides. Order in the list is presentation-only, so compare
+    -- by folder; an absent font/outline means "inherit the global" ("__global").
+    local function mfMap(fonts)
+        local m = {}
+        local list = fonts.moduleFonts
+        if type(list) == "table" then
+            for _, e in ipairs(list) do
+                if type(e) == "table" and e.folder then
+                    local f = e.font    or "__global"
+                    local o = e.outline or "__global"
+                    -- A row that overrides neither renders identically to having
+                    -- no row at all, so it must not read as a difference. Same
+                    -- rule the options page's delete button applies when it
+                    -- decides whether removing a row needs a reload.
+                    if f ~= "__global" or o ~= "__global" then
+                        m[e.folder] = f .. "\0" .. o
+                    end
+                end
+            end
+        end
+        return m
+    end
+    local curMF, newMF = mfMap(cur), mfMap(new)
+    for folder, sig in pairs(curMF) do
+        if newMF[folder] ~= sig then return true end
+    end
+    for folder, sig in pairs(newMF) do
+        if curMF[folder] ~= sig then return true end
+    end
+
+    -- Outline Icon Text: per-module booleans that default to TRUE when absent.
+    -- Mirrors GetIconTextOutlineFlag's read, including its fallback to the
+    -- legacy account-global table (which the apply does not touch, so it stays
+    -- the effective source on both sides when a profile carries no table).
+    local legacy = EllesmereUIDB and EllesmereUIDB.outlineIconText
+    local curOIT = cur.outlineIconText or legacy
+    local newOIT = new.outlineIconText or legacy
+    if curOIT ~= newOIT then
+        local function oit(t, k) return not (t and t[k] == false) end
+        -- Walk both key sets: a module unset on one side defaults to true, so a
+        -- key present only in the other still counts as a difference. Iterated
+        -- one table at a time -- collecting them into a list first would let a
+        -- nil side truncate an ipairs walk and skip the other entirely.
+        local function differs(t)
+            if type(t) ~= "table" then return false end
+            for k in pairs(t) do
+                if oit(curOIT, k) ~= oit(newOIT, k) then return true end
+            end
+            return false
+        end
+        if differs(curOIT) or differs(newOIT) then return true end
+    end
+
+    return false
 end
 
 --- Returns true if switching to profileData would cross the per-profile
