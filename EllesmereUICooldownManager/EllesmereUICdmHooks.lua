@@ -7668,8 +7668,20 @@ function ns.SetupViewerHooks()
         cdmBuffTickFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
         cdmBuffTickFrame:SetScript("OnEvent", function(_, event, _, updateInfo)
             ns._btDirty = true
-            -- Gen bump on anything that can RELEASE a pool frame: aura
-            -- removals/full updates, totem drops/despawns, and world entry.
+            -- Gen bump on anything that can CHANGE which auras are active:
+            -- additions (a glow must LIGHT), plus anything that can release a
+            -- pool frame -- removals/full updates, totem drops/despawns, world
+            -- entry.
+            --
+            -- Additions were missing, and an addition does not necessarily churn
+            -- the pool either: a spell tracked in a COOLDOWN viewer keeps its
+            -- frame acquired permanently, so Blizzard merely sets
+            -- wasSetFromAura/auraInstanceID on the frame that is already there.
+            -- No Acquire, no generation bump, so lighting a Bar Glow fell
+            -- through to the 1s staleness net below -- up to a second late, and
+            -- missed entirely when the proc was consumed inside that window.
+            -- (Killing Machine -> Obliterate; regressed in 8.6.1, correct in
+            -- 8.5.3, which rebuilt the cache every tick.)
             -- Only UNIT_AURA carries an updateInfo table in this slot --
             -- PLAYER_ENTERING_WORLD's second arg is the isReconnect BOOLEAN
             -- (true on /reload), so the payload must never be indexed for
@@ -7692,8 +7704,10 @@ function ns.SetupViewerHooks()
                 else
                     local full    = updateInfo.isFullUpdate
                     local removed = updateInfo.removedAuraInstanceIDs
+                    local added   = updateInfo.addedAuras
                     if issecretvalue(full) or issecretvalue(removed)
-                       or full or removed then
+                       or issecretvalue(added)
+                       or full or removed or added then
                         ns._acGen = (ns._acGen or 0) + 1
                     end
                 end

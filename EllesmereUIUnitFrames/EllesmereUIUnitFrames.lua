@@ -4034,18 +4034,38 @@ ns.UF_GetAbsorbBarPos     = function(s) return (s and s.absorbBarPosition)     o
 ns.UF_GetHealAbsorbBarPos = function(s) return (s and s.healAbsorbBarPosition) or "none" end
 
 -- Anchor/orient a strip bar (Absorb Bar or Heal Absorb Bar). "above*" sit on top
--- of the health bar; "top*" sit inside at its top, drawn just above the absorb
--- texture; "belowAbsorb" (heal bar only) sits flush below the Absorb Bar's bottom
--- edge, derived from the Absorb Bar's POSITION (not its live visibility, so it
--- never shifts up). "*Right" fills from the right edge. `absorbLevel` is the
--- absorb-overlay frame level (inside strips render at +1 above it).
+-- of the health bar; "top*" / "bottom*" sit inside at the matching edge, drawn
+-- just above the absorb texture; "aboveAbsorb" / "belowAbsorb" (heal bar only)
+-- sit flush against the Absorb Bar, derived from its POSITION (not its live
+-- visibility, so they never shift). "*Right" fills from the right edge.
+-- `absorbLevel` is the absorb-overlay frame level (inside strips render at +1).
 ns.UF_ApplyStripBarLayout = function(stripBar, hp, position, height, absorbLevel, absorbPos, absorbHeight)
     if not stripBar or not hp then return end
     stripBar:ClearAllPoints()
     stripBar:SetHeight(PP.Scale(height or 4))
     local insideLevel = (absorbLevel or (hp:GetFrameLevel() + 1)) + 1
-    if position == "belowAbsorb" then
+    if position == "aboveAbsorb" then
         absorbPos = absorbPos or "none"
+        local leftPoint, rightPoint, yOff = "TOPLEFT", "TOPRIGHT", 0
+        if absorbPos == "aboveRight" or absorbPos == "aboveLeft" then
+            yOff = PP.Scale(absorbHeight or 4)
+        elseif absorbPos == "bottomRight" or absorbPos == "bottomLeft" then
+            leftPoint, rightPoint = "BOTTOMLEFT", "BOTTOMRIGHT"
+            yOff = PP.Scale(absorbHeight or 4)
+        end
+        stripBar:SetReverseFill(absorbPos ~= "aboveLeft" and absorbPos ~= "topLeft" and absorbPos ~= "bottomLeft")
+        stripBar:SetPoint("BOTTOMLEFT", hp, leftPoint, 0, yOff)
+        stripBar:SetPoint("BOTTOMRIGHT", hp, rightPoint, 0, yOff)
+        stripBar:SetFrameLevel(insideLevel)
+    elseif position == "belowAbsorb" then
+        absorbPos = absorbPos or "none"
+        if absorbPos == "bottomRight" or absorbPos == "bottomLeft" then
+            stripBar:SetReverseFill(absorbPos == "bottomRight")
+            stripBar:SetPoint("TOPLEFT",  hp, "BOTTOMLEFT",  0, 0)
+            stripBar:SetPoint("TOPRIGHT", hp, "BOTTOMRIGHT", 0, 0)
+            stripBar:SetFrameLevel(insideLevel)
+            return
+        end
         local yOff = 0
         if absorbPos == "topRight" or absorbPos == "topLeft" then
             yOff = -PP.Scale(absorbHeight or 4)
@@ -4058,6 +4078,11 @@ ns.UF_ApplyStripBarLayout = function(stripBar, hp, position, height, absorbLevel
         stripBar:SetReverseFill(position == "topRight")
         stripBar:SetPoint("TOPLEFT",  hp, "TOPLEFT",  0, 0)
         stripBar:SetPoint("TOPRIGHT", hp, "TOPRIGHT", 0, 0)
+        stripBar:SetFrameLevel(insideLevel)
+    elseif position == "bottomRight" or position == "bottomLeft" then
+        stripBar:SetReverseFill(position == "bottomRight")
+        stripBar:SetPoint("BOTTOMLEFT",  hp, "BOTTOMLEFT",  0, 0)
+        stripBar:SetPoint("BOTTOMRIGHT", hp, "BOTTOMRIGHT", 0, 0)
         stripBar:SetFrameLevel(insideLevel)
     else
         stripBar:SetReverseFill(position == "aboveRight")

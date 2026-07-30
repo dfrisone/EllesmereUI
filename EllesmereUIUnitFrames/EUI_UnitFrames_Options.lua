@@ -11267,8 +11267,8 @@ initFrame:SetScript("OnEvent", function(self)
         local absorbBarRow
         absorbBarRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Absorb Bar",
-              values={ none="None", aboveRight="Above Frame Right", aboveLeft="Above Frame Left", topRight="Top Right", topLeft="Top Left" },
-              order={ "none", "aboveRight", "aboveLeft", "topRight", "topLeft" },
+              values={ none="None", aboveRight="Above Frame Right", aboveLeft="Above Frame Left", topRight="Top Right", topLeft="Top Left", bottomRight="Bottom Right", bottomLeft="Bottom Left" },
+              order={ "none", "aboveRight", "aboveLeft", "topRight", "topLeft", "bottomRight", "bottomLeft" },
               getValue=function() return SValSupported("absorbBarPosition", "none") end,
               setValue=function(v) SSetSupported("absorbBarPosition", v); EllesmereUI:RefreshPage() end },
             { type="slider", text="Bar Height", min=1, max=20, step=1,
@@ -11304,8 +11304,8 @@ initFrame:SetScript("OnEvent", function(self)
         local healAbsorbBarRow
         healAbsorbBarRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Heal Absorb Bar",
-              values={ none="None", belowAbsorb="Below Absorb Bar", aboveRight="Above Frame Right", aboveLeft="Above Frame Left", topRight="Top Right", topLeft="Top Left" },
-              order={ "none", "belowAbsorb", "aboveRight", "aboveLeft", "topRight", "topLeft" },
+              values={ none="None", aboveAbsorb="Above Absorb Bar", belowAbsorb="Below Absorb Bar", aboveRight="Above Frame Right", aboveLeft="Above Frame Left", topRight="Top Right", topLeft="Top Left", bottomRight="Bottom Right", bottomLeft="Bottom Left" },
+              order={ "none", "aboveAbsorb", "belowAbsorb", "aboveRight", "aboveLeft", "topRight", "topLeft", "bottomRight", "bottomLeft" },
               getValue=function() return SValSupported("healAbsorbBarPosition", "none") end,
               setValue=function(v) SSetSupported("healAbsorbBarPosition", v); EllesmereUI:RefreshPage() end },
             { type="slider", text="Bar Height", min=1, max=20, step=1,
