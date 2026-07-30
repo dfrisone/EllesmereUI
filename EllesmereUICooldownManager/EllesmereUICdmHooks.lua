@@ -5121,6 +5121,17 @@ local function CollectAndReanchor()
                                     fc.barKey = barKey
                                     fc.spellID = baseSID or displaySID
                                     fc.isHostedBuff = nil
+                                    -- Shift Icons When Untalented (per-bar): release
+                                    -- the slot of a spell the player has not talented
+                                    -- so the layout filter closes the gap. ALWAYS
+                                    -- assigned, never only-when-true: FC persists per
+                                    -- frame across passes, so a stale true would keep
+                                    -- an icon hidden after it was re-talented or after
+                                    -- the bar setting was turned back off.
+                                    fc._untalentedShiftHidden = (bd.untalentedShift
+                                        and ns.IsSpellUntalented
+                                        and ns.IsSpellUntalented(barKey, displaySID, baseSID))
+                                        or nil
                                 end
                             end
                         end

@@ -17300,8 +17300,14 @@ initFrame:SetScript("OnEvent", function(self)
             and not barData.isGhostBar
             and barData.key ~= (ns.FOCUSKICK_BAR_KEY or "focuskick")
         if isOverflowBar then
+            -- Overflow slices icons against a fixed cap, so it cannot coexist
+            -- with anything that changes the effective icon count at runtime.
+            -- That is true of the per-spell cd-state Shift Icons settings AND of
+            -- the per-bar "Shift Icons When Untalented" toggle, so both block it.
             local function OverflowShiftBlocked()
-                return (ns.CdmBarHasShiftCdState and ns.CdmBarHasShiftCdState(BD().key)) or false
+                local b = BD()
+                if b.untalentedShift then return true end
+                return (ns.CdmBarHasShiftCdState and ns.CdmBarHasShiftCdState(b.key)) or false
             end
             -- A bar may not BOTH receive overflow and have its own overflow
             -- config: incoming icons ignore the recipient's cap and never
@@ -17440,6 +17446,37 @@ initFrame:SetScript("OnEvent", function(self)
                   getValue=function() return BD().hidePlaceholderIcon == true end,
                   setValue=function(v)
                       BD().hidePlaceholderIcon = v
+                      ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                      EllesmereUI:RefreshPage()
+                  end },
+                { type="label", text="" }); y = y - h
+        end
+
+        -- Shift Icons When Untalented (CD/utility bars): an untalented spell
+        -- normally keeps its reserved slot so re-talenting restores it to the
+        -- same position. This releases the slot instead, so the icons after it
+        -- close the gap and the bar resizes. Off by default -- reserving the
+        -- slot stays the behaviour every existing bar has.
+        -- Only a genuine talent change reflows: a frame that is merely absent
+        -- (pet dismissed, choice node mid-swap) keeps its slot either way.
+        if (barData.barType == "cooldowns" or barData.barType == "utility")
+           and not isFocusKick then
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="Shift Icons When Untalented",
+                  tooltip="Untalented spells release their slot instead of leaving a gap, so the icons after them shift up to close it.\n\nOnly talent changes move icons: a spell whose icon is temporarily missing (pet dismissed, talent choice mid-swap) keeps its place.",
+                  disabled=function()
+                      local b = BD()
+                      -- A bar already committed to overflow cannot also shift:
+                      -- overflow caps a fixed count. Mirrors the reverse block
+                      -- in OverflowShiftBlocked so the pair can never both be on.
+                      return (b.maxIcons and b.maxIcons > 0 and b.overflowTarget ~= nil)
+                          and not b.untalentedShift
+                  end,
+                  disabledTooltip="Not available while this bar overflows into another bar",
+                  rawTooltip=true,
+                  getValue=function() return BD().untalentedShift == true end,
+                  setValue=function(v)
+                      BD().untalentedShift = v or nil
                       ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
                       EllesmereUI:RefreshPage()
                   end },
