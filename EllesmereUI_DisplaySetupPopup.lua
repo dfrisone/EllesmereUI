@@ -684,3 +684,86 @@ SlashCmdList["EUIDISPLAYSETUP"] = function()
     end
     print("|cff00ff98EllesmereUI:|r Display Setup reset. The popup fires on your next /reload.")
 end
+
+-------------------------------------------------------------------------------
+--  Layout capture (authoring tool)
+--
+--  Positions that "just look right" cannot be derived: a multiplier only
+--  rescales whatever the player already had. They have to be authored once, on
+--  the target screen, by arranging the UI and recording where things ended up.
+--
+--  This writes the current anchor set into EllesmereUIDB._layoutCapture rather
+--  than printing it: the useful dump is far past the ~255 character chat input
+--  limit, and SavedVariables flush on /reload, so the values can be read
+--  straight out of the account file afterwards.
+--
+--  Author-facing only. It records, it never applies.
+-------------------------------------------------------------------------------
+local CAPTURE_MODULES = {
+    { folder = "EllesmereUIActionBars",   key = "barPositions" },
+    { folder = "EllesmereUIMinimap",      key = "minimap" },
+    { folder = "EllesmereUIDamageMeters", key = "dm" },
+    { folder = "EllesmereUIUnitFrames",   key = nil },
+    { folder = "EllesmereUIResourceBars", key = nil },
+    { folder = "EllesmereUICooldownManager", key = nil },
+}
+
+-- Record path -> anchor for every stored anchor under a module, so the capture
+-- says WHERE each value came from and can be pasted back as a defaults table.
+local function CaptureAnchors(root, path, depth, out)
+    if type(root) ~= "table" or depth > 4 then return end
+    for k, v in pairs(root) do
+        if type(k) == "string" or type(k) == "number" then
+            local here = path .. "." .. tostring(k)
+            if IsAnchorTable(v) then
+                out[here] = {
+                    point = v.point, relPoint = v.relPoint,
+                    x = v.x, y = v.y,
+                }
+            elseif type(v) == "table" then
+                CaptureAnchors(v, here, depth + 1, out)
+            end
+        end
+    end
+end
+
+SLASH_EUIUWCAPTURE1 = "/euiuwcapture"
+SlashCmdList["EUIUWCAPTURE"] = function()
+    if not EllesmereUIDB then
+        print("|cffff6600EllesmereUI:|r no saved variables yet.")
+        return
+    end
+    local physW, physH = GetPhysicalScreenSize()
+    local out = {
+        screenW = physW, screenH = physH,
+        uiScale = EllesmereUIDB.ppUIScale,
+        panelScale = EllesmereUIDB.panelScale,
+        profile = EllesmereUIDB.activeProfile,
+        anchors = {},
+    }
+    local count = 0
+    for _, m in ipairs(CAPTURE_MODULES) do
+        if IsLoaded(m.folder) then
+            local p = AddonProfile(m.folder)
+            if p then
+                local root = m.key and p[m.key] or p
+                local base = m.folder .. (m.key and ("." .. m.key) or "")
+                local before = {}
+                CaptureAnchors(root, base, 1, before)
+                for path, anchor in pairs(before) do
+                    out.anchors[path] = anchor
+                    count = count + 1
+                end
+            end
+        end
+    end
+    -- Sizes worth carrying alongside the anchors: a layout is positions AND
+    -- the footprint of the things being positioned.
+    local mm = IsLoaded("EllesmereUIMinimap") and AddonProfile("EllesmereUIMinimap")
+    if mm and type(mm.minimap) == "table" then out.minimapSize = mm.minimap.mapSize end
+
+    EllesmereUIDB._layoutCapture = out
+    print(string.format("|cff00ff98EllesmereUI:|r captured %d anchors at %dx%d (profile: %s).",
+        count, physW or 0, physH or 0, tostring(EllesmereUIDB.activeProfile)))
+    print("|cff00ff98EllesmereUI:|r now /reload so it is written to disk.")
+end

@@ -142,6 +142,22 @@ do
                 EllesmereUIDB.ppUIScaleAuto = false
             end
 
+            -- Seed the options-panel scale from the display height. The panel
+            -- is deliberately pinned to physical pixels (baseScale =
+            -- GetScreenWidth()/physW) so it holds a constant physical size and
+            -- does NOT follow the UI Scale slider. At 1080p that reads fine, but
+            -- on a 4K screen the same pixel count covers half as much of the
+            -- display and the panel arrives unreadably small, with the UI Scale
+            -- slider appearing to do nothing to it. Scale the default with
+            -- panel height, capped at 2x. Only when unset, so anyone who has
+            -- chosen a value keeps it, and 1080p is unchanged.
+            if EllesmereUIDB.panelScale == nil then
+                local _, physH = GetPhysicalScreenSize()
+                if type(physH) == "number" and physH > 0 then
+                    EllesmereUIDB.panelScale = max(1, min(physH / 1080, 2))
+                end
+            end
+
             local scale = EllesmereUIDB.ppUIScale
             if not scale then return end
 
