@@ -64,6 +64,7 @@ EllesmereUI_Glows.lua
 EllesmereUI_Range.lua
 EllesmereUI_AuraKit.lua
 EllesmereUI_FirstInstall.lua
+EllesmereUI_DisplaySetupPopup.lua
 EllesmereUI_RaidFramesPopup.lua
 EllesmereUI_PatchNotesPopup.lua
 EllesmereUI_WindowSkinsPopup.lua

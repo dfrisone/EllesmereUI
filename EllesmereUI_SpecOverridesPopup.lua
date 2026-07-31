@@ -382,7 +382,8 @@ loader:SetScript("OnEvent", function(self, event, addonName)
             end
             -- Defer behind the older intro popups if any is still pending or
             -- open, so announcements never stack on a single login.
-            if EllesmereUI._raidFramesIntroPending
+            if EllesmereUI._displaySetupPending
+               or EllesmereUI._raidFramesIntroPending
                or EllesmereUI._patchNotesIntroPending
                or EllesmereUI._windowSkinsIntroPending then
                 C_Timer.After(0.4, TryShow)

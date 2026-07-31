@@ -11462,9 +11462,10 @@ end
 C_Timer.After(2, function()
     if EllesmereUIDB and EllesmereUIDB.firstInstallPopupShown then
         -- Defer while any intro popup is still pending/open; each runs the
-        -- conflict check itself when dismissed (RaidFrames / PatchNotes /
-        -- WindowSkins / SpecOverrides / PTRManagers popup files).
-        if EllesmereUI._raidFramesIntroPending or EllesmereUI._patchNotesIntroPending
+        -- conflict check itself when dismissed (DisplaySetup / RaidFrames /
+        -- PatchNotes / WindowSkins / SpecOverrides / PTRManagers popup files).
+        if EllesmereUI._displaySetupPending
+           or EllesmereUI._raidFramesIntroPending or EllesmereUI._patchNotesIntroPending
            or EllesmereUI._windowSkinsIntroPending or EllesmereUI._specOvIntroPending
            or EllesmereUI._ptrManagersIntroPending then return end
         if EllesmereUI._RunConflictCheck then EllesmereUI._RunConflictCheck() end

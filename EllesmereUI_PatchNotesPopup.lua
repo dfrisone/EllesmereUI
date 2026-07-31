@@ -332,7 +332,7 @@ loader:SetScript("OnEvent", function(self, event, addonName)
             end
             -- Defer behind the Raid Frames intro popup if it is still pending or
             -- open, so the two announcements never stack on a single login.
-            if EllesmereUI._raidFramesIntroPending then
+            if EllesmereUI._displaySetupPending or EllesmereUI._raidFramesIntroPending then
                 C_Timer.After(0.4, TryShow)
                 return
             end

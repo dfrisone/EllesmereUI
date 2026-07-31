@@ -338,6 +338,7 @@ loader:SetScript("OnEvent", function(self)
         -- if any is still pending or open, so announcements never stack on a
         -- single login.
         if EllesmereUI._firstInstallPending
+           or EllesmereUI._displaySetupPending
            or EllesmereUI._raidFramesIntroPending
            or EllesmereUI._patchNotesIntroPending
            or EllesmereUI._windowSkinsIntroPending

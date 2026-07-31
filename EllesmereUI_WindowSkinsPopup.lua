@@ -366,7 +366,8 @@ loader:SetScript("OnEvent", function(self, event, addonName)
             -- Defer behind the Raid Frames and Patch Notes intro popups if
             -- either is still pending or open, so the announcements never stack
             -- on a single login.
-            if EllesmereUI._raidFramesIntroPending or EllesmereUI._patchNotesIntroPending then
+            if EllesmereUI._displaySetupPending
+               or EllesmereUI._raidFramesIntroPending or EllesmereUI._patchNotesIntroPending then
                 C_Timer.After(0.4, TryShow)
                 return
             end

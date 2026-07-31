@@ -497,6 +497,12 @@ local function ShowFirstInstallPopup()
         end
 
         if triggerReload then
+            -- Arm the Display Setup popup for the login after this reload, once
+            -- the modules chosen above are actually loaded and can be previewed
+            -- live. Only fresh installs reach this branch, so existing users
+            -- never acquire the flag.
+            EllesmereUIDB.displaySetupPending = true
+
             -- Apply addon enable/disable changes then reload
             for _, row in ipairs(allRows) do
                 if row._entry.addon then
