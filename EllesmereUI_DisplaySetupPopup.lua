@@ -251,16 +251,58 @@ end
 -- damage meters, the cooldown manager and everything else in one pass, using
 -- each module's own storage convention. Walking profile tables by guessed key
 -- paths reached almost nothing, which is why only a couple of things shifted.
+-- Offset of a frame's centre from UIParent's centre, in UIParent units.
+-- Both sides are converted through their effective scale because an element
+-- may be running at a different scale to UIParent.
+local function CentreOffset(f)
+    if not f or not f.GetCenter then return nil end
+    local fx, fy = f:GetCenter()
+    local ux, uy = UIParent:GetCenter()
+    if not (fx and fy and ux and uy) then return nil end
+    local fs = f:GetEffectiveScale() or 1
+    local us = UIParent:GetEffectiveScale() or 1
+    if us == 0 then return nil end
+    return (fx * fs - ux * us) / us, (fy * fs - uy * us) / us
+end
+
 local function CollectRegisteredPositions()
     local out = {}
     local reg = EllesmereUI._unlockRegisteredElements
     if type(reg) ~= "table" then return out end
     for key, elem in pairs(reg) do
-        if type(elem) == "table" and elem.loadPosition and elem.savePosition then
-            local ok, pos = pcall(elem.loadPosition, key)
-            if ok and type(pos) == "table"
-               and type(pos.x) == "number" and type(pos.point) == "string" then
+        if type(elem) == "table" and elem.savePosition then
+            local pos
+            if elem.loadPosition then
+                local ok, p = pcall(elem.loadPosition, key)
+                if ok and type(p) == "table"
+                   and type(p.x) == "number" and type(p.point) == "string" then
+                    pos = p
+                end
+            end
+            if pos then
                 out[#out + 1] = { key = key, elem = elem, pos = pos }
+            else
+                -- No stored position: the element is sitting on its default
+                -- anchor, which is computed at runtime and has nothing to
+                -- correct. This is most of them on a fresh install, and it is
+                -- why almost nothing moved. Read where the frame actually IS,
+                -- and store that as an explicit CENTER anchor so there is a
+                -- position to correct. Repositioning has to CREATE anchors
+                -- here, not just adjust the handful the player has dragged.
+                local f
+                if elem.getFrame then
+                    local ok, got = pcall(elem.getFrame, key)
+                    if ok then f = got end
+                end
+                if f and f.GetCenter and f:IsShown() then
+                    local ox, oy = CentreOffset(f)
+                    if ox and oy then
+                        out[#out + 1] = {
+                            key = key, elem = elem, synthesised = true,
+                            pos = { point = "CENTER", relPoint = "CENTER", x = ox, y = oy },
+                        }
+                    end
+                end
             end
         end
     end
