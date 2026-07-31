@@ -246,27 +246,38 @@ local function CorrectedX(entry, factor, halfExcess)
     return entry.base * factor
 end
 
-local POSITION_MODULES = {
-    { folder = "EllesmereUIActionBars", hook = "_EAB_Apply", key = "barPositions" },
-    { folder = "EllesmereUIMinimap",    hook = "_EMM_FullRebuildMinimap", key = "minimap" },
-    { folder = "EllesmereUIDamageMeters", hook = "_EDM_Apply", key = "dm" },
-    { folder = "EllesmereUIUnitFrames", hook = "_EUF_ReloadFrames", key = nil },
-}
-
-local function CollectPositionTargets()
-    local snap, hooks = {}, {}
-    for _, m in ipairs(POSITION_MODULES) do
-        if IsLoaded(m.folder) then
-            local p = AddonProfile(m.folder)
-            if p then
-                local root = m.key and p[m.key] or p
-                local before = #snap
-                CollectAnchors(root, 1, snap)
-                if #snap > before then hooks[#hooks + 1] = m.hook end
+-- Every movable element registers a loadPosition/savePosition pair with Unlock
+-- Mode, keyed by element. Going through that registry reaches minimap, chat,
+-- damage meters, the cooldown manager and everything else in one pass, using
+-- each module's own storage convention. Walking profile tables by guessed key
+-- paths reached almost nothing, which is why only a couple of things shifted.
+local function CollectRegisteredPositions()
+    local out = {}
+    local reg = EllesmereUI._unlockRegisteredElements
+    if type(reg) ~= "table" then return out end
+    for key, elem in pairs(reg) do
+        if type(elem) == "table" and elem.loadPosition and elem.savePosition then
+            local ok, pos = pcall(elem.loadPosition, key)
+            if ok and type(pos) == "table"
+               and type(pos.x) == "number" and type(pos.point) == "string" then
+                out[#out + 1] = { key = key, elem = elem, pos = pos }
             end
         end
     end
-    return snap, hooks
+    return out
+end
+
+-- Action bars are NOT registered elements: they fall back to their own
+-- barPositions store, so they need the direct walk.
+local function CollectBarPositions()
+    local snap = {}
+    if IsLoaded("EllesmereUIActionBars") then
+        local p = AddonProfile("EllesmereUIActionBars")
+        if p and type(p.barPositions) == "table" then
+            CollectAnchors(p.barPositions, 1, snap)
+        end
+    end
+    return snap
 end
 
 -------------------------------------------------------------------------------
@@ -312,7 +323,9 @@ local function ShowDisplaySetupPopup()
     local scaleIsOff = abs(curScale - bestScale) > 0.005
 
     local fontSnap, fontHooks = CollectFontTargets()
-    local posSnap, posHooks = CollectPositionTargets()
+    local regPos = CollectRegisteredPositions()
+    local barPos = CollectBarPositions()
+    local posCount = #regPos + #barPos
     local pullFactor = HorizontalPullFactor(aspect)
 
     local screenLabel = string.format("%dx%d", physW, physH)
@@ -356,13 +369,24 @@ local function ShowDisplaySetupPopup()
         }
     end
 
-    if isUltrawide and #posSnap > 0 then
+    if isUltrawide and posCount > 0 then
         tweaks[#tweaks + 1] = {
             key = "positions",
             label = EllesmereUI.L("Element Positions"),
             apply = function()
                 local halfExcess = HalfExcessWidth()
-                for _, e in ipairs(posSnap) do
+
+                -- Registered elements: hand the corrected x back through the
+                -- module's own writer so its storage convention is respected.
+                for _, e in ipairs(regPos) do
+                    local newX = CorrectedX(
+                        { base = e.pos.x, point = e.pos.point }, pullFactor, halfExcess)
+                    pcall(e.elem.savePosition, e.key, e.pos.point,
+                        e.pos.relPoint or e.pos.point, newX, e.pos.y)
+                end
+
+                -- Action bars write straight to barPositions.
+                for _, e in ipairs(barPos) do
                     e.tbl[e.key] = CorrectedX(e, pullFactor, halfExcess)
                     -- tgtL/tgtR/tgtT/tgtB cache the frame's screen edges for
                     -- Unlock Mode's snapping. They describe the OLD spot, so
@@ -371,11 +395,9 @@ local function ShowDisplaySetupPopup()
                     e.tbl.tgtL, e.tbl.tgtR = nil, nil
                     e.tbl.tgtT, e.tbl.tgtB = nil, nil
                 end
-                for _, h in ipairs(posHooks) do FireHook(h) end
-                -- The module apply hooks re-draw a bar's size and contents but
-                -- never re-read barPositions; only Unlock Mode's own pass walks
-                -- the stored anchors and moves the frames. Without this the
-                -- writes are correct and simply never reach the screen.
+
+                -- Module apply hooks redraw size and contents but never re-read
+                -- stored anchors; only this pass walks them and moves frames.
                 if type(EllesmereUI._applySavedPositions) == "function" then
                     pcall(EllesmereUI._applySavedPositions)
                 end
