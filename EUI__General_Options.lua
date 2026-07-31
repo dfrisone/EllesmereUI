@@ -5562,9 +5562,55 @@ initFrame:SetScript("OnEvent", function(self)
                     return PickScale(current.editMode[displayKey])
                 end
 
+                -- Placement-only import. A preset can ship a Blizzard Edit Mode
+                -- layout without a full EUI profile, and that layout alone is
+                -- what moves chat, the minimap and the tracker off Blizzard's
+                -- 16:9 defaults. Applying it leaves every EllesmereUI setting
+                -- untouched, so an existing user keeps their configuration and
+                -- only gains sane element positions.
+                local function DoEditModeOnlyImport(editStr)
+                    local name = (current and current.name) or EllesmereUI.L("This preset")
+                    EllesmereUI:ShowConfirmPopup({
+                        title       = EllesmereUI.L("Apply Layout Only"),
+                        message     = EllesmereUI.Lf("%1$s has no full profile for that display yet, but it does ship a Blizzard Edit Mode layout. Applying it repositions your frames and leaves every EllesmereUI setting untouched.", name),
+                        confirmText = EllesmereUI.L("Apply Layout"),
+                        cancelText  = EllesmereUI.L("Cancel"),
+                        onConfirm = function()
+                            if InCombatLockdown() then
+                                EllesmereUI:ShowInfoPopup({ title = EllesmereUI.L("In Combat"),
+                                    content = EllesmereUI.L("Edit Mode layouts cannot be changed in combat. Leave combat and try again.") })
+                                return
+                            end
+                            local ok = EllesmereUI.ApplyPresetEditMode
+                                and EllesmereUI.ApplyPresetEditMode(editStr, "EUI " .. name)
+                            if not ok then
+                                EllesmereUI:ShowInfoPopup({ title = EllesmereUI.L("Layout Not Applied"),
+                                    content = EllesmereUI.L("Blizzard's Edit Mode did not accept that layout. It may have been exported from a different game build.") })
+                                return
+                            end
+                            -- The confirm popup is a cached singleton, so let this
+                            -- one finish closing before raising the next.
+                            C_Timer.After(0.1, function()
+                                EllesmereUI:ShowConfirmPopup({
+                                    title       = EllesmereUI.L("Layout Applied"),
+                                    message     = EllesmereUI.L("Reload your UI so every frame settles into the new layout."),
+                                    confirmText = EllesmereUI.L("Reload Now"),
+                                    cancelText  = EllesmereUI.L("Later"),
+                                    onConfirm   = function() ReloadUI() end,
+                                })
+                            end)
+                        end,
+                    })
+                end
+
                 local function DoImport(displayKey)
                     local str = ImportStringFor(displayKey)
                     if not str then
+                        local editOnly = EditModeStringFor(displayKey)
+                        if editOnly then
+                            DoEditModeOnlyImport(editOnly)
+                            return
+                        end
                         EllesmereUI:ShowInfoPopup({ title = EllesmereUI.L("Not Available Yet"),
                             content = EllesmereUI.Lf("%1$s is not available to import for that resolution yet.", (current and current.name) or EllesmereUI.L("This preset")) })
                         return
@@ -5609,9 +5655,12 @@ initFrame:SetScript("OnEvent", function(self)
 
                 -- Dim a button when the current preset has no string for its
                 -- display type. Called from UpdateHero on preset change.
+                -- Enabled when the preset has either a full profile string or a
+                -- standalone Edit Mode layout for that display type; the latter
+                -- imports as placement-only.
                 RefreshPresetActions = function()
-                    btnRegular:SetAlpha(ImportStringFor("regular") and 1 or 0.4)
-                    btnUltrawide:SetAlpha(ImportStringFor("ultrawide") and 1 or 0.4)
+                    btnRegular:SetAlpha((ImportStringFor("regular") or EditModeStringFor("regular")) and 1 or 0.4)
+                    btnUltrawide:SetAlpha((ImportStringFor("ultrawide") or EditModeStringFor("ultrawide")) and 1 or 0.4)
                 end
             end
 
