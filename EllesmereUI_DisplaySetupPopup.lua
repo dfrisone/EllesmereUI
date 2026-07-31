@@ -364,8 +364,21 @@ local function ShowDisplaySetupPopup()
                 local halfExcess = HalfExcessWidth()
                 for _, e in ipairs(posSnap) do
                     e.tbl[e.key] = CorrectedX(e, pullFactor, halfExcess)
+                    -- tgtL/tgtR/tgtT/tgtB cache the frame's screen edges for
+                    -- Unlock Mode's snapping. They describe the OLD spot, so
+                    -- drop them and let the next drag recompute rather than
+                    -- snap against a position that no longer exists.
+                    e.tbl.tgtL, e.tbl.tgtR = nil, nil
+                    e.tbl.tgtT, e.tbl.tgtB = nil, nil
                 end
                 for _, h in ipairs(posHooks) do FireHook(h) end
+                -- The module apply hooks re-draw a bar's size and contents but
+                -- never re-read barPositions; only Unlock Mode's own pass walks
+                -- the stored anchors and moves the frames. Without this the
+                -- writes are correct and simply never reach the screen.
+                if type(EllesmereUI._applySavedPositions) == "function" then
+                    pcall(EllesmereUI._applySavedPositions)
+                end
             end,
         }
     end
