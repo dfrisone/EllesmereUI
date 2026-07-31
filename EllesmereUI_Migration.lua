@@ -4366,3 +4366,31 @@ EllesmereUI.RegisterMigration({
         end
     end,
 })
+
+-- The options panel is pinned to physical pixels (baseScale =
+-- GetScreenWidth()/physW) so it holds a constant physical size and does NOT
+-- follow the UI Scale slider. That reads fine at 1080p, but on a 1440p or 4K
+-- display the same pixel count covers far less of the screen: the panel arrives
+-- small and the UI Scale slider appears to do nothing to it. New installs now
+-- seed panelScale from the display height in EllesmereUI_Startup.lua; this
+-- brings existing high-DPI users up to the same value.
+--
+-- Only touches an EXACTLY-default 1.0 (or absent) panelScale, so anyone who
+-- picked a value -- including someone who deliberately chose 1.0 on a small
+-- display -- keeps it. Runs once via the global scope flag, so a user who
+-- later sets it back to 1.0 is not overridden again.
+EllesmereUI.RegisterMigration({
+    id          = "panel_scale_highdpi_seed_v1",
+    scope       = "global",
+    description = "Raise the default options-panel scale on 1440p and larger displays so it is readable without hunting for the setting.",
+    body        = function(ctx)
+        local db = ctx.db
+        if not db then return end
+        local cur = db.panelScale
+        if cur ~= nil and cur ~= 1.0 then return end   -- user chose something
+        local _, physH = GetPhysicalScreenSize()
+        if type(physH) ~= "number" or physH <= 0 then return end
+        local seeded = math.max(1, math.min(physH / 1080, 2))
+        if seeded > 1 then db.panelScale = seeded end
+    end,
+})
