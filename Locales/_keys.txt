@@ -51,7 +51,6 @@
 A profile named \
 AFK
 Abilities
-Action Bar Icon Size
 Activate Boss Preview
 Activate Custom Buff Manager
 Activate Movement Preview
@@ -121,6 +120,7 @@ Bag %d
 Bands
 Bank
 Bar %d
+Bar Icons
 Blizzard's Edit Mode did not accept that layout. It may have been exported from a different game build.
 BoE
 Border Style is only configurable when the Power Bar is detached. Attached Power Bars always use Solid.
@@ -613,10 +613,10 @@ UI Scale Issue: Profile was made at %1$d%%, yours is %2$d%%
 UI Scale Mismatch
 Ultrawide
 Ultrawide Import
-Ultrawide detected. Blizzard's default layout leaves chat and the minimap in the far corners, which a preset layout fixes.
+Ultrawide detected. Scale alone will not fix element placement.
 Unavailable with Enhancement 5-bar style.
 Uncheck All
-Unit Frame Size
+Unit Frames
 Unknown
 Unknown Item
 Unknown Macro

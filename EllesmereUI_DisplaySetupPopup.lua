@@ -347,13 +347,19 @@ local function ShowDisplaySetupPopup()
     ---------------------------------------------------------------------------
     --  Layout
     ---------------------------------------------------------------------------
-    local sliderCount = 1 + (hasFonts and 1 or 0) + (hasUF and 1 or 0) + (hasAB and 1 or 0)
+    -- One full-width slider for UI scale, the continuous value that wants a
+    -- live drag, and a two-column stepper grid for the percentage tweaks.
+    -- Four stacked full-width sliders made the panel far taller than the
+    -- amount of choice in it justified.
+    local stepperCount = (hasFonts and 1 or 0) + (hasUF and 1 or 0) + (hasAB and 1 or 0)
+    local stepperRows = floor((stepperCount + 1) / 2)
     local ROW_H = 46
-    local SAMPLE_H = 34
+    local STEP_ROW_H = 32
+    local SAMPLE_H = 26
     local POPUP_W = 520
-    local UW_H = 66
-    local POPUP_H = 258 + sliderCount * ROW_H + (hasFonts and SAMPLE_H or 0)
-        + (isUltrawide and UW_H or 0) + 96
+    local UW_H = 44
+    local POPUP_H = 236 + ROW_H + stepperRows * STEP_ROW_H
+        + (hasFonts and SAMPLE_H or 0) + (isUltrawide and UW_H or 0) + 92
 
     local dimmer = CreateFrame("Frame", "EUIDisplaySetupDimmer", UIParent)
     dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -605,24 +611,97 @@ local function ShowDisplaySetupPopup()
         return api
     end
 
-    local function PctFmt(v) return string.format("%d%%", Round(v)) end
+    ---------------------------------------------------------------------------
+    --  Compact stepper
+    --
+    --  A percentage that moves in fixed 5% notches does not need 300px of
+    --  track. Two arrows around a value read faster and cost a third of the
+    --  height. The arrow that can no longer act is dimmed rather than
+    --  disabled, since the label is drawn by us and would not grey itself.
+    ---------------------------------------------------------------------------
+    local STEP_COL, STEP_BTN, STEP_W = 122, 22, 62
+
+    local function MakeStepper(labelText, index, minV, maxV, step, initial, onChange)
+        local col = (index % 2 == 1) and -STEP_COL or STEP_COL
+        local row = floor((index - 1) / 2)
+
+        local wrap = CreateFrame("Frame", nil, popup)
+        wrap:SetFrameLevel(popup:GetFrameLevel() + 2)
+        PP.Size(wrap, (POPUP_W - 100) / 2 - 8, STEP_ROW_H)
+        PP.Point(wrap, "TOP", popup, "TOP", col, rowY - row * STEP_ROW_H)
+
+        local lbl = wrap:CreateFontString(nil, "OVERLAY")
+        lbl:SetFont(FONT, 13, "")
+        lbl:SetTextColor(1, 1, 1, 0.78)
+        lbl:SetJustifyH("LEFT")
+        PP.Point(lbl, "LEFT", wrap, "LEFT", 0, 0)
+        lbl:SetText(labelText)
+
+        local api = { value = initial }
+        local valTxt
+
+        local function MakeArrow(text, point, xOff, delta)
+            local b = CreateFrame("Button", nil, wrap)
+            b:SetFrameLevel(wrap:GetFrameLevel() + 1)
+            PP.Size(b, STEP_BTN, STEP_BTN)
+            PP.Point(b, point, wrap, point, xOff, 0)
+            local bbg = b:CreateTexture(nil, "BACKGROUND")
+            bbg:SetAllPoints()
+            bbg:SetColorTexture(0.10, 0.12, 0.14, 0.9)
+            local t = b:CreateFontString(nil, "OVERLAY")
+            t:SetFont(FONT, 14, "")
+            t:SetTextColor(1, 1, 1, 0.8)
+            PP.Point(t, "CENTER", b, "CENTER", 0, 0)
+            t:SetText(text)
+            b:SetScript("OnClick", function() api.Set(api.value + delta) end)
+            b._txt = t
+            return b
+        end
+
+        local minus = MakeArrow("-", "RIGHT", -(STEP_W + STEP_BTN), -step)
+        local plus  = MakeArrow("+", "RIGHT", 0, step)
+
+        valTxt = wrap:CreateFontString(nil, "OVERLAY")
+        valTxt:SetFont(FONT, 13, "")
+        valTxt:SetTextColor(EG.r, EG.g, EG.b, 0.95)
+        valTxt:SetJustifyH("CENTER")
+        PP.Point(valTxt, "RIGHT", plus, "LEFT", -6, 0)
+
+        function api.Set(v, silent)
+            v = max(minV, min(maxV, minV + Round((v - minV) / step) * step))
+            local changed = (v ~= api.value)
+            api.value = v
+            valTxt:SetText(string.format("%d%%", Round(v)))
+            minus:SetAlpha(v > minV and 1 or 0.35)
+            plus:SetAlpha(v < maxV and 1 or 0.35)
+            if not silent and changed then onChange(v) end
+        end
+
+        api.Set(initial, true)
+        return api
+    end
 
     sliders.scale = MakeSlider(EllesmereUI.L("UI Scale"), 0.40, 1.00, 0.01, baseScale,
         function(v) return string.format("%.2f", v) end,
         function(v) ApplyScale(v) end)
 
+    local stepIndex = 0
     if hasFonts then
-        sliders.font = MakeSlider(EllesmereUI.L("Font Size"), 80, 150, 5, 100, PctFmt,
+        stepIndex = stepIndex + 1
+        sliders.font = MakeStepper(EllesmereUI.L("Font Size"), stepIndex, 80, 150, 5, 100,
             function(v) ApplyFonts(v / 100) end)
     end
     if hasUF then
-        sliders.uf = MakeSlider(EllesmereUI.L("Unit Frame Size"), 80, 140, 5, 100, PctFmt,
+        stepIndex = stepIndex + 1
+        sliders.uf = MakeStepper(EllesmereUI.L("Unit Frames"), stepIndex, 80, 140, 5, 100,
             function(v) ApplyUF(v / 100) end)
     end
     if hasAB then
-        sliders.ab = MakeSlider(EllesmereUI.L("Action Bar Icon Size"), 80, 140, 5, 100, PctFmt,
+        stepIndex = stepIndex + 1
+        sliders.ab = MakeStepper(EllesmereUI.L("Bar Icons"), stepIndex, 80, 140, 5, 100,
             function(v) ApplyAB(v / 100) end)
     end
+    rowY = rowY - stepperRows * STEP_ROW_H
 
     -- Font sample. Nameplates only re-skin plates that currently exist, and at
     -- login there are usually none, so without this the font slider can look
@@ -737,17 +816,15 @@ local function ShowDisplaySetupPopup()
     -- rather than rearranging protected frames from here.
     if isUltrawide then
         local uwNote = popup:CreateFontString(nil, "OVERLAY")
-        uwNote:SetFont(FONT, 12, "")
-        uwNote:SetTextColor(1, 1, 1, 0.45)
-        uwNote:SetWidth(POPUP_W - 90)
+        uwNote:SetFont(FONT, 11, "")
+        uwNote:SetTextColor(1, 1, 1, 0.4)
         uwNote:SetJustifyH("CENTER")
-        uwNote:SetWordWrap(true)
-        PP.Point(uwNote, "BOTTOM", popup, "BOTTOM", 0, 40 + BTN_H + 44)
-        uwNote:SetText(EllesmereUI.L("Ultrawide detected. Blizzard's default layout leaves chat and the minimap in the far corners, which a preset layout fixes."))
+        PP.Point(uwNote, "BOTTOM", popup, "BOTTOM", 0, 40 + BTN_H + 34)
+        uwNote:SetText(EllesmereUI.L("Ultrawide detected. Scale alone will not fix element placement."))
 
         local uwBtn = MakeActionButton(EllesmereUI.L("Browse Ultrawide Layouts"), EG.r, EG.g, EG.b, true)
-        PP.Size(uwBtn, BTN_W * 2 + BTN_GAP, BTN_H)
-        PP.Point(uwBtn, "BOTTOM", popup, "BOTTOM", 0, 40 + BTN_H + 8)
+        PP.Size(uwBtn, BTN_W * 2 + BTN_GAP, 30)
+        PP.Point(uwBtn, "BOTTOM", popup, "BOTTOM", 0, 40 + BTN_H + 4)
         uwBtn:SetScript("OnClick", function()
             -- Keep whatever the player already tuned, then hand off.
             Finish(true)
