@@ -396,12 +396,14 @@ local function ShowDisplaySetupPopup()
                     e.tbl.tgtT, e.tbl.tgtB = nil, nil
                 end
 
-                -- Module apply hooks redraw size and contents but never re-read
-                -- stored anchors; only this pass walks them and moves frames.
-                if type(EllesmereUI._applySavedPositions) == "function" then
-                    pcall(EllesmereUI._applySavedPositions)
-                end
+                -- Deliberately NOT live-applied. The writes above land in the
+                -- profile, and a reload makes every module re-read them from
+                -- scratch at login. Trying to push them onto live frames means
+                -- chasing each module's apply path, its caches and its anchor
+                -- chains, and anything missed leaves an element behind at the
+                -- old spot. Finish forces the reload; see needsReload below.
             end,
+            needsReload = true,
         }
     end
 
@@ -599,11 +601,12 @@ local function ShowDisplaySetupPopup()
     local function Finish()
         if not EllesmereUIDB then EllesmereUIDB = {} end
 
-        local scaleChanged = false
+        local scaleChanged, mustReload = false, false
         for _, tweak in ipairs(tweaks) do
             if tweak.on then
                 pcall(tweak.apply)
                 if tweak.key == "scale" then scaleChanged = true end
+                if tweak.needsReload then mustReload = true end
             end
         end
 
@@ -612,13 +615,17 @@ local function ShowDisplaySetupPopup()
         dimmer:Hide()
         ReleaseConflictCheck()
 
-        -- Positions and scale both need a settle; the Edit Mode snapping
-        -- caveat is the same one the options-page scale slider raises.
-        local touched = scaleChanged
-        for _, tweak in ipairs(tweaks) do
-            if tweak.on and tweak.key == "positions" then touched = true end
+        -- Repositioning is only half-done until the reload, so it is not
+        -- offered as a choice: a "Later" would leave elements split between
+        -- their old and new spots for the rest of the session.
+        if mustReload then
+            ReloadUI()
+            return
         end
-        if touched and EllesmereUI.ShowConfirmPopup then
+
+        -- Scale alone settles live; the reload only fixes Blizzard's Edit Mode
+        -- snapping, which is the same caveat the options-page slider raises.
+        if scaleChanged and EllesmereUI.ShowConfirmPopup then
             EllesmereUI:ShowConfirmPopup({
                 title = "UI Scale Changed",
                 message = "Blizzard's Edit Mode snapping may not work correctly until you reload your UI.",
