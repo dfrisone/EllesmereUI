@@ -208,7 +208,10 @@ local function ShowDisplaySetupPopup()
     local physW, physH = GetPhysicalScreenSize()
     physW = (type(physW) == "number" and physW > 0) and physW or 1920
     physH = (type(physH) == "number" and physH > 0) and physH or 1080
+    -- 2.0 is the same threshold the preset gallery uses to pick Ultrawide
+    -- Import, so the two never disagree about what this monitor is.
     local aspect = physW / physH
+    local isUltrawide = aspect >= 2.0
 
     -- Which unit frames / action bars exist to size.
     local ufProfile = IsLoaded("EllesmereUIUnitFrames") and AddonProfile("EllesmereUIUnitFrames") or nil
@@ -348,7 +351,9 @@ local function ShowDisplaySetupPopup()
     local ROW_H = 46
     local SAMPLE_H = 34
     local POPUP_W = 520
-    local POPUP_H = 258 + sliderCount * ROW_H + (hasFonts and SAMPLE_H or 0) + 96
+    local UW_H = 66
+    local POPUP_H = 258 + sliderCount * ROW_H + (hasFonts and SAMPLE_H or 0)
+        + (isUltrawide and UW_H or 0) + 96
 
     local dimmer = CreateFrame("Frame", "EUIDisplaySetupDimmer", UIParent)
     dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -436,7 +441,7 @@ local function ShowDisplaySetupPopup()
     local uwScale = max(0.4, min(768 / physH, 1.15))
 
     local detected
-    if aspect >= 2.1 then detected = "ultrawide"
+    if isUltrawide then detected = "ultrawide"
     elseif physH >= 1900 then detected = "4K"
     elseif physH >= 1300 then detected = "1440p"
     else detected = "1080p" end
@@ -723,6 +728,37 @@ local function ShowDisplaySetupPopup()
     local cancelBtn = MakeActionButton(EllesmereUI.L("Cancel"), 1, 1, 1, true)
     PP.Point(cancelBtn, "BOTTOMLEFT", popup, "BOTTOM", BTN_GAP / 2, 40)
     cancelBtn:SetScript("OnClick", function() Finish(false) end)
+
+    -- Ultrawide: scale and font size cannot fix element placement. Chat, the
+    -- minimap and the quest tracker are positioned by Blizzard Edit Mode, and
+    -- its 16:9 defaults strand them in the far corners of a 21:9 screen. The
+    -- preset gallery already ships ultrawide Edit Mode layouts and auto-selects
+    -- Ultrawide Import at this same aspect threshold, so point the player there
+    -- rather than rearranging protected frames from here.
+    if isUltrawide then
+        local uwNote = popup:CreateFontString(nil, "OVERLAY")
+        uwNote:SetFont(FONT, 12, "")
+        uwNote:SetTextColor(1, 1, 1, 0.45)
+        uwNote:SetWidth(POPUP_W - 90)
+        uwNote:SetJustifyH("CENTER")
+        uwNote:SetWordWrap(true)
+        PP.Point(uwNote, "BOTTOM", popup, "BOTTOM", 0, 40 + BTN_H + 44)
+        uwNote:SetText(EllesmereUI.L("Ultrawide detected. Blizzard's default layout leaves chat and the minimap in the far corners, which a preset layout fixes."))
+
+        local uwBtn = MakeActionButton(EllesmereUI.L("Browse Ultrawide Layouts"), EG.r, EG.g, EG.b, true)
+        PP.Size(uwBtn, BTN_W * 2 + BTN_GAP, BTN_H)
+        PP.Point(uwBtn, "BOTTOM", popup, "BOTTOM", 0, 40 + BTN_H + 8)
+        uwBtn:SetScript("OnClick", function()
+            -- Keep whatever the player already tuned, then hand off.
+            Finish(true)
+            if EllesmereUI.NavigateToElementSettings then
+                EllesmereUI:NavigateToElementSettings("_EUIProfiles", "Presets")
+            elseif EllesmereUI.SelectModule then
+                EllesmereUI:Show()
+                EllesmereUI:SelectModule("_EUIProfiles")
+            end
+        end)
+    end
 
     local footnote = popup:CreateFontString(nil, "OVERLAY")
     footnote:SetFont(FONT, 12, "")
