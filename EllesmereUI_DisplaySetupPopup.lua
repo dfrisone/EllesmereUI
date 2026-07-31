@@ -200,7 +200,8 @@ end
 local function ShowDisplaySetupPopup()
     local FONT = EllesmereUI._font or ("Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.ttf")
     local EG = ELLESMERE_GREEN
-    local ppScale = (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
+    local ppScale = (EllesmereUI.GetSetupPopupScale and EllesmereUI.GetSetupPopupScale())
+        or (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
 
     -- Detected resolution. PP.RefreshPhysical falls back to 1920x1080 when the
     -- API reports nothing, so these are always usable numbers.
@@ -281,7 +282,9 @@ local function ShowDisplaySetupPopup()
     ---------------------------------------------------------------------------
     --  Setters (single code path for both sliders and presets)
     ---------------------------------------------------------------------------
-    local popup   -- forward declaration; the scale setter counter-scales it
+    local popup        -- forward declaration; the scale setter counter-scales it
+    local fontSample   -- live sample text, resized by the font slider
+    local SAMPLE_BASE = 15
 
     local curScale = baseScale
     local curFont, curUF, curAB = 1.0, 1.0, 1.0
@@ -307,6 +310,12 @@ local function ShowDisplaySetupPopup()
 
     local function ApplyFonts(f)
         curFont = f
+        -- The affected text is often not on screen during setup: no nameplates
+        -- spawned yet, no quests tracked, an empty chat. The sample gives the
+        -- slider immediate feedback regardless.
+        if fontSample then
+            fontSample:SetFont(FONT, max(6, Round(SAMPLE_BASE * f)), "")
+        end
         if not hasFonts then return end
         ApplyFactor(fontSnap, f)
         for _, hook in ipairs(fontHooks) do FireHook(hook) end
@@ -337,8 +346,9 @@ local function ShowDisplaySetupPopup()
     ---------------------------------------------------------------------------
     local sliderCount = 1 + (hasFonts and 1 or 0) + (hasUF and 1 or 0) + (hasAB and 1 or 0)
     local ROW_H = 46
+    local SAMPLE_H = 34
     local POPUP_W = 520
-    local POPUP_H = 258 + sliderCount * ROW_H + 96
+    local POPUP_H = 258 + sliderCount * ROW_H + (hasFonts and SAMPLE_H or 0) + 96
 
     local dimmer = CreateFrame("Frame", "EUIDisplaySetupDimmer", UIParent)
     dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -352,7 +362,7 @@ local function ShowDisplaySetupPopup()
     dimTex:SetColorTexture(0, 0, 0, 0.35)
 
     popup = CreateFrame("Frame", "EUIDisplaySetupPopup", dimmer)
-    popup:SetScale(ppScale * 1.15)
+    popup:SetScale(ppScale)
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
     PP.Size(popup, POPUP_W, POPUP_H)
@@ -607,6 +617,20 @@ local function ShowDisplaySetupPopup()
     if hasAB then
         sliders.ab = MakeSlider(EllesmereUI.L("Action Bar Icon Size"), 80, 140, 5, 100, PctFmt,
             function(v) ApplyAB(v / 100) end)
+    end
+
+    -- Font sample. Nameplates only re-skin plates that currently exist, and at
+    -- login there are usually none, so without this the font slider can look
+    -- like it does nothing.
+    if hasFonts then
+        fontSample = popup:CreateFontString(nil, "OVERLAY")
+        fontSample:SetFont(FONT, SAMPLE_BASE, "")
+        fontSample:SetTextColor(1, 1, 1, 0.7)
+        fontSample:SetJustifyH("CENTER")
+        fontSample:SetWidth(POPUP_W - 100)
+        PP.Point(fontSample, "TOP", popup, "TOP", 0, rowY - 4)
+        fontSample:SetText(EllesmereUI.L("The quick brown fox jumps over the lazy dog"))
+        rowY = rowY - SAMPLE_H
     end
 
     ---------------------------------------------------------------------------

@@ -5994,6 +5994,21 @@ local function GetPopupScale()
 end
 EllesmereUI.GetPopupScale = GetPopupScale
 
+-- Setup-style popups (first install, display setup) are content-heavy and have
+-- to stay readable on large monitors. GetPopupScale pins a popup to physical
+-- pixels, so a 470-unit panel is always ~470 physical pixels: a quarter of the
+-- screen at 1080p, but only an eighth at 4K, which reads as "the setup window
+-- is tiny". Scale up with panel height, capped at 2x, so the panel holds a
+-- roughly constant fraction of the screen. 1080p is unchanged.
+-- Declared straight onto the table: the main chunk sits at Lua's 200-local
+-- limit, so a `local function` here fails to compile.
+function EllesmereUI.GetSetupPopupScale()
+    local _, physH = GetPhysicalScreenSize()
+    if type(physH) ~= "number" or physH <= 0 then physH = 1080 end
+    local dpiFactor = math.max(1, math.min(physH / 1080, 2))
+    return GetPopupScale() * dpiFactor
+end
+
 local function RefreshPopupScales()
     local s = GetPopupScale()
     for _, entry in ipairs(_popupFrames) do
