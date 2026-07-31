@@ -49,6 +49,16 @@ end
 local S      -- active session, nil when idle
 local last   -- last finished session, kept for /euibench report
 
+-- Always-on engine profiler (no scriptProfile CVar needed): recent average
+-- ms/frame across ALL addons. Guarded because the API family is newer than
+-- the oldest Interface version in the TOC. Per-module tables are phase 3.
+local METRIC_RECENT = Enum and Enum.AddOnProfilerMetric and Enum.AddOnProfilerMetric.RecentAverageTime
+function B.OverallCpuMs()
+    if C_AddOnProfiler and C_AddOnProfiler.GetOverallMetric and METRIC_RECENT then
+        return C_AddOnProfiler.GetOverallMetric(METRIC_RECENT)
+    end
+end
+
 local samplerFrame = CreateFrame("Frame")
 samplerFrame:Hide()
 
@@ -106,6 +116,14 @@ local function SamplerTick(_, elapsed)
             S.gcCycles = S.gcCycles + 1
         end
         S.luaPrev = cur
+        -- CPU rides the same 1Hz tick: the engine's own recent average, so
+        -- sampling it costs a table lookup rather than any measurement work.
+        local cpu = B.OverallCpuMs()
+        if cpu then
+            S.cpuSamples = S.cpuSamples + 1
+            S.cpuSum = S.cpuSum + cpu
+            if cpu > S.cpuMax then S.cpuMax = cpu end
+        end
     end
 
     S.selfMs = S.selfMs + (debugprofilestop() - t0)
@@ -136,6 +154,7 @@ function B.StartSession(label)
         memAcc = 0, luaStart = luaNow, luaPrev = luaNow,
         luaMin = luaNow, luaMax = luaNow,
         allocKB = 0, gcCycles = 0,
+        cpuSamples = 0, cpuSum = 0, cpuMax = 0,
         combatSec = 0, combatT0 = InCombatLockdown() and GetTime() or nil,
         selfMs = 0,
         memStart = memStart,
@@ -179,25 +198,54 @@ function B.PrintReport()
         return
     end
     local dur = R.duration > 0 and R.duration or 0.001
-    print(format("|cff0cd29fBench:|r \"%s\"  %.1fs  %d frames  %.1f avg fps  combat %d%%",
-        R.label, dur, R.frames, R.frames / dur, floor(R.combatSec / dur * 100 + 0.5)))
-    print(format("|cff0cd29fBench:|r frame ms  p50 %.2f  p95 %.2f  p99 %.2f  max %.1f",
+    local function Line(label, value)
+        print(format("|cff0cd29f%-18s|r %s", label .. ":", value))
+    end
+
+    print(format("|cff0cd29f=== EllesmereUI Benchmark ===|r  session \"%s\"", R.label))
+    Line("Duration", format("%.1f s   (%d frames, %.1f%% of it in combat)",
+        dur, R.frames, R.combatSec / dur * 100))
+    Line("Average FPS", format("%.1f", R.frames / dur))
+
+    -- Frame time: the percentiles are the honest smoothness measure. p99 is
+    -- what a player calls "it stutters" even when the average looks fine.
+    Line("Frame Time", format("p50 %.2f ms   p95 %.2f ms   p99 %.2f ms   worst %.1f ms",
         R.p50, R.p95, R.p99, R.maxMs))
-    print(format("|cff0cd29fBench:|r hitches  >16.7ms %d (%.1f%%)  >33ms %d  >100ms %d",
+    Line("Hitches", format("%d over 16.7 ms (%.1f%%)   %d over 33 ms   %d over 100 ms",
         R.over16, R.frames > 0 and R.over16 / R.frames * 100 or 0, R.over33, R.over100))
-    print(format("|cff0cd29fBench:|r lua heap %.1f -> %.1f MB (min %.1f, max %.1f)  alloc %.0f KB/s  gc cycles %d",
-        R.luaStart / 1024, R.luaStop / 1024, R.luaMin / 1024, R.luaMax / 1024,
+
+    -- CPU Load: engine figure for ALL addons together, i.e. how much of each
+    -- frame every addon costs. NOT EllesmereUI's share -- confusing the two
+    -- denominators is what turns a normal number into a scary one. Per-module
+    -- attribution lands in phase 3.
+    if R.cpuSamples > 0 then
+        Line("CPU Load", format("%.2f ms/frame avg   %.2f ms peak   (all addons combined)",
+            R.cpuSum / R.cpuSamples, R.cpuMax))
+    else
+        Line("CPU Load", "unavailable on this client build")
+    end
+
+    -- Allocation rate drives GC stutter; the absolute heap size rarely matters.
+    Line("Lua Memory", format("%.1f -> %.1f MB   (low %.1f, high %.1f)",
+        R.luaStart / 1024, R.luaStop / 1024, R.luaMin / 1024, R.luaMax / 1024))
+    Line("Alloc Rate", format("%.0f KB/s   %d garbage collections",
         R.allocKB / dur, R.gcCycles))
+
     local rows, totalKB = {}, 0
     for name, stopKB in pairs(R.memStop) do
         totalKB = totalKB + stopKB
         rows[#rows + 1] = { name = name, delta = stopKB - (R.memStart[name] or 0) }
     end
     table.sort(rows, function(a, b) return math.abs(a.delta) > math.abs(b.delta) end)
-    print(format("|cff0cd29fBench:|r module memory %.1f MB total, session deltas (KB):", totalKB / 1024))
+    Line("Module Memory", format("%.1f MB total across %d EllesmereUI addons", totalKB / 1024, #rows))
+    print("|cff0cd29f  Biggest movers this session (KB):|r")
     for i = 1, math.min(#rows, 10) do
-        print(format("  %-34s %+9.1f", rows[i].name, rows[i].delta))
+        print(format("    %-34s %+9.1f KB", rows[i].name, rows[i].delta))
     end
-    print(format("|cff0cd29fBench:|r harness cost %.1f ms total, %.1f us/frame (%.2f%% of session)",
-        R.selfMs, R.frames > 0 and R.selfMs * 1000 / R.frames or 0, R.selfMs / (dur * 1000) * 100))
+
+    -- Printed every time on purpose: a benchmark that hides its own cost is
+    -- reporting its own overhead as the addon's.
+    Line("Harness Cost", format("%.1f ms total   %.1f us/frame   %.2f%% of session",
+        R.selfMs, R.frames > 0 and R.selfMs * 1000 / R.frames or 0,
+        R.selfMs / (dur * 1000) * 100))
 end

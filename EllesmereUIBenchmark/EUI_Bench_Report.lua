@@ -15,7 +15,7 @@ local hud
 
 local function BuildHud()
     hud = CreateFrame("Frame", "EUI_BenchHud", UIParent)
-    hud:SetSize(250, 42)
+    hud:SetSize(268, 92)
     hud:SetFrameStrata("HIGH")
     local pos = B.db.profile.benchHudPos
     if pos then
@@ -39,12 +39,34 @@ local function BuildHud()
         B.db.profile.benchHudPos = { point, x, y }
     end)
 
-    hud.line1 = hud:CreateFontString(nil, "OVERLAY")
-    hud.line1:SetFont(FONT, 13, "OUTLINE")
-    hud.line1:SetPoint("TOP", hud, "TOP", 0, -7)
-    hud.line2 = hud:CreateFontString(nil, "OVERLAY")
-    hud.line2:SetFont(FONT, 12, "OUTLINE")
-    hud.line2:SetPoint("TOP", hud.line1, "BOTTOM", 0, -4)
+    hud.title = hud:CreateFontString(nil, "OVERLAY")
+    hud.title:SetFont(FONT, 11, "OUTLINE")
+    hud.title:SetPoint("TOPLEFT", hud, "TOPLEFT", 10, -6)
+    hud.title:SetTextColor(0.05, 0.82, 0.62, 1)
+    hud.title:SetText("EllesmereUI Benchmark")
+
+    hud.status = hud:CreateFontString(nil, "OVERLAY")
+    hud.status:SetFont(FONT, 11, "OUTLINE")
+    hud.status:SetPoint("TOPRIGHT", hud, "TOPRIGHT", -10, -6)
+
+    -- Two columns: labels never change, so only the value strings are
+    -- rewritten each refresh.
+    local ROWS = { "FPS", "Frame Time", "CPU Load", "Memory" }
+    hud.values = {}
+    for i, label in ipairs(ROWS) do
+        local y = -22 - (i - 1) * 16
+        local l = hud:CreateFontString(nil, "OVERLAY")
+        l:SetFont(FONT, 12, "OUTLINE")
+        l:SetPoint("TOPLEFT", hud, "TOPLEFT", 10, y)
+        l:SetJustifyH("LEFT")
+        l:SetTextColor(1, 1, 1, 0.55)
+        l:SetText(label)
+        local v = hud:CreateFontString(nil, "OVERLAY")
+        v:SetFont(FONT, 12, "OUTLINE")
+        v:SetPoint("TOPRIGHT", hud, "TOPRIGHT", -10, y)
+        v:SetJustifyH("RIGHT")
+        hud.values[i] = v
+    end
 
     -- 5s peak window + 1Hz heap delta; text refreshed at 2Hz through
     -- SetFormattedText, which formats in C and allocates no Lua strings.
@@ -70,15 +92,21 @@ local function BuildHud()
         textAcc = textAcc + elapsed
         if textAcc >= 0.5 then
             textAcc = 0
-            self.line1:SetFormattedText("%.0f fps   %.1f ms   peak(5s) %.0f ms",
-                GetFramerate(), ms, winMax)
+            local v = self.values
+            v[1]:SetFormattedText("%.0f", GetFramerate())
+            v[2]:SetFormattedText("%.1f ms   peak(5s) %.0f ms", ms, winMax)
+            local cpu = B.OverallCpuMs()
+            if cpu then
+                v[3]:SetFormattedText("%.2f ms/frame  all addons", cpu)
+            else
+                v[3]:SetText("n/a")
+            end
+            v[4]:SetFormattedText("%.1f MB   %+d KB/s", collectgarbage("count") / 1024, rateKB)
             local el = B.SessionElapsed()
             if el then
-                self.line2:SetFormattedText("%.1f MB   %+d KB/s   |cffff4040REC|r %d:%02d",
-                    collectgarbage("count") / 1024, rateKB, floor(el / 60), floor(el % 60))
+                self.status:SetFormattedText("|cffff4040REC|r %d:%02d", floor(el / 60), floor(el % 60))
             else
-                self.line2:SetFormattedText("%.1f MB   %+d KB/s   idle",
-                    collectgarbage("count") / 1024, rateKB)
+                self.status:SetText("|cff808080idle|r")
             end
         end
     end)
