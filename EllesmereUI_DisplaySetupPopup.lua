@@ -214,11 +214,6 @@ local function HalfExcessWidth()
     return max(0, (w - h * SIXTEEN_NINE) / 2)
 end
 
-local EDGE_ANCHOR = {
-    LEFT = 1, TOPLEFT = 1, BOTTOMLEFT = 1,
-    RIGHT = -1, TOPRIGHT = -1, BOTTOMRIGHT = -1,
-}
-
 -- Anything with a numeric x and a point/relPoint pair is a stored anchor.
 local function IsAnchorTable(t)
     return type(t) == "table" and type(t.x) == "number" and type(t.point) == "string"
@@ -237,13 +232,6 @@ local function CollectAnchors(root, depth, out)
             CollectAnchors(v, depth + 1, out)
         end
     end
-end
-
--- Where this anchor's x should land on the equivalent 16:9 screen.
-local function CorrectedX(entry, factor, halfExcess)
-    local dir = EDGE_ANCHOR[entry.point]
-    if dir then return entry.base + dir * halfExcess end
-    return entry.base * factor
 end
 
 -- Every movable element registers a loadPosition/savePosition pair with Unlock
@@ -365,10 +353,6 @@ local function ShowDisplaySetupPopup()
     local scaleIsOff = abs(curScale - bestScale) > 0.005
 
     local fontSnap, fontHooks = CollectFontTargets()
-    local regPos = CollectRegisteredPositions()
-    local barPos = CollectBarPositions()
-    local posCount = #regPos + #barPos
-    local pullFactor = HorizontalPullFactor(aspect)
 
     local screenLabel = string.format("%dx%d", physW, physH)
     local kindLabel
@@ -411,43 +395,27 @@ local function ShowDisplaySetupPopup()
         }
     end
 
-    if isUltrawide and posCount > 0 then
-        tweaks[#tweaks + 1] = {
-            key = "positions",
-            label = EllesmereUI.L("Element Positions"),
-            apply = function()
-                local halfExcess = HalfExcessWidth()
-
-                -- Registered elements: hand the corrected x back through the
-                -- module's own writer so its storage convention is respected.
-                for _, e in ipairs(regPos) do
-                    local newX = CorrectedX(
-                        { base = e.pos.x, point = e.pos.point }, pullFactor, halfExcess)
-                    pcall(e.elem.savePosition, e.key, e.pos.point,
-                        e.pos.relPoint or e.pos.point, newX, e.pos.y)
-                end
-
-                -- Action bars write straight to barPositions.
-                for _, e in ipairs(barPos) do
-                    e.tbl[e.key] = CorrectedX(e, pullFactor, halfExcess)
-                    -- tgtL/tgtR/tgtT/tgtB cache the frame's screen edges for
-                    -- Unlock Mode's snapping. They describe the OLD spot, so
-                    -- drop them and let the next drag recompute rather than
-                    -- snap against a position that no longer exists.
-                    e.tbl.tgtL, e.tbl.tgtR = nil, nil
-                    e.tbl.tgtT, e.tbl.tgtB = nil, nil
-                end
-
-                -- Deliberately NOT live-applied. The writes above land in the
-                -- profile, and a reload makes every module re-read them from
-                -- scratch at login. Trying to push them onto live frames means
-                -- chasing each module's apply path, its caches and its anchor
-                -- chains, and anything missed leaves an element behind at the
-                -- old spot. Finish forces the reload; see needsReload below.
-            end,
-            needsReload = true,
-        }
-    end
+    -- Element repositioning is deliberately NOT offered yet.
+    --
+    -- The first attempt derived it: scale each x by (16:9 / aspect) to put
+    -- every element where it would sit on a 16:9 screen. /euiuwdebug on a
+    -- 3440x1440 client showed why that can never work. All 51 positioned
+    -- elements are already centred, within about 100 units of the midline
+    -- (Bar6 x=0, targetCastbar x=0, XPBar x=0, boss x=86, target x=51), so the
+    -- factor moved them by a few pixels at most.
+    --
+    -- The problem on ultrawide is the opposite of what that correction assumed.
+    -- Nothing is flung out to the corners needing to be pulled in; everything
+    -- is bunched in the middle because that is where a 16:9 layout puts it, and
+    -- the ~440 units of extra space on each side go unused. A useful ultrawide
+    -- layout pushes elements OUT into that space.
+    --
+    -- Which elements move out, and to where, is a layout decision rather than a
+    -- formula: there is no derivation that knows the damage meters belong on
+    -- the right and the minimap higher than the tracker. Those positions have
+    -- to be authored once on an ultrawide screen and shipped as defaults.
+    -- /euiuwcapture records them. Until they exist, offering a toggle that
+    -- measurably does nothing is worse than not offering it.
 
     if isUltrawide and IsLoaded("EllesmereUIMinimap") then
         local mm = AddonProfile("EllesmereUIMinimap")
