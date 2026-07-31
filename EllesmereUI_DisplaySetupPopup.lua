@@ -186,10 +186,38 @@ end
 --  This is why an Edit Mode layout alone did not fix anything. That only moves
 --  Blizzard's own frames; every EUI element is placed from these profile keys.
 -------------------------------------------------------------------------------
+-- x means different things depending on the anchor, which is the whole trick:
+--
+--   CENTER / TOP / BOTTOM   x is an offset either side of the screen midline.
+--                           Widening the screen does not move the midline, but
+--                           a layout authored for 16:9 chose that offset
+--                           against a narrower screen, so scale it by
+--                           (16:9 / aspect) to keep the same relative reach.
+--
+--   LEFT / RIGHT / corners  x is an offset from a screen EDGE, and the edge
+--                           itself has moved outward by half the extra width.
+--                           Push it back in by exactly that much. Scaling these
+--                           drags them further INTO the corner, which is why
+--                           edge-anchored elements ended up worse, not better.
+--
+-- Net effect: every element lands where it would sit on a 16:9 screen of the
+-- same height. Vertical offsets are never touched; height is the constant.
 local function HorizontalPullFactor(aspect)
     if not aspect or aspect <= SIXTEEN_NINE then return 1 end
     return SIXTEEN_NINE / aspect
 end
+
+-- UI units of extra width per side versus a 16:9 screen of the same height.
+local function HalfExcessWidth()
+    local w, h = GetScreenWidth(), GetScreenHeight()
+    if type(w) ~= "number" or type(h) ~= "number" or h <= 0 then return 0 end
+    return max(0, (w - h * SIXTEEN_NINE) / 2)
+end
+
+local EDGE_ANCHOR = {
+    LEFT = 1, TOPLEFT = 1, BOTTOMLEFT = 1,
+    RIGHT = -1, TOPRIGHT = -1, BOTTOMRIGHT = -1,
+}
 
 -- Anything with a numeric x and a point/relPoint pair is a stored anchor.
 local function IsAnchorTable(t)
@@ -204,11 +232,18 @@ local function CollectAnchors(root, depth, out)
     if type(root) ~= "table" or depth > 3 then return end
     for _, v in pairs(root) do
         if IsAnchorTable(v) then
-            out[#out + 1] = { tbl = v, key = "x", base = v.x }
+            out[#out + 1] = { tbl = v, key = "x", base = v.x, point = v.point }
         elseif type(v) == "table" then
             CollectAnchors(v, depth + 1, out)
         end
     end
+end
+
+-- Where this anchor's x should land on the equivalent 16:9 screen.
+local function CorrectedX(entry, factor, halfExcess)
+    local dir = EDGE_ANCHOR[entry.point]
+    if dir then return entry.base + dir * halfExcess end
+    return entry.base * factor
 end
 
 local POSITION_MODULES = {
@@ -326,8 +361,9 @@ local function ShowDisplaySetupPopup()
             key = "positions",
             label = EllesmereUI.L("Element Positions"),
             apply = function()
+                local halfExcess = HalfExcessWidth()
                 for _, e in ipairs(posSnap) do
-                    e.tbl[e.key] = e.base * pullFactor
+                    e.tbl[e.key] = CorrectedX(e, pullFactor, halfExcess)
                 end
                 for _, h in ipairs(posHooks) do FireHook(h) end
             end,
