@@ -1,0 +1,14 @@
+## Interface: 120000, 120001, 120005, 120007, 120100
+## Title: |cff0cd29fEllesmereUI|r Benchmark
+## Category: |cff0cd29fEllesmere|rUI
+## Group: EllesmereUI
+## Notes: Dev-only performance benchmark. Excluded from release builds.
+## Author: Ellesmere
+## Version: 8.6.8
+## Dependencies: EllesmereUI
+## SavedVariables: EllesmereUIBenchmarkDB
+## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
+
+EUI_Bench_Core.lua
+EUI_Bench_Report.lua
+EUI_Bench_Options.lua
