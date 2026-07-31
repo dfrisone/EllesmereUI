@@ -887,3 +887,94 @@ SlashCmdList["EUIUWCAPTURE"] = function()
         count, physW or 0, physH or 0, tostring(EllesmereUIDB.activeProfile)))
     print("|cff00ff98EllesmereUI:|r now /reload so it is written to disk.")
 end
+
+-------------------------------------------------------------------------------
+--  Repositioning diagnostics
+--
+--  Four attempts at this failed because each fix was a guess about why nothing
+--  moved, verified only by "it still does not work". This reports what the code
+--  actually sees so the next change is aimed at a measured cause: how many
+--  elements the registry holds, how many are usable, why the rest are skipped,
+--  and what would change for the ones that qualify.
+--
+--  Read-only. It never writes and never applies.
+-------------------------------------------------------------------------------
+SLASH_EUIUWDEBUG1 = "/euiuwdebug"
+SlashCmdList["EUIUWDEBUG"] = function()
+    local function say(fmt, ...)
+        print("|cff00ff98EUI-UW:|r " .. string.format(fmt, ...))
+    end
+
+    local physW, physH = GetPhysicalScreenSize()
+    physW = (type(physW) == "number" and physW > 0) and physW or 1920
+    physH = (type(physH) == "number" and physH > 0) and physH or 1080
+    local aspect = physW / physH
+    say("screen %dx%d  aspect %.3f  ultrawide=%s", physW, physH, aspect,
+        tostring(aspect >= 2.0))
+    say("screen units %.0fx%.0f  halfExcess %.0f  centreFactor %.3f",
+        GetScreenWidth() or 0, GetScreenHeight() or 0,
+        HalfExcessWidth(), HorizontalPullFactor(aspect))
+
+    local reg = EllesmereUI._unlockRegisteredElements
+    if type(reg) ~= "table" then
+        say("|cffff6600registry MISSING|r (EllesmereUI._unlockRegisteredElements is %s)",
+            type(reg))
+        return
+    end
+
+    local total, noSave, stored, synth, noFrame, hidden, noCentre = 0, 0, 0, 0, 0, 0, 0
+    local samples = {}
+    for key, elem in pairs(reg) do
+        total = total + 1
+        if type(elem) ~= "table" or not elem.savePosition then
+            noSave = noSave + 1
+        else
+            local pos
+            if elem.loadPosition then
+                local ok, p = pcall(elem.loadPosition, key)
+                if ok and type(p) == "table" and type(p.x) == "number"
+                   and type(p.point) == "string" then
+                    pos = p
+                end
+            end
+            if pos then
+                stored = stored + 1
+                if #samples < 6 then
+                    samples[#samples + 1] = string.format(
+                        "%s stored %s x=%.0f", tostring(key), pos.point, pos.x)
+                end
+            else
+                local f
+                if elem.getFrame then
+                    local ok, got = pcall(elem.getFrame, key)
+                    if ok then f = got end
+                end
+                if not (f and f.GetCenter) then
+                    noFrame = noFrame + 1
+                elseif not f:IsShown() then
+                    hidden = hidden + 1
+                else
+                    local ox = CentreOffset(f)
+                    if not ox then
+                        noCentre = noCentre + 1
+                    else
+                        synth = synth + 1
+                        if #samples < 6 then
+                            samples[#samples + 1] = string.format(
+                                "%s live x=%.0f", tostring(key), ox)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    say("registry %d elements: %d stored, %d from live frame, usable=%d",
+        total, stored, synth, stored + synth)
+    say("skipped: %d no savePosition, %d no frame, %d hidden, %d no centre",
+        noSave, noFrame, hidden, noCentre)
+    for _, s in ipairs(samples) do say("  %s", s) end
+
+    local bars = CollectBarPositions()
+    say("action bar anchors: %d", #bars)
+end
