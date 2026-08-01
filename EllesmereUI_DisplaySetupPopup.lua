@@ -104,100 +104,117 @@ local function FireHook(name)
 end
 
 -------------------------------------------------------------------------------
---  Font targets
+--  Font keys
 --
---  EUI has no global font-size setting: sizes live in per-module profile keys.
---  Modules carry more than one family of them and which one is live depends on
---  the module's own layout options, so every known key is listed and anything
---  missing or non-numeric is skipped. Listing a key that is not in use costs
---  nothing; missing the one that IS in use is why this looked broken.
+--  Found by name, not from a hand-kept list. The first version listed keys
+--  explicitly, picked friendlyNameTextSize when the live key was
+--  friendlyNameSize, and silently scaled nothing: a list goes stale the moment
+--  a module adds a key, and nothing tells you it has.
+--
+--  The two ways of being wrong are not equally bad. Missing a key leaves that
+--  text at its old size, which is visible and easily fixed. Scaling something
+--  that is not a font size corrupts it silently, and an alpha, a percentage or
+--  a character limit all look like plain numbers in a profile. So this is an
+--  allow-list of font-shaped names: anything not positively recognised is left
+--  alone, and recognised names still have to hold a plausible value.
 -------------------------------------------------------------------------------
-local FONT_TARGETS = {
-    {
-        folder = "EllesmereUIChat", hook = "_ECHAT_RefreshAll",
-        resolve = function(p)
-            local c = p.chat
-            if type(c) ~= "table" then return nil end
-            return { { c, "fontSize" }, { c, "tabFontSize" } }
-        end,
-    },
-    {
-        folder = "EllesmereUIQuestTracker", hook = "_EQT_RefreshAll",
-        resolve = function(p)
-            local q = p.questTracker
-            if type(q) ~= "table" then return nil end
-            return { { q, "titleFontSize" }, { q, "objectiveFontSize" }, { q, "headerFontSize" } }
-        end,
-    },
-    {
-        folder = "EllesmereUINameplates", hook = "_ENP_RefreshAllSettings",
-        -- Nameplate defaults are flat on the profile. Both the *TextSize and
-        -- the shorter *Size families exist and a given layout uses one or the
-        -- other, so scale whichever are present.
-        resolve = function(p)
-            return {
-                { p, "friendlyNameSize" }, { p, "friendlyNameTextSize" },
-                { p, "enemyNameSize" }, { p, "enemyNameTextSize" },
-                { p, "friendlyNPCNameSize" }, { p, "castNameSize" },
-                { p, "textSlotLeftSize" }, { p, "textSlotRightSize" },
-                { p, "textSlotTopSize" }, { p, "textSlotBottomSize" },
-                { p, "auraDurationTextSize" }, { p, "auraStackTextSize" },
-                { p, "buffTextSize" }, { p, "ccTextSize" },
-                { p, "rangeTextSize" }, { p, "questObjectiveTextSize" },
-            }
-        end,
-    },
-    {
-        folder = "EllesmereUIDataBars", hook = "_EDB_Apply",
-        -- fontScale is per-bar and a percent (baseline 100), not a point size,
-        -- but it scales linearly all the same.
-        resolve = function(p)
-            if type(p.bars) ~= "table" then return nil end
-            local out = {}
-            for _, barCfg in pairs(p.bars) do
-                if type(barCfg) == "table" then out[#out + 1] = { barCfg, "fontScale" } end
-            end
-            return out
-        end,
-    },
-    {
-        folder = "EllesmereUIUnitFrames", hook = "_EUF_ReloadFrames",
-        resolve = function(p)
-            local keys = { "textSize", "leftTextSize", "rightTextSize", "centerTextSize", "extraTextSize" }
-            local out = {}
-            for _, u in pairs(p) do
-                if type(u) == "table" then
-                    for _, k in ipairs(keys) do
-                        if type(u[k]) == "number" then out[#out + 1] = { u, k } end
-                    end
-                end
-            end
-            return out
-        end,
-    },
+
+-- Names that look font-shaped but are not point sizes.
+local FONT_DENY = {
+    "[Pp]ct$", "[Pp]ercent$",     -- ratios: maxTextWidthPct
+    "[Aa]lpha", "[Oo]pacity",
+    "[Cc]olou?r",
+    "[Oo]utline", "[Ss]hadow",    -- style flags, often 0/1
+    "[Mm]axLength$", "[Mm]axLetters$", "[Pp]recision$",
+    "[Ss]pacing", "[Pp]adding",   -- lengths, but not text
 }
 
--- Collect every live { tbl, key, base } font target plus the hooks to poke.
-local function CollectFontTargets()
-    local snap, hooks = {}, {}
-    for _, target in ipairs(FONT_TARGETS) do
-        if IsLoaded(target.folder) then
-            local p = AddonProfile(target.folder)
-            if p then
-                local resolved = target.resolve(p)
-                local found = false
-                for _, pair in ipairs(resolved or {}) do
-                    local tbl, key = pair[1], pair[2]
-                    if type(tbl) == "table" and type(tbl[key]) == "number" then
-                        snap[#snap + 1] = { tbl = tbl, key = key, base = tbl[key] }
-                        found = true
-                    end
-                end
-                if found then hooks[#hooks + 1] = target.hook end
+-- Ordered, first match wins. Deliberately narrow: only names that can only
+-- mean text. A bare trailing "Size" is NOT here, because iconSize, mapSize,
+-- markerSize and buttonSize all end that way and none of them are fonts.
+local FONT_KIND = {
+    { "[Ff]ont[Ss]cale$", "percent" },  -- DataBars: 100 = unchanged
+    { "[Ff]ont[Ss]ize",   "point"   },  -- fontSize, tabFontSize, titleFontSize
+    { "[Tt]ext.*[Ss]ize$", "point"  },  -- textSize, auraDurationTextSize, textSlotLeftSize
+    { "[Nn]ame[Ss]ize$",  "point"   },  -- friendlyNameSize, castNameSize
+}
+
+-- Plausible ranges. A recognised name holding a wildly out-of-range value is
+-- almost certainly something else wearing a font-shaped name, so it is skipped.
+local PT_MIN_SEEN, PT_MAX_SEEN = 4, 48
+local PCT_MIN_SEEN, PCT_MAX_SEEN = 25, 400
+local PT_FLOOR, PCT_FLOOR = 8, 50
+
+local _fontKindCache = {}
+
+local function ClassifyFontKey(key)
+    if type(key) ~= "string" then return nil end
+    local cached = _fontKindCache[key]
+    if cached ~= nil then
+        if cached == false then return nil end
+        return cached
+    end
+    for i = 1, #FONT_DENY do
+        if key:find(FONT_DENY[i]) then
+            _fontKindCache[key] = false
+            return nil
+        end
+    end
+    for i = 1, #FONT_KIND do
+        if key:find(FONT_KIND[i][1]) then
+            _fontKindCache[key] = FONT_KIND[i][2]
+            return FONT_KIND[i][2]
+        end
+    end
+    _fontKindCache[key] = false
+    return nil
+end
+
+-- Walk a profile for font keys. Bounded depth: profile blobs are shallow, and
+-- the limit is a cycle guard rather than a real constraint.
+local function CollectFontKeys(node, depth, out)
+    if type(node) ~= "table" or depth > 8 then return end
+    for k, v in pairs(node) do
+        if type(v) == "table" then
+            CollectFontKeys(v, depth + 1, out)
+        elseif type(v) == "number" then
+            local kind = ClassifyFontKey(k)
+            if kind == "point" and v >= PT_MIN_SEEN and v <= PT_MAX_SEEN then
+                out[#out + 1] = { tbl = node, key = k, base = v, kind = kind }
+            elseif kind == "percent" and v >= PCT_MIN_SEEN and v <= PCT_MAX_SEEN then
+                out[#out + 1] = { tbl = node, key = k, base = v, kind = kind }
             end
         end
     end
-    return snap, hooks
+end
+
+-- Every module that registers a profile DB, so a module added later is covered
+-- without naming it here.
+local function CollectFontTargets()
+    local out = {}
+    local reg = EllesmereUI.Lite and EllesmereUI.Lite._dbRegistry
+    if type(reg) ~= "table" then return out end
+    local seen = {}
+    for i = 1, #reg do
+        local db = reg[i]
+        if db and type(db.profile) == "table" and not seen[db.profile] then
+            seen[db.profile] = true
+            CollectFontKeys(db.profile, 1, out)
+        end
+    end
+    return out
+end
+
+-- Apply a factor to a collected set, clamped so nothing lands unreadable.
+local function ApplyFontFactor(snap, factor)
+    for _, e in ipairs(snap) do
+        local v = Round(e.base * factor)
+        if e.kind == "percent" then
+            e.tbl[e.key] = max(PCT_FLOOR, v)
+        else
+            e.tbl[e.key] = max(PT_FLOOR, v)
+        end
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -378,7 +395,7 @@ local function ShowDisplaySetupPopup()
     local curScale = (EllesmereUIDB and EllesmereUIDB.ppUIScale) or bestScale
     local scaleIsOff = abs(curScale - bestScale) > 0.005
 
-    local fontSnap, fontHooks = CollectFontTargets()
+    local fontSnap = CollectFontTargets()
 
     local screenLabel = string.format("%dx%d", physW, physH)
     local kindLabel
@@ -426,12 +443,12 @@ local function ShowDisplaySetupPopup()
             label = EllesmereUI.L("Change Font Size"),
             stepper = true,
             apply = function()
-                local f = fontSize / FONT_ANCHOR
-                for _, e in ipairs(fontSnap) do
-                    e.tbl[e.key] = max(1, Round(e.base * f))
-                end
-                for _, h in ipairs(fontHooks) do FireHook(h) end
+                ApplyFontFactor(fontSnap, fontSize / FONT_ANCHOR)
             end,
+            -- Settled by the reload rather than by poking each module's own
+            -- refresh: the keys are discovered generically, so there is no
+            -- reliable hook list to keep alongside them.
+            needsReload = true,
         }
     end
 
