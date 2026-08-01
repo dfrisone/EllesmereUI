@@ -363,7 +363,20 @@ local function ShowDisplaySetupPopup()
     --  Tweak list. Each entry is a named, opt-in fix; only offered when it has
     --  something to change, so nobody is shown a toggle that would do nothing.
     ---------------------------------------------------------------------------
-    local fontFactor = 1.15
+    -- Font size is chosen as a point size, not a percentage: "14" means
+    -- something, "115%" does not. EUI's own sizes cluster around 12 (chat 12,
+    -- nameplate names 12, quest title 12, quest header 13, quest objective 10),
+    -- so 12 is the anchor and every mapped key scales by size/anchor.
+    -- Bounds: below 10 the smallest mapped text (quest objectives) stops being
+    -- readable; above 20 the largest (quest headers) overruns its own row.
+    local FONT_ANCHOR, FONT_MIN, FONT_MAX = 12, 10, 20
+    local chatProfile = IsLoaded("EllesmereUIChat") and AddonProfile("EllesmereUIChat")
+    if chatProfile and type(chatProfile.chat) == "table"
+       and type(chatProfile.chat.fontSize) == "number" then
+        FONT_ANCHOR = chatProfile.chat.fontSize
+    end
+    local fontSize = max(FONT_MIN, min(FONT_MAX, FONT_ANCHOR + 2))
+    local fontFactor = fontSize / FONT_ANCHOR
     local tweaks = {}
 
     if scaleIsOff then
@@ -385,8 +398,9 @@ local function ShowDisplaySetupPopup()
             label = EllesmereUI.L("Change Font Size"),
             stepper = true,
             apply = function()
+                local f = fontSize / FONT_ANCHOR
                 for _, e in ipairs(fontSnap) do
-                    e.tbl[e.key] = max(1, Round(e.base * fontFactor))
+                    e.tbl[e.key] = max(1, Round(e.base * f))
                 end
                 for _, h in ipairs(fontHooks) do FireHook(h) end
             end,
@@ -520,8 +534,8 @@ local function ShowDisplaySetupPopup()
     -- Fixed content box; every number below is derived from it.
     local POPUP_W   = 452
     local HEADER_H  = 30
-    local ROW_H     = 30
-    local BTN_W     = 196
+    local ROW_H     = 27
+    local BTN_W     = 188
     local COL       = 102
     local rows      = floor((#tweaks + 1) / 2)
     local DESC_TOP  = HEADER_H + 40
@@ -593,7 +607,7 @@ local function ShowDisplaySetupPopup()
     local logo = header:CreateTexture(nil, "ARTWORK")
     logo:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\eg-logo.tga")
     logo:SetVertexColor(ar, ag, ab, 0.95)
-    PP.Size(logo, 16, 16)
+    PP.Size(logo, 22, 22)
     PP.Point(logo, "LEFT", header, "LEFT", 11, 0)
 
     local brand = header:CreateFontString(nil, "OVERLAY")
@@ -632,7 +646,7 @@ local function ShowDisplaySetupPopup()
 
         local b = CreateFrame("Button", nil, popup)
         b:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(b, BTN_W, 25)
+        PP.Size(b, BTN_W, 22)
         PP.Point(b, "TOP", popup, "TOP", col, -(GRID_TOP + row * ROW_H))
 
         local fill = b:CreateTexture(nil, "BACKGROUND")
@@ -642,7 +656,7 @@ local function ShowDisplaySetupPopup()
         -- Accent bar on the leading edge: reads as on or off at a glance
         -- without depending on the label colour alone.
         local tick = b:CreateTexture(nil, "ARTWORK")
-        PP.Size(tick, 3, 25)
+        PP.Size(tick, 3, 22)
         PP.Point(tick, "LEFT", b, "LEFT", 0, 0)
 
         local lbl = b:CreateFontString(nil, "OVERLAY")
@@ -658,10 +672,19 @@ local function ShowDisplaySetupPopup()
                 lbl:SetTextColor(1, 1, 1, 1)
                 brd:SetColor(ar, ag, ab, 0.55)
             else
-                fill:SetColorTexture(1, 1, 1, hover and 0.05 or 0.02)
-                tick:SetColorTexture(1, 1, 1, 0.12)
-                lbl:SetTextColor(1, 1, 1, hover and 0.75 or 0.50)
-                brd:SetColor(1, 1, 1, 0.10)
+                -- Hover glows in the accent even when off, so the whole
+                -- panel stays in one colour family instead of flashing white.
+                if hover then
+                    fill:SetColorTexture(ar, ag, ab, 0.09)
+                    tick:SetColorTexture(ar, ag, ab, 0.65)
+                    lbl:SetTextColor(1, 1, 1, 0.85)
+                    brd:SetColor(ar, ag, ab, 0.40)
+                else
+                    fill:SetColorTexture(1, 1, 1, 0.02)
+                    tick:SetColorTexture(1, 1, 1, 0.12)
+                    lbl:SetTextColor(1, 1, 1, 0.50)
+                    brd:SetColor(1, 1, 1, 0.10)
+                end
             end
         end
         b:SetScript("OnClick", function() tweak.on = not tweak.on; Paint(true) end)
@@ -697,9 +720,9 @@ local function ShowDisplaySetupPopup()
 
         local minusBtn, plusBtn
         local function Refresh()
-            valTxt:SetText(string.format("%d%%", Round(fontFactor * 100)))
-            minusBtn:SetAlpha(fontFactor > 1.0 and 1 or 0.3)
-            plusBtn:SetAlpha(fontFactor < 1.6 and 1 or 0.3)
+            valTxt:SetText(tostring(Round(fontSize)))
+            minusBtn:SetAlpha(fontSize > FONT_MIN and 1 or 0.3)
+            plusBtn:SetAlpha(fontSize < FONT_MAX and 1 or 0.3)
         end
         local function MakeArrow(text, point, delta)
             local b = CreateFrame("Button", nil, wrap)
@@ -714,13 +737,13 @@ local function ShowDisplaySetupPopup()
             b:SetScript("OnEnter", function() t:SetTextColor(ar, ag, ab, 1) end)
             b:SetScript("OnLeave", function() t:SetTextColor(1, 1, 1, 0.7) end)
             b:SetScript("OnClick", function()
-                fontFactor = max(1.0, min(1.6, fontFactor + delta))
+                fontSize = max(FONT_MIN, min(FONT_MAX, fontSize + delta))
                 Refresh()
             end)
             return b
         end
-        minusBtn = MakeArrow("-", "LEFT", -0.05)
-        plusBtn  = MakeArrow("+", "RIGHT", 0.05)
+        minusBtn = MakeArrow("-", "LEFT", -1)
+        plusBtn  = MakeArrow("+", "RIGHT", 1)
         Refresh()
     end
 
@@ -741,6 +764,7 @@ local function ShowDisplaySetupPopup()
 
         EllesmereUIDB.displaySetupShown = true
         EllesmereUIDB.displaySetupPending = nil
+        EllesmereUIDB.displaySetupForced = nil
         dimmer:Hide()
         ReleaseConflictCheck()
 
@@ -773,7 +797,7 @@ local function ShowDisplaySetupPopup()
     local function MakeActionButton(text, primary, w)
         local btn = CreateFrame("Button", nil, popup)
         btn:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(btn, w or 118, 26)
+        PP.Size(btn, w or 104, 22)
         local fill = btn:CreateTexture(nil, "BACKGROUND")
         fill:SetAllPoints()
         local brd = MakeBorder(btn, ar, ag, ab, primary and 0.85 or 0.22, PP)
@@ -788,9 +812,9 @@ local function ShowDisplaySetupPopup()
                 lbl:SetTextColor(1, 1, 1, 1)
                 brd:SetColor(ar, ag, ab, hover and 1 or 0.85)
             else
-                fill:SetColorTexture(1, 1, 1, hover and 0.06 or 0.02)
-                lbl:SetTextColor(1, 1, 1, hover and 0.9 or 0.55)
-                brd:SetColor(1, 1, 1, hover and 0.30 or 0.15)
+                fill:SetColorTexture(ar, ag, ab, hover and 0.12 or 0.02)
+                lbl:SetTextColor(1, 1, 1, hover and 0.95 or 0.55)
+                brd:SetColor(ar, ag, ab, hover and 0.55 or 0.15)
             end
         end
         btn:SetScript("OnEnter", function() Paint(true) end)
@@ -821,14 +845,14 @@ local function ShowDisplaySetupPopup()
 
     -- Paired and centred, primary on the right.
     local GAP = 10
-    local skipBtn = MakeActionButton(EllesmereUI.L("Skip"), false, 118)
+    local skipBtn = MakeActionButton(EllesmereUI.L("Skip"), false, 104)
     PP.Point(skipBtn, "BOTTOMRIGHT", popup, "BOTTOM", -GAP / 2, 12)
     skipBtn:SetScript("OnClick", function()
         for _, t in ipairs(tweaks) do t.on = false end
         Finish()
     end)
 
-    local finishBtn = MakeActionButton(EllesmereUI.L("Finish"), true, 118)
+    local finishBtn = MakeActionButton(EllesmereUI.L("Finish"), true, 104)
     PP.Point(finishBtn, "BOTTOMLEFT", popup, "BOTTOM", GAP / 2, 12)
     finishBtn:SetScript("OnClick", Finish)
 
@@ -892,6 +916,20 @@ loader:SetScript("OnEvent", function(self, event, addonName)
             C_Timer.After(0.4, TryShow)
             return
         end
+        -- Only worth showing unprompted on an ultrawide, where the defaults
+        -- genuinely land wrong. Everyone else gets the scale and font work
+        -- applied silently by the startup seed and never sees a popup they
+        -- would have skipped. /euidisplaysetup forces it regardless.
+        local forced = EllesmereUIDB and EllesmereUIDB.displaySetupForced
+        local pw, ph = GetPhysicalScreenSize()
+        local wide = (type(pw) == "number" and type(ph) == "number" and ph > 0
+            and (pw / ph) >= 2.0) or false
+        if not forced and not wide then
+            EllesmereUIDB.displaySetupShown = true
+            EllesmereUIDB.displaySetupPending = nil
+            ReleaseConflictCheck()
+            return
+        end
         ShowDisplaySetupPopup()
     end
 
@@ -908,6 +946,7 @@ SlashCmdList["EUIDISPLAYSETUP"] = function()
     if EllesmereUIDB then
         EllesmereUIDB.displaySetupShown = nil
         EllesmereUIDB.displaySetupPending = true
+        EllesmereUIDB.displaySetupForced = true
     end
     print("|cff00ff98EllesmereUI:|r Display Setup reset. The popup fires on your next /reload.")
 end
