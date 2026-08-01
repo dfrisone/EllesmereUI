@@ -397,39 +397,38 @@ local function ShowDisplaySetupPopup()
 
     -- Ultrawide layout.
     --
-    -- Derived from screen geometry, not from a table of measured coordinates.
-    -- A 16:9 layout leaves a band of unused width down each side of an
-    -- ultrawide screen; /euiuwdebug confirmed every EUI element sits inside the
-    -- middle 16:9 region. This moves the few elements that read better out of
-    -- the centre into those bands, and leaves everything the player looks at
-    -- while fighting where it already is.
+    -- Derived from screen geometry. /euiuwdebug confirmed every EUI element
+    -- sits inside the centred 16:9 region, leaving a band of unused width down
+    -- each side of an ultrawide screen. These few elements read better out in
+    -- that space; everything the player watches while fighting stays centred.
     --
-    --   band       the strip either side of the centred 16:9 region,
-    --              halfExcess wide (440 units at 3440x1440)
-    --   placement  each element is inset from the screen edge by a fixed
-    --              margin, so the result follows the edge at any aspect
-    --              instead of being pinned to one resolution
+    -- Placement is expressed as flush-to-edge rules rather than measured
+    -- coordinates, so the same expressions hold at 21:9 and 32:9. Each element
+    -- is positioned from the screen edge and its own footprint:
     --
-    -- Action bars, unit frames, castbars and cooldown bars are deliberately
-    -- untouched: they belong on the centre line at every aspect ratio.
+    --   minimap   inset from the top-right corner
+    --   meters    flush into the bottom-right corner, side by side
+    --   raid      flush to the left edge, below the centre line
     if isUltrawide then
-        local EDGE_MARGIN = 40
-        local halfExcessForLayout = HalfExcessWidth()
+        local EDGE_INSET = 20
 
-        -- Walk a dotted path, creating tables, and set the leaf.
+        -- Walk a dotted path, creating tables, and set the leaf. Numeric
+        -- segments become NUMBER keys: profile arrays are indexed windows[1],
+        -- and a string "1" is a different key that nothing ever reads.
         local function SetPath(root, path, value)
             if type(root) ~= "table" then return false end
-            local node = root
-            local last
+            local parts = {}
             for part in path:gmatch("[^.]+") do
-                if last then
-                    if type(node[last]) ~= "table" then node[last] = {} end
-                    node = node[last]
-                end
-                last = part
+                parts[#parts + 1] = tonumber(part) or part
             end
-            if not last then return false end
-            node[last] = value
+            if #parts == 0 then return false end
+            local node = root
+            for i = 1, #parts - 1 do
+                local k = parts[i]
+                if type(node[k]) ~= "table" then node[k] = {} end
+                node = node[k]
+            end
+            node[parts[#parts]] = value
             return true
         end
 
@@ -441,51 +440,47 @@ local function ShowDisplaySetupPopup()
         local halfW = (GetScreenWidth() or 0) / 2
         local halfH = (GetScreenHeight() or 0) / 2
 
-        -- Minimap: top of the right band. Its own size decides how far in the
-        -- centre has to sit for the edge gap to stay constant.
+        -- Minimap: inset from the top-right corner by its own half-size plus
+        -- the edge gap, so the gap stays constant whatever size it is set to.
         local mmProfile = IsLoaded("EllesmereUIMinimap") and AddonProfile("EllesmereUIMinimap")
         local mmCfg = mmProfile and mmProfile.minimap
+        local mapSize = 200
         if type(mmCfg) == "table" then
-            local size = (type(mmCfg.mapSize) == "number" and mmCfg.mapSize) or 200
+            if type(mmCfg.mapSize) == "number" then mapSize = mmCfg.mapSize end
             planned[#planned + 1] = {
                 profile = mmProfile, path = "minimap.position",
-                value = Anchor(halfW - EDGE_MARGIN - size / 2,
-                               halfH - EDGE_MARGIN - size / 2),
+                value = Anchor(halfW - EDGE_INSET - mapSize / 2,
+                               halfH - EDGE_INSET - mapSize / 2),
             }
         end
 
-        -- Damage meters: stacked down the right band under the minimap. Width
-        -- fills the band minus its margins, clamped so a very wide screen does
-        -- not produce an absurd panel.
+        -- Damage meters: flush into the bottom-right corner, side by side so
+        -- the pair reads as one block rather than a tall column.
+        local DM_W, DM_H = 250, 263
         local dmProfile = IsLoaded("EllesmereUIDamageMeters") and AddonProfile("EllesmereUIDamageMeters")
-        if type(dmProfile) == "table" and type(dmProfile.dm) == "table" then
-            local w = max(200, min(halfExcessForLayout - EDGE_MARGIN * 2, 320))
-            local h = max(180, min(halfH * 0.38, 320))
-            local x = halfW - EDGE_MARGIN - w / 2
-            -- Below the minimap, stacked downward with a gap.
-            local topY = halfH - EDGE_MARGIN * 2
-                - ((type(mmCfg) == "table" and type(mmCfg.mapSize) == "number" and mmCfg.mapSize) or 200)
+        if type(dmProfile) == "table" then
+            local y = -halfH + DM_H / 2
             for i = 1, 2 do
-                local y = topY - (h / 2) - (i - 1) * (h + 12)
-                planned[#planned + 1] = {
-                    profile = dmProfile,
-                    path = "dm.windows." .. i .. ".position", value = Anchor(x, y),
-                }
+                local x = halfW - DM_W / 2 - (i - 1) * DM_W
                 planned[#planned + 1] = { profile = dmProfile,
-                    path = "dm.windows." .. i .. ".width", value = Round(w) }
+                    path = "dm.windows." .. i .. ".position", value = Anchor(x, y) }
                 planned[#planned + 1] = { profile = dmProfile,
-                    path = "dm.windows." .. i .. ".height", value = Round(h) }
+                    path = "dm.windows." .. i .. ".width",  value = DM_W }
+                planned[#planned + 1] = { profile = dmProfile,
+                    path = "dm.windows." .. i .. ".height", value = DM_H }
             end
         end
 
-        -- Raid frames: mirrored into the left band, vertically centred a little
-        -- above the middle so the frames sit in eyeline rather than underfoot.
+        -- Raid frames: flush to the left edge. The container is as wide as a
+        -- full row of five frames, so its half-width comes from the configured
+        -- frame width rather than a fixed number.
         local rfProfile = IsLoaded("EllesmereUIRaidFrames") and AddonProfile("EllesmereUIRaidFrames")
         if type(rfProfile) == "table" then
-            local w = max(200, min(halfExcessForLayout - EDGE_MARGIN * 2, 320))
+            local frameW = (type(rfProfile.frameWidth) == "number" and rfProfile.frameWidth) or 100
+            local halfRaid = frameW * 5 / 2
             planned[#planned + 1] = {
                 profile = rfProfile, path = "unlockPos",
-                value = Anchor(-(halfW - EDGE_MARGIN - w / 2), halfH * 0.18),
+                value = Anchor(-halfW + halfRaid, -halfH * 0.365),
             }
         end
 
@@ -498,9 +493,8 @@ local function ShowDisplaySetupPopup()
                         SetPath(item.profile, item.path, item.value)
                     end
                 end,
-                -- Written to the profile and settled by the reload, rather than
-                -- pushed onto live frames. Chasing each module's apply path is
-                -- what left elements behind at their old spots before.
+                -- Written to the profile and settled by the reload rather than
+                -- pushed onto live frames, which left elements behind before.
                 needsReload = true,
             }
         end
