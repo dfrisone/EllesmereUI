@@ -395,27 +395,116 @@ local function ShowDisplaySetupPopup()
         }
     end
 
-    -- Element repositioning is deliberately NOT offered yet.
+    -- Ultrawide layout.
     --
-    -- The first attempt derived it: scale each x by (16:9 / aspect) to put
-    -- every element where it would sit on a 16:9 screen. /euiuwdebug on a
-    -- 3440x1440 client showed why that can never work. All 51 positioned
-    -- elements are already centred, within about 100 units of the midline
-    -- (Bar6 x=0, targetCastbar x=0, XPBar x=0, boss x=86, target x=51), so the
-    -- factor moved them by a few pixels at most.
+    -- Derived from screen geometry, not from a table of measured coordinates.
+    -- A 16:9 layout leaves a band of unused width down each side of an
+    -- ultrawide screen; /euiuwdebug confirmed every EUI element sits inside the
+    -- middle 16:9 region. This moves the few elements that read better out of
+    -- the centre into those bands, and leaves everything the player looks at
+    -- while fighting where it already is.
     --
-    -- The problem on ultrawide is the opposite of what that correction assumed.
-    -- Nothing is flung out to the corners needing to be pulled in; everything
-    -- is bunched in the middle because that is where a 16:9 layout puts it, and
-    -- the ~440 units of extra space on each side go unused. A useful ultrawide
-    -- layout pushes elements OUT into that space.
+    --   band       the strip either side of the centred 16:9 region,
+    --              halfExcess wide (440 units at 3440x1440)
+    --   placement  each element is inset from the screen edge by a fixed
+    --              margin, so the result follows the edge at any aspect
+    --              instead of being pinned to one resolution
     --
-    -- Which elements move out, and to where, is a layout decision rather than a
-    -- formula: there is no derivation that knows the damage meters belong on
-    -- the right and the minimap higher than the tracker. Those positions have
-    -- to be authored once on an ultrawide screen and shipped as defaults.
-    -- /euiuwcapture records them. Until they exist, offering a toggle that
-    -- measurably does nothing is worse than not offering it.
+    -- Action bars, unit frames, castbars and cooldown bars are deliberately
+    -- untouched: they belong on the centre line at every aspect ratio.
+    if isUltrawide then
+        local EDGE_MARGIN = 40
+        local halfExcessForLayout = HalfExcessWidth()
+
+        -- Walk a dotted path, creating tables, and set the leaf.
+        local function SetPath(root, path, value)
+            if type(root) ~= "table" then return false end
+            local node = root
+            local last
+            for part in path:gmatch("[^.]+") do
+                if last then
+                    if type(node[last]) ~= "table" then node[last] = {} end
+                    node = node[last]
+                end
+                last = part
+            end
+            if not last then return false end
+            node[last] = value
+            return true
+        end
+
+        local function Anchor(x, y)
+            return { point = "CENTER", relPoint = "CENTER", x = x, y = y }
+        end
+
+        local planned = {}
+        local halfW = (GetScreenWidth() or 0) / 2
+        local halfH = (GetScreenHeight() or 0) / 2
+
+        -- Minimap: top of the right band. Its own size decides how far in the
+        -- centre has to sit for the edge gap to stay constant.
+        local mmProfile = IsLoaded("EllesmereUIMinimap") and AddonProfile("EllesmereUIMinimap")
+        local mmCfg = mmProfile and mmProfile.minimap
+        if type(mmCfg) == "table" then
+            local size = (type(mmCfg.mapSize) == "number" and mmCfg.mapSize) or 200
+            planned[#planned + 1] = {
+                profile = mmProfile, path = "minimap.position",
+                value = Anchor(halfW - EDGE_MARGIN - size / 2,
+                               halfH - EDGE_MARGIN - size / 2),
+            }
+        end
+
+        -- Damage meters: stacked down the right band under the minimap. Width
+        -- fills the band minus its margins, clamped so a very wide screen does
+        -- not produce an absurd panel.
+        local dmProfile = IsLoaded("EllesmereUIDamageMeters") and AddonProfile("EllesmereUIDamageMeters")
+        if type(dmProfile) == "table" and type(dmProfile.dm) == "table" then
+            local w = max(200, min(halfExcessForLayout - EDGE_MARGIN * 2, 320))
+            local h = max(180, min(halfH * 0.38, 320))
+            local x = halfW - EDGE_MARGIN - w / 2
+            -- Below the minimap, stacked downward with a gap.
+            local topY = halfH - EDGE_MARGIN * 2
+                - ((type(mmCfg) == "table" and type(mmCfg.mapSize) == "number" and mmCfg.mapSize) or 200)
+            for i = 1, 2 do
+                local y = topY - (h / 2) - (i - 1) * (h + 12)
+                planned[#planned + 1] = {
+                    profile = dmProfile,
+                    path = "dm.windows." .. i .. ".position", value = Anchor(x, y),
+                }
+                planned[#planned + 1] = { profile = dmProfile,
+                    path = "dm.windows." .. i .. ".width", value = Round(w) }
+                planned[#planned + 1] = { profile = dmProfile,
+                    path = "dm.windows." .. i .. ".height", value = Round(h) }
+            end
+        end
+
+        -- Raid frames: mirrored into the left band, vertically centred a little
+        -- above the middle so the frames sit in eyeline rather than underfoot.
+        local rfProfile = IsLoaded("EllesmereUIRaidFrames") and AddonProfile("EllesmereUIRaidFrames")
+        if type(rfProfile) == "table" then
+            local w = max(200, min(halfExcessForLayout - EDGE_MARGIN * 2, 320))
+            planned[#planned + 1] = {
+                profile = rfProfile, path = "unlockPos",
+                value = Anchor(-(halfW - EDGE_MARGIN - w / 2), halfH * 0.18),
+            }
+        end
+
+        if #planned > 0 then
+            tweaks[#tweaks + 1] = {
+                key = "positions",
+                label = EllesmereUI.L("Ultrawide Layout"),
+                apply = function()
+                    for _, item in ipairs(planned) do
+                        SetPath(item.profile, item.path, item.value)
+                    end
+                end,
+                -- Written to the profile and settled by the reload, rather than
+                -- pushed onto live frames. Chasing each module's apply path is
+                -- what left elements behind at their old spots before.
+                needsReload = true,
+            }
+        end
+    end
 
     if isUltrawide and IsLoaded("EllesmereUIMinimap") then
         local mm = AddonProfile("EllesmereUIMinimap")
