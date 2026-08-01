@@ -32,7 +32,6 @@ if IS_STANDALONE then return end
 
 local PP = EllesmereUI.PanelPP
 local MakeBorder = EllesmereUI.MakeBorder
-local ELLESMERE_GREEN = EllesmereUI.ELLESMERE_GREEN
 
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
 
@@ -336,7 +335,6 @@ end
 -------------------------------------------------------------------------------
 local function ShowDisplaySetupPopup()
     local FONT = EllesmereUI._font or ("Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.ttf")
-    local EG = ELLESMERE_GREEN
     local ppScale = (EllesmereUI.GetSetupPopupScale and EllesmereUI.GetSetupPopupScale())
         or (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
 
@@ -519,13 +517,20 @@ local function ShowDisplaySetupPopup()
     ---------------------------------------------------------------------------
     --  Layout. Fixed content box; every number below is derived from it.
     ---------------------------------------------------------------------------
-    local POPUP_W = 470
-    local HEADER_H = 26
-    local ROW_H, BTN_W, COL = 28, 190, 98
-    local rows = floor((#tweaks + 1) / 2)
-    local DESC_TOP = HEADER_H + 44
-    local GRID_TOP = DESC_TOP + 52
-    local POPUP_H = GRID_TOP + rows * ROW_H + 84
+    -- Fixed content box; every number below is derived from it.
+    local POPUP_W   = 452
+    local HEADER_H  = 30
+    local ROW_H     = 30
+    local BTN_W     = 196
+    local COL       = 102
+    local rows      = floor((#tweaks + 1) / 2)
+    local DESC_TOP  = HEADER_H + 40
+    local GRID_TOP  = DESC_TOP + 40
+    local POPUP_H   = GRID_TOP + rows * ROW_H + 74
+
+    -- Theme accent rather than the hardcoded green: this follows Class Colored
+    -- and the faction themes like the rest of the suite.
+    local ar, ag, ab = EllesmereUI.GetAccentColor()
 
     local dimmer = CreateFrame("Frame", "EUIDisplaySetupDimmer", UIParent)
     dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -536,7 +541,7 @@ local function ShowDisplaySetupPopup()
     dimmer:SetScale(ppScale)
     local dimTex = dimmer:CreateTexture(nil, "BACKGROUND")
     dimTex:SetAllPoints()
-    dimTex:SetColorTexture(0, 0, 0, 0.35)
+    dimTex:SetColorTexture(0, 0, 0, 0.45)
 
     local popup = CreateFrame("Frame", "EUIDisplaySetupPopup", dimmer)
     popup:SetScale(ppScale)
@@ -545,57 +550,78 @@ local function ShowDisplaySetupPopup()
     PP.Size(popup, POPUP_W, POPUP_H)
     popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     popup:EnableMouse(true)
+    popup:SetMovable(true)
+    popup:SetClampedToScreen(true)
 
     local bg = popup:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
-    bg:SetColorTexture(0.06, 0.08, 0.10, 1)
+    bg:SetColorTexture(0.05, 0.06, 0.07, 0.97)
 
-    -- 1 physical-pixel white border, scale-derived so each edge stays exactly
-    -- one physical pixel. Four edge textures, snap disabled.
+    -- 1 physical-pixel border in the accent colour.
     local onePhys = 1 / (popup:GetEffectiveScale() or 1)
-    local function MakeEdge()
+    local function MakeEdge(alpha)
         local t = popup:CreateTexture(nil, "BORDER")
-        t:SetColorTexture(1, 1, 1, 0.15)
+        t:SetColorTexture(ar, ag, ab, alpha)
         if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false); t:SetTexelSnappingBias(0) end
         return t
     end
-    local spT = MakeEdge(); spT:SetPoint("TOPLEFT", 0, 0); spT:SetPoint("TOPRIGHT", 0, 0); spT:SetHeight(onePhys)
-    local spB = MakeEdge(); spB:SetPoint("BOTTOMLEFT", 0, 0); spB:SetPoint("BOTTOMRIGHT", 0, 0); spB:SetHeight(onePhys)
-    local spL = MakeEdge(); spL:SetPoint("TOPLEFT", spT, "BOTTOMLEFT"); spL:SetPoint("BOTTOMLEFT", spB, "TOPLEFT"); spL:SetWidth(onePhys)
-    local spR = MakeEdge(); spR:SetPoint("TOPRIGHT", spT, "BOTTOMRIGHT"); spR:SetPoint("BOTTOMRIGHT", spB, "TOPRIGHT"); spR:SetWidth(onePhys)
+    local spT = MakeEdge(0.55); spT:SetPoint("TOPLEFT", 0, 0); spT:SetPoint("TOPRIGHT", 0, 0); spT:SetHeight(onePhys)
+    local spB = MakeEdge(0.28); spB:SetPoint("BOTTOMLEFT", 0, 0); spB:SetPoint("BOTTOMRIGHT", 0, 0); spB:SetHeight(onePhys)
+    local spL = MakeEdge(0.28); spL:SetPoint("TOPLEFT", spT, "BOTTOMLEFT"); spL:SetPoint("BOTTOMLEFT", spB, "TOPLEFT"); spL:SetWidth(onePhys)
+    local spR = MakeEdge(0.28); spR:SetPoint("TOPRIGHT", spT, "BOTTOMRIGHT"); spR:SetPoint("BOTTOMRIGHT", spB, "TOPRIGHT"); spR:SetWidth(onePhys)
 
-    -- Header strip: addon name on the left, detected screen on the right.
-    local headerBg = popup:CreateTexture(nil, "BORDER")
-    headerBg:SetColorTexture(0.09, 0.11, 0.13, 1)
-    PP.Size(headerBg, POPUP_W, HEADER_H)
-    PP.Point(headerBg, "TOP", popup, "TOP", 0, 0)
+    -- Header strip doubles as the drag handle, the same way the options window
+    -- moves from its own title area.
+    local header = CreateFrame("Frame", nil, popup)
+    header:SetFrameLevel(popup:GetFrameLevel() + 1)
+    PP.Size(header, POPUP_W, HEADER_H)
+    PP.Point(header, "TOP", popup, "TOP", 0, 0)
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+    header:SetScript("OnDragStart", function() popup:StartMoving() end)
+    header:SetScript("OnDragStop",  function() popup:StopMovingOrSizing() end)
 
-    local brand = popup:CreateFontString(nil, "OVERLAY")
-    brand:SetFont(FONT, 13, "")
-    brand:SetTextColor(EG.r, EG.g, EG.b, 0.95)
-    PP.Point(brand, "LEFT", popup, "TOPLEFT", 12, -HEADER_H / 2)
-    brand:SetText("EllesmereUI")
+    local headerBg = header:CreateTexture(nil, "BACKGROUND")
+    headerBg:SetAllPoints()
+    headerBg:SetColorTexture(0.08, 0.09, 0.11, 1)
+    local headerRule = header:CreateTexture(nil, "ARTWORK")
+    headerRule:SetColorTexture(ar, ag, ab, 0.30)
+    headerRule:SetPoint("BOTTOMLEFT", 0, 0)
+    headerRule:SetPoint("BOTTOMRIGHT", 0, 0)
+    headerRule:SetHeight(onePhys)
 
-    local screenTag = popup:CreateFontString(nil, "OVERLAY")
+    local logo = header:CreateTexture(nil, "ARTWORK")
+    logo:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\eg-logo.tga")
+    logo:SetVertexColor(ar, ag, ab, 0.95)
+    PP.Size(logo, 16, 16)
+    PP.Point(logo, "LEFT", header, "LEFT", 11, 0)
+
+    local brand = header:CreateFontString(nil, "OVERLAY")
+    brand:SetFont(FONT, 12, "")
+    brand:SetTextColor(1, 1, 1, 0.75)
+    PP.Point(brand, "LEFT", logo, "RIGHT", 7, 0)
+    brand:SetText(EllesmereUI.L("Display Setup"))
+
+    local screenTag = header:CreateFontString(nil, "OVERLAY")
     screenTag:SetFont(FONT, 11, "")
-    screenTag:SetTextColor(1, 1, 1, 0.45)
-    PP.Point(screenTag, "RIGHT", popup, "TOPRIGHT", -12, -HEADER_H / 2)
+    screenTag:SetTextColor(ar, ag, ab, 0.80)
+    PP.Point(screenTag, "RIGHT", header, "RIGHT", -12, 0)
     screenTag:SetText(screenLabel .. "  " .. kindLabel)
 
     local title = popup:CreateFontString(nil, "OVERLAY")
-    title:SetFont(FONT, 20, "")
+    title:SetFont(FONT, 19, "")
     title:SetTextColor(1, 1, 1, 1)
-    PP.Point(title, "TOP", popup, "TOP", 0, -(HEADER_H + 12))
-    title:SetText(EllesmereUI.L("Display Setup"))
+    PP.Point(title, "TOP", popup, "TOP", 0, -(HEADER_H + 14))
+    title:SetText(EllesmereUI.L("Tune EllesmereUI for this screen"))
 
     local desc = popup:CreateFontString(nil, "OVERLAY")
-    desc:SetFont(FONT, 13, "")
-    desc:SetTextColor(1, 1, 1, 0.5)
-    desc:SetWidth(POPUP_W - 60)
+    desc:SetFont(FONT, 12, "")
+    desc:SetTextColor(1, 1, 1, 0.45)
+    desc:SetWidth(POPUP_W - 56)
     desc:SetJustifyH("CENTER")
     desc:SetWordWrap(true)
     PP.Point(desc, "TOP", popup, "TOP", 0, -DESC_TOP)
-    desc:SetText(EllesmereUI.Lf("Detected a %1$s display. These correct settings that land wrong on this screen. Enable what you want, they apply when you click Finish.", screenLabel))
+    desc:SetText(EllesmereUI.L("Pick what you want changed. Nothing is applied until you click Finish."))
 
     ---------------------------------------------------------------------------
     --  Toggle rows
@@ -606,33 +632,43 @@ local function ShowDisplaySetupPopup()
 
         local b = CreateFrame("Button", nil, popup)
         b:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(b, BTN_W, 24)
+        PP.Size(b, BTN_W, 25)
         PP.Point(b, "TOP", popup, "TOP", col, -(GRID_TOP + row * ROW_H))
 
-        local bbg = b:CreateTexture(nil, "BACKGROUND")
-        bbg:SetAllPoints()
-        bbg:SetColorTexture(0.10, 0.12, 0.14, 0.95)
-        local brd = MakeBorder(b, 1, 1, 1, 0.12, PP)
+        local fill = b:CreateTexture(nil, "BACKGROUND")
+        fill:SetAllPoints()
+        local brd = MakeBorder(b, 1, 1, 1, 0.10, PP)
+
+        -- Accent bar on the leading edge: reads as on or off at a glance
+        -- without depending on the label colour alone.
+        local tick = b:CreateTexture(nil, "ARTWORK")
+        PP.Size(tick, 3, 25)
+        PP.Point(tick, "LEFT", b, "LEFT", 0, 0)
 
         local lbl = b:CreateFontString(nil, "OVERLAY")
         lbl:SetFont(FONT, 12, "")
-        PP.Point(lbl, "CENTER", b, "CENTER", 0, 0)
+        lbl:SetJustifyH("LEFT")
+        PP.Point(lbl, "LEFT", b, "LEFT", 12, 0)
         lbl:SetText(tweak.label)
 
-        local function Paint()
+        local function Paint(hover)
             if tweak.on then
-                lbl:SetTextColor(EG.r, EG.g, EG.b, 1)
-                brd:SetColor(EG.r, EG.g, EG.b, 0.85)
+                fill:SetColorTexture(ar, ag, ab, hover and 0.20 or 0.14)
+                tick:SetColorTexture(ar, ag, ab, 1)
+                lbl:SetTextColor(1, 1, 1, 1)
+                brd:SetColor(ar, ag, ab, 0.55)
             else
-                lbl:SetTextColor(1, 1, 1, 0.55)
-                brd:SetColor(1, 1, 1, 0.12)
+                fill:SetColorTexture(1, 1, 1, hover and 0.05 or 0.02)
+                tick:SetColorTexture(1, 1, 1, 0.12)
+                lbl:SetTextColor(1, 1, 1, hover and 0.75 or 0.50)
+                brd:SetColor(1, 1, 1, 0.10)
             end
         end
-        b:SetScript("OnClick", function() tweak.on = not tweak.on; Paint() end)
-        b:SetScript("OnEnter", function() if not tweak.on then lbl:SetTextColor(1, 1, 1, 0.85) end end)
-        b:SetScript("OnLeave", Paint)
-        tweak._paint = Paint
-        Paint()
+        b:SetScript("OnClick", function() tweak.on = not tweak.on; Paint(true) end)
+        b:SetScript("OnEnter", function() Paint(true) end)
+        b:SetScript("OnLeave", function() Paint(false) end)
+        tweak._paint = function() Paint(false) end
+        Paint(false)
         return b
     end
 
@@ -641,42 +677,42 @@ local function ShowDisplaySetupPopup()
         toggleBtns[i] = MakeToggle(tweak, i)
     end
 
-    -- Font stepper, parked beside its own toggle.
-    local fontTweak
-    for _, t in ipairs(tweaks) do if t.key == "font" then fontTweak = t end end
+    -- Font stepper, tucked against the right edge of its own toggle row.
+    local fontTweak, fontIdx
+    for i, t in ipairs(tweaks) do if t.key == "font" then fontTweak, fontIdx = t, i end end
     if fontTweak then
-        local idx
-        for i, t in ipairs(tweaks) do if t == fontTweak then idx = i end end
-        local col = (idx % 2 == 1) and -COL or COL
-        local row = floor((idx - 1) / 2)
+        local col = (fontIdx % 2 == 1) and -COL or COL
+        local row = floor((fontIdx - 1) / 2)
 
         local wrap = CreateFrame("Frame", nil, popup)
-        wrap:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(wrap, BTN_W, 22)
-        PP.Point(wrap, "TOP", popup, "TOP", col, -(GRID_TOP + row * ROW_H + 26))
+        wrap:SetFrameLevel(popup:GetFrameLevel() + 3)
+        PP.Size(wrap, 74, 21)
+        PP.Point(wrap, "TOP", popup, "TOP", col + BTN_W / 2 - 41,
+            -(GRID_TOP + row * ROW_H))
 
         local valTxt = wrap:CreateFontString(nil, "OVERLAY")
         valTxt:SetFont(FONT, 12, "")
-        valTxt:SetTextColor(EG.r, EG.g, EG.b, 0.95)
+        valTxt:SetTextColor(ar, ag, ab, 1)
         PP.Point(valTxt, "CENTER", wrap, "CENTER", 0, 0)
 
         local minusBtn, plusBtn
         local function Refresh()
             valTxt:SetText(string.format("%d%%", Round(fontFactor * 100)))
-            minusBtn:SetAlpha(fontFactor > 1.0 and 1 or 0.35)
-            plusBtn:SetAlpha(fontFactor < 1.6 and 1 or 0.35)
+            minusBtn:SetAlpha(fontFactor > 1.0 and 1 or 0.3)
+            plusBtn:SetAlpha(fontFactor < 1.6 and 1 or 0.3)
         end
-
         local function MakeArrow(text, point, delta)
             local b = CreateFrame("Button", nil, wrap)
             b:SetFrameLevel(wrap:GetFrameLevel() + 1)
-            PP.Size(b, 20, 20)
+            PP.Size(b, 18, 18)
             PP.Point(b, point, wrap, point, 0, 0)
             local t = b:CreateFontString(nil, "OVERLAY")
-            t:SetFont(FONT, 14, "")
-            t:SetTextColor(1, 1, 1, 0.8)
+            t:SetFont(FONT, 13, "")
+            t:SetTextColor(1, 1, 1, 0.7)
             PP.Point(t, "CENTER", b, "CENTER", 0, 0)
             t:SetText(text)
+            b:SetScript("OnEnter", function() t:SetTextColor(ar, ag, ab, 1) end)
+            b:SetScript("OnLeave", function() t:SetTextColor(1, 1, 1, 0.7) end)
             b:SetScript("OnClick", function()
                 fontFactor = max(1.0, min(1.6, fontFactor + delta))
                 Refresh()
@@ -732,32 +768,50 @@ local function ShowDisplaySetupPopup()
     ---------------------------------------------------------------------------
     --  Buttons
     ---------------------------------------------------------------------------
-    local function MakeActionButton(text, r, g, b, secondary, w)
+    -- Filled primary, outlined secondary: the same read as the rest of the
+    -- suite's paired dialog buttons.
+    local function MakeActionButton(text, primary, w)
         local btn = CreateFrame("Button", nil, popup)
         btn:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(btn, w or 150, 28)
-        local bbg = btn:CreateTexture(nil, "BACKGROUND")
-        bbg:SetAllPoints()
-        bbg:SetColorTexture(0.06, 0.08, 0.10, 0.92)
-        local brd = MakeBorder(btn, r, g, b, secondary and 0.35 or 0.9, PP)
+        PP.Size(btn, w or 118, 26)
+        local fill = btn:CreateTexture(nil, "BACKGROUND")
+        fill:SetAllPoints()
+        local brd = MakeBorder(btn, ar, ag, ab, primary and 0.85 or 0.22, PP)
         local lbl = btn:CreateFontString(nil, "OVERLAY")
-        lbl:SetFont(FONT, 13, "")
+        lbl:SetFont(FONT, 12, "")
         PP.Point(lbl, "CENTER", btn, "CENTER", 0, 0)
-        lbl:SetTextColor(r, g, b, secondary and 0.55 or 0.9)
         lbl:SetText(text)
-        btn:SetScript("OnEnter", function()
-            lbl:SetTextColor(r, g, b, 1)
-            brd:SetColor(r, g, b, secondary and 0.8 or 1)
-        end)
-        btn:SetScript("OnLeave", function()
-            lbl:SetTextColor(r, g, b, secondary and 0.55 or 0.9)
-            brd:SetColor(r, g, b, secondary and 0.35 or 0.9)
-        end)
+
+        local function Paint(hover)
+            if primary then
+                fill:SetColorTexture(ar, ag, ab, hover and 0.30 or 0.18)
+                lbl:SetTextColor(1, 1, 1, 1)
+                brd:SetColor(ar, ag, ab, hover and 1 or 0.85)
+            else
+                fill:SetColorTexture(1, 1, 1, hover and 0.06 or 0.02)
+                lbl:SetTextColor(1, 1, 1, hover and 0.9 or 0.55)
+                brd:SetColor(1, 1, 1, hover and 0.30 or 0.15)
+            end
+        end
+        btn:SetScript("OnEnter", function() Paint(true) end)
+        btn:SetScript("OnLeave", function() Paint(false) end)
+        Paint(false)
         return btn
     end
 
-    local allBtn = MakeActionButton(EllesmereUI.L("Enable All"), 1, 1, 1, true, 130)
-    PP.Point(allBtn, "BOTTOM", popup, "BOTTOM", 0, 46)
+    -- Enable All sits as a quiet text link above the buttons: it is a shortcut,
+    -- not a third choice competing with Finish.
+    local allBtn = CreateFrame("Button", nil, popup)
+    PP.Size(allBtn, 90, 16)
+    PP.Point(allBtn, "BOTTOM", popup, "BOTTOM", 0, 44)
+    allBtn:SetFrameLevel(popup:GetFrameLevel() + 2)
+    local allLbl = allBtn:CreateFontString(nil, "OVERLAY")
+    allLbl:SetFont(FONT, 11, "")
+    allLbl:SetTextColor(1, 1, 1, 0.40)
+    PP.Point(allLbl, "CENTER", allBtn, "CENTER", 0, 0)
+    allLbl:SetText(EllesmereUI.L("Enable All"))
+    allBtn:SetScript("OnEnter", function() allLbl:SetTextColor(ar, ag, ab, 0.95) end)
+    allBtn:SetScript("OnLeave", function() allLbl:SetTextColor(1, 1, 1, 0.40) end)
     allBtn:SetScript("OnClick", function()
         for _, t in ipairs(tweaks) do
             t.on = true
@@ -765,16 +819,18 @@ local function ShowDisplaySetupPopup()
         end
     end)
 
-    local finishBtn = MakeActionButton(EllesmereUI.L("Finish"), EG.r, EG.g, EG.b, false, 130)
-    PP.Point(finishBtn, "BOTTOMRIGHT", popup, "BOTTOMRIGHT", -14, 12)
-    finishBtn:SetScript("OnClick", Finish)
-
-    local skipBtn = MakeActionButton(EllesmereUI.L("Skip"), 1, 1, 1, true, 100)
-    PP.Point(skipBtn, "BOTTOMLEFT", popup, "BOTTOMLEFT", 14, 12)
+    -- Paired and centred, primary on the right.
+    local GAP = 10
+    local skipBtn = MakeActionButton(EllesmereUI.L("Skip"), false, 118)
+    PP.Point(skipBtn, "BOTTOMRIGHT", popup, "BOTTOM", -GAP / 2, 12)
     skipBtn:SetScript("OnClick", function()
         for _, t in ipairs(tweaks) do t.on = false end
         Finish()
     end)
+
+    local finishBtn = MakeActionButton(EllesmereUI.L("Finish"), true, 118)
+    PP.Point(finishBtn, "BOTTOMLEFT", popup, "BOTTOM", GAP / 2, 12)
+    finishBtn:SetScript("OnClick", Finish)
 
     -- Escape = Skip (nothing applied). Consume Escape, propagate other keys so
     -- chat and UI shortcuts still work behind the dimmer.
