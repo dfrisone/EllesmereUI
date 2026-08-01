@@ -6019,7 +6019,7 @@ EllesmereUI.GetPopupScale = GetPopupScale
 EllesmereUI.POPUP_DENSITY = 1  -- kept as a named hook; dialogs pass 1 or 1.15
 
 -- NOTE: there used to be a GetSetupPopupScale here that multiplied
--- GetPopupScale by clamp(physH/1080, 1, 2), because a physical-pixel-pinned
+-- GetPopupScale by a clamp(physH/1080)-style DPI factor, because a physical-pixel-pinned
 -- popup covers half the screen fraction at 4K that it does at 1080p. That
 -- same correction now lives in panelScale itself (seeded in
 -- EllesmereUI_Startup.lua, backfilled by the panel_scale_highdpi_seed_v1

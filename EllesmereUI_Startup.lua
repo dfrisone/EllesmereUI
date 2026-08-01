@@ -148,13 +148,19 @@ do
             -- does NOT follow the UI Scale slider. At 1080p that reads fine, but
             -- on a 4K screen the same pixel count covers half as much of the
             -- display and the panel arrives unreadably small, with the UI Scale
-            -- slider appearing to do nothing to it. Scale the default with
-            -- panel height, capped at 2x. Only when unset, so anyone who has
-            -- chosen a value keeps it, and 1080p is unchanged.
+            -- slider appearing to do nothing to it.
+            --
+            -- 1440p is the reference look (maintainer's spec): a panel of H
+            -- units covers H*panelScale/physH of the screen, so physH/1440
+            -- reproduces 1440p's screen fraction on any display -- 4K seeds
+            -- 1.5 and reads exactly like a 2K monitor. Floored at 1 so 1080p
+            -- (which runs a slightly larger fraction, uncomplained-about)
+            -- keeps its current size rather than shrinking 25%. Only when
+            -- unset, so anyone who has chosen a value keeps it.
             if EllesmereUIDB.panelScale == nil then
                 local _, physH = GetPhysicalScreenSize()
                 if type(physH) == "number" and physH > 0 then
-                    EllesmereUIDB.panelScale = max(1, min(physH / 1080, 2))
+                    EllesmereUIDB.panelScale = max(1, min(physH / 1440, 2))
                 end
             end
 
