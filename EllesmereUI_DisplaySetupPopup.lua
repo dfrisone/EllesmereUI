@@ -723,6 +723,8 @@ local function ShowDisplaySetupPopup()
 
         local b = CreateFrame("Button", nil, popup)
         b:SetFrameLevel(popup:GetFrameLevel() + 2)
+        b:EnableMouse(true)
+        b:RegisterForClicks("AnyUp")
         PP.Size(b, BTN_W, 20)
         PP.Point(b, "TOP", popup, "TOP", col, -(GRID_TOP + row * ROW_H))
 
@@ -746,7 +748,7 @@ local function ShowDisplaySetupPopup()
             if tweak.on then
                 -- Faint accent wash, accent-tinted label, accent border:
                 -- nothing in the selected state is white.
-                fill:SetColorTexture(ar, ag, ab, hover and 0.20 or 0.11)
+                fill:SetColorTexture(ar, ag, ab, hover and 0.42 or 0.16)
                 tick:SetColorTexture(ar, ag, ab, 1)
                 lbl:SetTextColor(lr, lg, lb, 1)
                 brd:SetColor(ar, ag, ab, hover and 0.95 or 0.70)
@@ -754,10 +756,10 @@ local function ShowDisplaySetupPopup()
                 -- Hover glows in the accent even when off, so the whole
                 -- panel stays in one colour family instead of flashing white.
                 if hover then
-                    fill:SetColorTexture(ar, ag, ab, 0.14)
-                    tick:SetColorTexture(ar, ag, ab, 0.85)
-                    lbl:SetTextColor(lr, lg, lb, 0.95)
-                    brd:SetColor(ar, ag, ab, 0.70)
+                    fill:SetColorTexture(ar, ag, ab, 0.28)
+                    tick:SetColorTexture(ar, ag, ab, 1)
+                    lbl:SetTextColor(lr, lg, lb, 1)
+                    brd:SetColor(ar, ag, ab, 1)
                 else
                     fill:SetColorTexture(1, 1, 1, 0.02)
                     tick:SetColorTexture(1, 1, 1, 0.12)
@@ -1153,6 +1155,9 @@ SlashCmdList["EUIUWDEBUG"] = function()
     local aspect = physW / physH
     say("screen %dx%d  aspect %.3f  ultrawide=%s", physW, physH, aspect,
         tostring(aspect >= 2.0))
+    local car, cag, cab = EllesmereUI.GetAccentColor()
+    say("accent rgb %.2f %.2f %.2f  |cff%02x%02x%02xthis text is the accent|r",
+        car, cag, cab, car * 255, cag * 255, cab * 255)
     say("screen units %.0fx%.0f  halfExcess %.0f  centreFactor %.3f",
         GetScreenWidth() or 0, GetScreenHeight() or 0,
         HalfExcessWidth(), HorizontalPullFactor(aspect))
