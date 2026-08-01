@@ -380,8 +380,7 @@ end
 -------------------------------------------------------------------------------
 local function ShowDisplaySetupPopup()
     local FONT = EllesmereUI._font or ("Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.ttf")
-    local ppScale = (EllesmereUI.GetSetupPopupScale and EllesmereUI.GetSetupPopupScale())
-        or (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
+    local ppScale = (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
 
     local physW, physH = GetPhysicalScreenSize()
     physW = (type(physW) == "number" and physW > 0) and physW or 1920

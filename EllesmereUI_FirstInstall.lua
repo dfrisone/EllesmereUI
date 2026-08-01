@@ -121,10 +121,9 @@ local function ShowFirstInstallPopup()
     local contentH = HEADER_H + HEADER_PAD + tallestRows * ROW_H
     local POPUP_H  = CONTENT_TOP + contentH + 110  -- room for links + button
 
-    -- Setup scale, not plain popup scale: this panel is dense and has to stay
-    -- readable on 1440p and 4K, where a physical-pixel-pinned popup reads tiny.
-    local ppScale = (EllesmereUI.GetSetupPopupScale and EllesmereUI.GetSetupPopupScale())
-        or (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
+    -- Plain popup scale: panelScale already carries the high-DPI correction, so
+    -- a second factor here would square it (see GetPopupScale).
+    local ppScale = (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
 
     -- Dimmer
     local dimmer = CreateFrame("Frame", "EUIFirstInstallDimmer", UIParent)
