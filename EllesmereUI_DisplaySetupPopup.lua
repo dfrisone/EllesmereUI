@@ -480,17 +480,31 @@ local function ShowDisplaySetupPopup()
         local halfW = (GetScreenWidth() or 0) / 2
         local halfH = (GetScreenHeight() or 0) / 2
 
-        -- Minimap: inset from the top-right corner by its own half-size plus
-        -- the edge gap, so the gap stays constant whatever size it is set to.
+        -- Minimap: flush into the top-right corner.
+        --
+        -- Measured off the live frame, not off mapSize. mapSize is the map
+        -- texture; the frame that actually gets positioned carries a border on
+        -- top of it, so at mapSize 270 the footprint is 288. Using the setting
+        -- would leave a 9-unit gap down two edges that no amount of tuning the
+        -- inset fixes, because the error scales with the border, not the size.
         local mmProfile = IsLoaded("EllesmereUIMinimap") and AddonProfile("EllesmereUIMinimap")
         local mmCfg = mmProfile and mmProfile.minimap
         local mapSize = 200
         if type(mmCfg) == "table" then
             if type(mmCfg.mapSize) == "number" then mapSize = mmCfg.mapSize end
+            local footprint = mapSize
+            local mmFrame = _G.Minimap
+            if mmFrame and mmFrame.GetWidth then
+                local fw = mmFrame:GetWidth()
+                -- Guard against a frame that has not been sized yet: a bogus
+                -- reading would park the minimap somewhere arbitrary.
+                if type(fw) == "number" and fw > mapSize * 0.5 and fw < mapSize * 2 then
+                    footprint = fw
+                end
+            end
             planned[#planned + 1] = {
                 profile = mmProfile, path = "minimap.position",
-                value = Anchor(halfW - EDGE_INSET - mapSize / 2,
-                               halfH - EDGE_INSET - mapSize / 2),
+                value = Anchor(halfW - footprint / 2, halfH - footprint / 2),
             }
         end
 
