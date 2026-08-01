@@ -85,7 +85,7 @@ local function ShowWindowSkinsPopup()
 
     -- Panel
     local popup = CreateFrame("Frame", "EUIWindowSkinsIntroPopup", dimmer)
-    popup:SetScale(ppScale * 1.15)
+    popup:SetScale(EllesmereUI.POPUP_DENSITY * 1.15)
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
     PP.Size(popup, POPUP_W, POPUP_H)

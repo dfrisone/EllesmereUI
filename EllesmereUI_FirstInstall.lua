@@ -121,8 +121,8 @@ local function ShowFirstInstallPopup()
     local contentH = HEADER_H + HEADER_PAD + tallestRows * ROW_H
     local POPUP_H  = CONTENT_TOP + contentH + 110  -- room for links + button
 
-    -- Plain popup scale: panelScale already carries the high-DPI correction, so
-    -- a second factor here would square it (see GetPopupScale).
+    -- Scale is applied ONCE, on the dimmer. The popup is its child and carries
+    -- only POPUP_DENSITY; scaling it by ppScale too is what squared it.
     local ppScale = (EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale()) or 1
 
     -- Dimmer
@@ -139,7 +139,7 @@ local function ShowFirstInstallPopup()
 
     -- Popup
     local popup = CreateFrame("Frame", "EUIFirstInstallPopup", dimmer)
-    popup:SetScale(ppScale)
+    popup:SetScale(EllesmereUI.POPUP_DENSITY)
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
     PP.Size(popup, POPUP_W, POPUP_H)
