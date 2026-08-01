@@ -6005,6 +6005,25 @@ EllesmereUI.GetPopupScale = GetPopupScale
 -- use the same GetPopupScale as everything else now. Do not reintroduce a
 -- second DPI factor on top of panelScale.
 
+-- Hard ceiling for modal setup popups. They sit on a full-screen dimmer that
+-- eats every click behind it, so one that overflows the display does not just
+-- look wrong: its buttons land off-screen and there is no way back to the game
+-- menu. A 4K tester was left unable to log out.
+--
+-- Measured, not derived: GetEffectiveScale reports what the frame will really
+-- render at, including however many parent scales are stacked above it, so this
+-- holds regardless of what the scale math upstream does. Only ever shrinks.
+function EllesmereUI.ClampPopupToScreen(popup, w, h)
+    if not popup or not w or not h or w <= 0 or h <= 0 then return end
+    local es = popup:GetEffectiveScale()
+    if type(es) ~= "number" or es <= 0 then return end
+    local pw, ph = GetPhysicalScreenSize()
+    if type(pw) ~= "number" or type(ph) ~= "number" or pw <= 0 or ph <= 0 then return end
+    local fit = math.min((pw * 0.92) / (w * es), (ph * 0.92) / (h * es))
+    if fit >= 1 then return end
+    popup:SetScale(popup:GetScale() * fit)
+end
+
 local function RefreshPopupScales()
     local s = GetPopupScale()
     for _, entry in ipairs(_popupFrames) do

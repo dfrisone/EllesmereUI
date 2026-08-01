@@ -145,6 +145,11 @@ local function ShowFirstInstallPopup()
     PP.Size(popup, POPUP_W, POPUP_H)
     popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     popup:EnableMouse(true)
+    -- This popup is modal and has no Escape route, so it must never exceed the
+    -- display (see ClampPopupToScreen).
+    if EllesmereUI.ClampPopupToScreen then
+        EllesmereUI.ClampPopupToScreen(popup, POPUP_W, POPUP_H)
+    end
 
     local bg = popup:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()

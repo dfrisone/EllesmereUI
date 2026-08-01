@@ -641,6 +641,9 @@ local function ShowDisplaySetupPopup()
     popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     popup:EnableMouse(true)
     popup:SetMovable(true)
+    if EllesmereUI.ClampPopupToScreen then
+        EllesmereUI.ClampPopupToScreen(popup, POPUP_W, POPUP_H)
+    end
     popup:SetClampedToScreen(true)
 
     local bg = popup:CreateTexture(nil, "BACKGROUND")
