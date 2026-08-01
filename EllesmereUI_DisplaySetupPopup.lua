@@ -70,6 +70,34 @@ local function AddonProfile(folder)
     return type(t) == "table" and t or nil
 end
 
+-- The ultrawide Edit Mode layout shipped with the EllesmereUI preset.
+-- Blizzard owns the quest tracker and the chat frame: EUI only ever hides and
+-- reveals ObjectiveTrackerFrame, it never positions it, so no profile write can
+-- move them. An Edit Mode layout is the only lever, and the preset table
+-- already carries one keyed by UI scale.
+local function UltrawideEditModeString()
+    local presets = EllesmereUI.POPULAR_PRESETS
+    if type(presets) ~= "table" then return nil end
+    local function usable(v) return type(v) == "string" and v ~= "" end
+    for _, preset in ipairs(presets) do
+        if preset.name == "EllesmereUI" and type(preset.editMode) == "table" then
+            local uw = preset.editMode.ultrawide
+            if type(uw) == "table" then
+                -- Closest scale variant first, then the other as a fallback:
+                -- the same rule the preset gallery uses.
+                local scale = (EllesmereUIDB and EllesmereUIDB.ppUIScale) or 0.5333333333
+                local first, second = "s53", "s64"
+                if math.abs(scale - 0.64) <= math.abs(scale - 0.5333333333) then
+                    first, second = "s64", "s53"
+                end
+                if usable(uw[first]) then return uw[first] end
+                if usable(uw[second]) then return uw[second] end
+            end
+        end
+    end
+    return nil
+end
+
 local function FireHook(name)
     local fn = _G[name]
     if type(fn) == "function" then pcall(fn) end
@@ -500,9 +528,20 @@ local function ShowDisplaySetupPopup()
             tweaks[#tweaks + 1] = {
                 key = "positions",
                 label = EllesmereUI.L("Ultrawide Layout"),
+                -- Replaces the active Edit Mode layout, so it is called out
+                -- rather than left as a surprise.
+                note = EllesmereUI.L("Also replaces your Edit Mode layout"),
                 apply = function()
                     for _, item in ipairs(planned) do
                         SetPath(item.profile, item.path, item.value)
+                    end
+                    -- Blizzard-owned frames (quest tracker, chat) cannot be
+                    -- placed from the profile, so the matching Edit Mode layout
+                    -- goes in alongside. This imports an Account layout and
+                    -- makes it active, replacing the current Edit Mode setup.
+                    local emStr = UltrawideEditModeString()
+                    if emStr and EllesmereUI.ApplyPresetEditMode and not InCombatLockdown() then
+                        pcall(EllesmereUI.ApplyPresetEditMode, emStr, "EUI Ultrawide")
                     end
                 end,
                 -- Written to the profile and settled by the reload rather than
@@ -538,9 +577,12 @@ local function ShowDisplaySetupPopup()
     local BTN_W     = 188
     local COL       = 102
     local rows      = floor((#tweaks + 1) / 2)
+    local hasNote   = false
+    for _, t in ipairs(tweaks) do if t.note then hasNote = true end end
+    local NOTE_H    = hasNote and 16 or 0
     local DESC_TOP  = HEADER_H + 40
     local GRID_TOP  = DESC_TOP + 40
-    local POPUP_H   = GRID_TOP + rows * ROW_H + 74
+    local POPUP_H   = GRID_TOP + rows * ROW_H + NOTE_H + 74
 
     -- Theme accent rather than the hardcoded green: this follows Class Colored
     -- and the faction themes like the rest of the suite.
@@ -667,18 +709,18 @@ local function ShowDisplaySetupPopup()
 
         local function Paint(hover)
             if tweak.on then
-                fill:SetColorTexture(ar, ag, ab, hover and 0.20 or 0.14)
+                fill:SetColorTexture(ar, ag, ab, hover and 0.34 or 0.16)
                 tick:SetColorTexture(ar, ag, ab, 1)
                 lbl:SetTextColor(1, 1, 1, 1)
-                brd:SetColor(ar, ag, ab, 0.55)
+                brd:SetColor(ar, ag, ab, hover and 1 or 0.60)
             else
                 -- Hover glows in the accent even when off, so the whole
                 -- panel stays in one colour family instead of flashing white.
                 if hover then
-                    fill:SetColorTexture(ar, ag, ab, 0.09)
-                    tick:SetColorTexture(ar, ag, ab, 0.65)
-                    lbl:SetTextColor(1, 1, 1, 0.85)
-                    brd:SetColor(ar, ag, ab, 0.40)
+                    fill:SetColorTexture(ar, ag, ab, 0.22)
+                    tick:SetColorTexture(ar, ag, ab, 1)
+                    lbl:SetTextColor(1, 1, 1, 1)
+                    brd:SetColor(ar, ag, ab, 0.95)
                 else
                     fill:SetColorTexture(1, 1, 1, 0.02)
                     tick:SetColorTexture(1, 1, 1, 0.12)
@@ -698,6 +740,21 @@ local function ShowDisplaySetupPopup()
     local toggleBtns = {}
     for i, tweak in ipairs(tweaks) do
         toggleBtns[i] = MakeToggle(tweak, i)
+    end
+
+    -- Caveats for tweaks that reach beyond EllesmereUI's own settings.
+    if hasNote then
+        local noteTxt = popup:CreateFontString(nil, "OVERLAY")
+        noteTxt:SetFont(FONT, 11, "")
+        noteTxt:SetTextColor(1, 0.82, 0.30, 0.75)
+        noteTxt:SetWidth(POPUP_W - 40)
+        noteTxt:SetJustifyH("CENTER")
+        PP.Point(noteTxt, "TOP", popup, "TOP", 0, -(GRID_TOP + rows * ROW_H + 2))
+        local parts = {}
+        for _, t in ipairs(tweaks) do
+            if t.note then parts[#parts + 1] = t.label .. ": " .. t.note end
+        end
+        noteTxt:SetText(table.concat(parts, "   |   "))
     end
 
     -- Font stepper, tucked against the right edge of its own toggle row.
@@ -812,9 +869,9 @@ local function ShowDisplaySetupPopup()
                 lbl:SetTextColor(1, 1, 1, 1)
                 brd:SetColor(ar, ag, ab, hover and 1 or 0.85)
             else
-                fill:SetColorTexture(ar, ag, ab, hover and 0.12 or 0.02)
-                lbl:SetTextColor(1, 1, 1, hover and 0.95 or 0.55)
-                brd:SetColor(ar, ag, ab, hover and 0.55 or 0.15)
+                fill:SetColorTexture(ar, ag, ab, hover and 0.22 or 0.02)
+                lbl:SetTextColor(1, 1, 1, hover and 1 or 0.55)
+                brd:SetColor(ar, ag, ab, hover and 0.95 or 0.15)
             end
         end
         btn:SetScript("OnEnter", function() Paint(true) end)
