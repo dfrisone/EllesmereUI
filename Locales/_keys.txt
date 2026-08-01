@@ -138,7 +138,6 @@ Calendar
 Cancel
 Cast Timer Settings
 Categories
-Change Font Size
 Change buff
 Changes the crosshair color when your current target is out of range.
 Check All
@@ -277,6 +276,7 @@ Felguard
 Filters
 Finish
 Flask
+Font Size
 Font changed. A UI reload is needed to apply the new font.
 Food
 For Icons: Left click to edit group, Right click to custom size individual

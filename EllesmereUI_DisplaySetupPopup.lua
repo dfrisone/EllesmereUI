@@ -440,7 +440,7 @@ local function ShowDisplaySetupPopup()
     if #fontSnap > 0 then
         tweaks[#tweaks + 1] = {
             key = "font",
-            label = EllesmereUI.L("Change Font Size"),
+            label = EllesmereUI.L("Font Size"),
             stepper = true,
             apply = function()
                 ApplyFontFactor(fontSnap, fontSize / FONT_ANCHOR)
@@ -803,8 +803,10 @@ local function ShowDisplaySetupPopup()
 
         local wrap = CreateFrame("Frame", nil, popup)
         wrap:SetFrameLevel(popup:GetFrameLevel() + 3)
-        PP.Size(wrap, 74, 21)
-        PP.Point(wrap, "TOP", popup, "TOP", col + BTN_W / 2 - 41,
+        -- Right-aligned inside its own toggle row, narrow enough that the
+        -- minus clears the label rather than overlapping it.
+        PP.Size(wrap, 58, 20)
+        PP.Point(wrap, "TOP", popup, "TOP", col + BTN_W / 2 - 35,
             -(GRID_TOP + row * ROW_H))
 
         local valTxt = wrap:CreateFontString(nil, "OVERLAY")
@@ -821,7 +823,7 @@ local function ShowDisplaySetupPopup()
         local function MakeArrow(text, point, delta)
             local b = CreateFrame("Button", nil, wrap)
             b:SetFrameLevel(wrap:GetFrameLevel() + 1)
-            PP.Size(b, 18, 18)
+            PP.Size(b, 16, 16)
             PP.Point(b, point, wrap, point, 0, 0)
             local t = b:CreateFontString(nil, "OVERLAY")
             t:SetFont(FONT, 13, "")
