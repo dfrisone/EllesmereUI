@@ -634,7 +634,7 @@ local function ShowDisplaySetupPopup()
     dimTex:SetColorTexture(0, 0, 0, 0.45)
 
     local popup = CreateFrame("Frame", "EUIDisplaySetupPopup", dimmer)
-    popup:SetScale(EllesmereUI.POPUP_DENSITY)
+    popup:SetScale(1)
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
     PP.Size(popup, POPUP_W, POPUP_H)

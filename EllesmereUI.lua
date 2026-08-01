@@ -5995,29 +5995,28 @@ end
 EllesmereUI.GetPopupScale = GetPopupScale
 
 -- Dialog popups (first install, display setup, the intro popups) sit on a
--- dimmer that is ALREADY scaled by GetPopupScale, and used to call
--- SetScale(ppScale) on themselves as well. Being children of that dimmer, they
--- rendered at ppScale SQUARED: panelScale^2 / uiScale physical pixels per unit
--- instead of panelScale. Two things fell out of that. Popups were oversized on
--- every display, and because uiScale sat in the denominator, LOWERING your UI
--- scale made popups bigger. Seeding panelScale from display height then
--- multiplied an already-wrong number by four on 4K, which put the first-install
--- popup several times past the screen edge with its buttons out of reach.
+-- dimmer that GetPopupScale has ALREADY scaled, and used to call
+-- SetScale(ppScale) on themselves as well. Being children of that dimmer they
+-- rendered at ppScale SQUARED. Since baseScale is 768/(physH * uiScale), that
+-- works out to panelScale^2 * baseScale physical pixels per unit instead of
+-- panelScale. Seeding panelScale from display height squared to four on 4K,
+-- which put the first-install popup past the screen edge with its buttons out
+-- of reach and a modal dimmer eating every click behind it.
 --
--- Dialogs now scale only via their dimmer and set this DENSITY on themselves,
--- so the result is linear: panelScale * POPUP_DENSITY.
+-- Dialogs now take their scale ONCE, from the dimmer, and set only their own
+-- relative bump (1, or 1.15 for the intro popups). The result is linear:
+-- physical pixels per unit == panelScale, exactly matching the options panel,
+-- which is what the "popups grow and shrink with the main panel" note above
+-- always intended.
 --
--- 1080/768 is not a magic number. panelScale is seeded as physH/1080 and the
--- pixel-perfect uiScale is 768/physH, so the old squared formula came out at
--- physH/768. Multiplying the new linear formula by 1080/768 reproduces that
--- exactly, which is why this corrects the geometry without resizing a single
--- popup for anyone at 1080p or 1440p. Only 4K moves, from 2.5 to 2.8, because
--- panelScale clamps at 2.
---
--- NOT folded into GetPopupScale: the popups registered in _popupFrames are
--- parented straight to the options panel and were never double-scaled, so
--- putting it there would inflate those by 40%.
-EllesmereUI.POPUP_DENSITY = 1080 / 768
+-- Careful with the units here, because it is easy to get wrong and I did:
+-- GetEffectiveScale() is NOT physical pixels per unit. WoW maps the UI through
+-- a 768-tall virtual space, so px/unit = GetEffectiveScale() * physH/768. Work
+-- it through and baseScale is exactly 1 at the pixel-perfect uiScale (768/physH)
+-- on every resolution, which is what makes the corrected formula collapse to
+-- panelScale. Measure with GetEffectiveScale by all means, but convert before
+-- comparing against pixels.
+EllesmereUI.POPUP_DENSITY = 1  -- kept as a named hook; dialogs pass 1 or 1.15
 
 -- NOTE: there used to be a GetSetupPopupScale here that multiplied
 -- GetPopupScale by clamp(physH/1080, 1, 2), because a physical-pixel-pinned

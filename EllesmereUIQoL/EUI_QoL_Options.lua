@@ -68,7 +68,7 @@ local function ShowTransformsPopup()
         dimTex:SetColorTexture(0, 0, 0, 0.25)
 
         local popup = CreateFrame("Frame", nil, dimmer)
-        popup:SetScale(EllesmereUI.POPUP_DENSITY)
+        popup:SetScale(1)
         popup:SetFrameStrata("FULLSCREEN_DIALOG")
         popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
         popup:SetSize(POPUP_W, POPUP_H)
