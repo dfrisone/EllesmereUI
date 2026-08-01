@@ -7,7 +7,13 @@
 local EllesmereUI = _G.EllesmereUI
 EllesmereUI._deferredInits[#EllesmereUI._deferredInits + 1] = function()
 local PP = EllesmereUI.PanelPP
-local isRussian = GetLocale() == "ruRU"
+-- EllesmereUI.LOCALE, not GetLocale(): the Language setting can override the
+-- client locale, and these widths compensate for the length of the text we
+-- actually DRAW. Keyed to the client instead, a Russian speaker on an English
+-- client got Russian labels at English widths, and the override was useless for
+-- previewing another locale's layout. This body runs from _deferredInits (first
+-- EnsureLoaded), long after ADDON_LOADED has resolved the override.
+local isRussian = EllesmereUI.LOCALE == "ruRU"
 
 -- Utility functions (used heavily)
 local SolidTex         = EllesmereUI.SolidTex

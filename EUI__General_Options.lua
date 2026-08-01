@@ -5373,7 +5373,8 @@ initFrame:SetScript("OnEvent", function(self)
             local detailX = IMG_PAD + heroImgW + 28
             local detailW = totalW - 26 - detailX
 
-            local isRussian = GetLocale() == "ruRU"
+            -- Drawn-text locale, not client locale (see EllesmereUI_Widgets).
+            local isRussian = EllesmereUI.LOCALE == "ruRU"
             local heroNameY = isRussian and -18 or -22
             local byLblGap = isRussian and -4 or -7
             local descGap = isRussian and -6 or -12
