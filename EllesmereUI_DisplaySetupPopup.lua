@@ -585,22 +585,26 @@ local function ShowDisplaySetupPopup()
     --  Layout. Fixed content box; every number below is derived from it.
     ---------------------------------------------------------------------------
     -- Fixed content box; every number below is derived from it.
-    local POPUP_W   = 452
-    local HEADER_H  = 30
-    local ROW_H     = 27
-    local BTN_W     = 188
-    local COL       = 102
+    local POPUP_W   = 408
+    local HEADER_H  = 26
+    local ROW_H     = 25
+    local BTN_W     = 172
+    local COL       = 92
     local rows      = floor((#tweaks + 1) / 2)
     local hasNote   = false
     for _, t in ipairs(tweaks) do if t.note then hasNote = true end end
     local NOTE_H    = hasNote and 16 or 0
-    local DESC_TOP  = HEADER_H + 40
-    local GRID_TOP  = DESC_TOP + 40
-    local POPUP_H   = GRID_TOP + rows * ROW_H + NOTE_H + 74
+    local DESC_TOP  = HEADER_H + 33
+    local GRID_TOP  = DESC_TOP + 33
+    local POPUP_H   = GRID_TOP + rows * ROW_H + NOTE_H + 62
 
     -- Theme accent rather than the hardcoded green: this follows Class Colored
     -- and the faction themes like the rest of the suite.
     local ar, ag, ab = EllesmereUI.GetAccentColor()
+    -- Accent lifted halfway to white: legible as label text while still
+    -- unmistakably the accent. A pure white label was what made a selected
+    -- toggle read as a white button no matter how green the fill behind it was.
+    local lr, lg, lb = (ar + 1) / 2, (ag + 1) / 2, (ab + 1) / 2
 
     local dimmer = CreateFrame("Frame", "EUIDisplaySetupDimmer", UIParent)
     dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -663,7 +667,7 @@ local function ShowDisplaySetupPopup()
     local logo = header:CreateTexture(nil, "ARTWORK")
     logo:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\eg-logo.tga")
     logo:SetVertexColor(ar, ag, ab, 0.95)
-    PP.Size(logo, 22, 22)
+    PP.Size(logo, 19, 19)
     PP.Point(logo, "LEFT", header, "LEFT", 11, 0)
 
     local brand = header:CreateFontString(nil, "OVERLAY")
@@ -679,9 +683,9 @@ local function ShowDisplaySetupPopup()
     screenTag:SetText(screenLabel .. "  " .. kindLabel)
 
     local title = popup:CreateFontString(nil, "OVERLAY")
-    title:SetFont(FONT, 19, "")
+    title:SetFont(FONT, 17, "")
     title:SetTextColor(1, 1, 1, 1)
-    PP.Point(title, "TOP", popup, "TOP", 0, -(HEADER_H + 14))
+    PP.Point(title, "TOP", popup, "TOP", 0, -(HEADER_H + 11))
     title:SetText(EllesmereUI.L("Tune EllesmereUI for this screen"))
 
     local desc = popup:CreateFontString(nil, "OVERLAY")
@@ -702,7 +706,7 @@ local function ShowDisplaySetupPopup()
 
         local b = CreateFrame("Button", nil, popup)
         b:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(b, BTN_W, 22)
+        PP.Size(b, BTN_W, 20)
         PP.Point(b, "TOP", popup, "TOP", col, -(GRID_TOP + row * ROW_H))
 
         local fill = b:CreateTexture(nil, "BACKGROUND")
@@ -712,7 +716,7 @@ local function ShowDisplaySetupPopup()
         -- Accent bar on the leading edge: reads as on or off at a glance
         -- without depending on the label colour alone.
         local tick = b:CreateTexture(nil, "ARTWORK")
-        PP.Size(tick, 3, 22)
+        PP.Size(tick, 3, 20)
         PP.Point(tick, "LEFT", b, "LEFT", 0, 0)
 
         local lbl = b:CreateFontString(nil, "OVERLAY")
@@ -723,18 +727,20 @@ local function ShowDisplaySetupPopup()
 
         local function Paint(hover)
             if tweak.on then
-                fill:SetColorTexture(ar, ag, ab, hover and 0.34 or 0.16)
+                -- Faint accent wash, accent-tinted label, accent border:
+                -- nothing in the selected state is white.
+                fill:SetColorTexture(ar, ag, ab, hover and 0.20 or 0.11)
                 tick:SetColorTexture(ar, ag, ab, 1)
-                lbl:SetTextColor(1, 1, 1, 1)
-                brd:SetColor(ar, ag, ab, hover and 1 or 0.60)
+                lbl:SetTextColor(lr, lg, lb, 1)
+                brd:SetColor(ar, ag, ab, hover and 0.95 or 0.70)
             else
                 -- Hover glows in the accent even when off, so the whole
                 -- panel stays in one colour family instead of flashing white.
                 if hover then
-                    fill:SetColorTexture(ar, ag, ab, 0.22)
-                    tick:SetColorTexture(ar, ag, ab, 1)
-                    lbl:SetTextColor(1, 1, 1, 1)
-                    brd:SetColor(ar, ag, ab, 0.95)
+                    fill:SetColorTexture(ar, ag, ab, 0.14)
+                    tick:SetColorTexture(ar, ag, ab, 0.85)
+                    lbl:SetTextColor(lr, lg, lb, 0.95)
+                    brd:SetColor(ar, ag, ab, 0.70)
                 else
                     fill:SetColorTexture(1, 1, 1, 0.02)
                     tick:SetColorTexture(1, 1, 1, 0.12)
@@ -868,7 +874,7 @@ local function ShowDisplaySetupPopup()
     local function MakeActionButton(text, primary, w)
         local btn = CreateFrame("Button", nil, popup)
         btn:SetFrameLevel(popup:GetFrameLevel() + 2)
-        PP.Size(btn, w or 104, 22)
+        PP.Size(btn, w or 96, 20)
         local fill = btn:CreateTexture(nil, "BACKGROUND")
         fill:SetAllPoints()
         local brd = MakeBorder(btn, ar, ag, ab, primary and 0.85 or 0.22, PP)
@@ -879,9 +885,9 @@ local function ShowDisplaySetupPopup()
 
         local function Paint(hover)
             if primary then
-                fill:SetColorTexture(ar, ag, ab, hover and 0.30 or 0.18)
-                lbl:SetTextColor(1, 1, 1, 1)
-                brd:SetColor(ar, ag, ab, hover and 1 or 0.85)
+                fill:SetColorTexture(ar, ag, ab, hover and 0.22 or 0.12)
+                lbl:SetTextColor(lr, lg, lb, 1)
+                brd:SetColor(ar, ag, ab, hover and 0.95 or 0.75)
             else
                 fill:SetColorTexture(ar, ag, ab, hover and 0.22 or 0.02)
                 lbl:SetTextColor(1, 1, 1, hover and 1 or 0.55)
@@ -898,7 +904,7 @@ local function ShowDisplaySetupPopup()
     -- not a third choice competing with Finish.
     local allBtn = CreateFrame("Button", nil, popup)
     PP.Size(allBtn, 90, 16)
-    PP.Point(allBtn, "BOTTOM", popup, "BOTTOM", 0, 44)
+    PP.Point(allBtn, "BOTTOM", popup, "BOTTOM", 0, 38)
     allBtn:SetFrameLevel(popup:GetFrameLevel() + 2)
     local allLbl = allBtn:CreateFontString(nil, "OVERLAY")
     allLbl:SetFont(FONT, 11, "")
@@ -916,15 +922,15 @@ local function ShowDisplaySetupPopup()
 
     -- Paired and centred, primary on the right.
     local GAP = 10
-    local skipBtn = MakeActionButton(EllesmereUI.L("Skip"), false, 104)
-    PP.Point(skipBtn, "BOTTOMRIGHT", popup, "BOTTOM", -GAP / 2, 12)
+    local skipBtn = MakeActionButton(EllesmereUI.L("Skip"), false, 96)
+    PP.Point(skipBtn, "BOTTOMRIGHT", popup, "BOTTOM", -GAP / 2, 10)
     skipBtn:SetScript("OnClick", function()
         for _, t in ipairs(tweaks) do t.on = false end
         Finish()
     end)
 
-    local finishBtn = MakeActionButton(EllesmereUI.L("Finish"), true, 104)
-    PP.Point(finishBtn, "BOTTOMLEFT", popup, "BOTTOM", GAP / 2, 12)
+    local finishBtn = MakeActionButton(EllesmereUI.L("Finish"), true, 96)
+    PP.Point(finishBtn, "BOTTOMLEFT", popup, "BOTTOM", GAP / 2, 10)
     finishBtn:SetScript("OnClick", Finish)
 
     -- Escape = Skip (nothing applied). Consume Escape, propagate other keys so
