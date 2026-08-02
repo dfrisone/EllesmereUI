@@ -2687,6 +2687,7 @@ local function DecorateFrame(frame, barData)
                         local cdInfo = C_Spell.GetSpellCooldown(effID2) or C_Spell.GetSpellCooldown(sid2)
                         if cdInfo and cdInfo.isOnGCD then
                             cd:SetSwipeColor(0, 0, 0, 0)
+                            fd._lastSwipeTag = "gcd-suppress"   -- PROBE
                             _gcdSuppressed = true
                         end
                     end
@@ -2758,6 +2759,7 @@ local function DecorateFrame(frame, barData)
                     end
                     if not _gcdSuppressed then
                         cd:SetSwipeColor(0, 0, 0, hideActiveAlpha)
+                        fd._lastSwipeTag = "hide-active"   -- PROBE
                     end
                     if isActive then
                         fd._hideActiveOverriding = true
@@ -2783,12 +2785,14 @@ local function DecorateFrame(frame, barData)
                     cb = cb or (ss2 and ss2.activeSwipeB) or 0.376
                     ca = (ss2 and ss2.activeSwipeA) or 0.7
                     cd:SetSwipeColor(cr, cg, cb, ca)
+                    fd._lastSwipeTag = "active-color"   -- PROBE
                     if fd.tex then fd.tex:SetDesaturated(false); fd._desatNA = nil end
                     fd._wasActive = true
                 else
                     -- Not active: black swipe.
                     if not _gcdSuppressed then
                         cd:SetSwipeColor(0, 0, 0, barData.swipeAlpha or 0.7)
+                        fd._lastSwipeTag = "not-active"   -- PROBE
                     end
                     -- Desaturate When Not Active (per-spell). Symmetric: desaturate
                     -- while the setting is on, and RE-saturate when it's turned off --
@@ -3133,6 +3137,7 @@ local function DecorateFrame(frame, barData)
                 local bkSw = fc2 and fc2.barKey
                 local bdSw = bkSw and barDataByKey and barDataByKey[bkSw]
                 cd:SetSwipeColor(0, 0, 0, (bdSw and bdSw.swipeAlpha) or 0.7)
+                fd._lastSwipeTag = "swipe-refresh"   -- PROBE
                 fd._isProcessingOverride = false
             end
             if cd.SetCooldownFromDurationObject then
@@ -4748,11 +4753,13 @@ local function ApplyPresetGCDSwipe(f, sid, cdInfo, barKey)
         f._gcdSwipeHidden = true
         fd._isProcessingOverride = true
         cdF:SetSwipeColor(0, 0, 0, 0)
+        fd._lastSwipeTag = "preset-hide"   -- PROBE
         fd._isProcessingOverride = false
     elseif f._gcdSwipeHidden then
         f._gcdSwipeHidden = nil
         fd._isProcessingOverride = true
         cdF:SetSwipeColor(0, 0, 0, (bd and bd.swipeAlpha) or 0.7)
+        fd._lastSwipeTag = "preset-restore"   -- PROBE
         fd._isProcessingOverride = false
     end
 end
@@ -9104,6 +9111,14 @@ SlashCmdList.CDMDESAT = function(msg)
                 print(("   desat   desatNA=%s  setting desatNotActive=%s  noDesatOnCD=%s  activeSwipeMode=%s"):format(
                     S(fd._desatNA), S(ssP and ssP.desatNotActive),
                     S(ssP and ssP.noDesatOnCD), S(ssP and ssP.activeSwipeMode)))
+                -- Which EUI code path last painted this swipe. Cooldown has NO
+                -- GetSwipeColor (SetSwipeColor is write-only), so the painted
+                -- colour cannot be read back and every field above reports
+                -- Blizzard's INTENT rather than what is on screen. With Hide
+                -- Active State on, "hide-active" is the write that blacks out the
+                -- gold; if suppression is skipping it this reads "gcd-suppress"
+                -- instead, which is the whole question.
+                print(("   paint   lastSwipeWrite=%s"):format(S(fd._lastSwipeTag)))
             end
         end
     end
