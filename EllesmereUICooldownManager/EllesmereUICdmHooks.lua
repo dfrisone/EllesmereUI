@@ -9018,3 +9018,84 @@ do
         end
     end)
 end
+
+-------------------------------------------------------------------------------
+-- TEMPORARY DESAT PROBE (/cdmdesat) -- REMOVE before merge.
+--
+-- "Works for two casts, then never desaturates again" is a LATCHED state, not
+-- the per-GCD fault the charge-gate fix addresses, and four different things in
+-- this hook could latch it. This dumps all four at once so a working-state and
+-- broken-state pair identifies which, instead of another round of guessing.
+--
+-- Optional arg filters by spell id or name substring: /cdmdesat judgment
+-- Every value is secret-guarded: a dispel/charge field can be secret in
+-- restricted content, and printing one throws.
+-------------------------------------------------------------------------------
+SLASH_CDMDESAT1 = "/cdmdesat"
+SlashCmdList.CDMDESAT = function(msg)
+    local filter = (msg or ""):lower():match("^%s*(.-)%s*$")
+    local function S(v)
+        if v == nil then return "nil" end
+        if issecretvalue and issecretvalue(v) then return "|cffff8080<secret>|r" end
+        return tostring(v)
+    end
+    local n = 0
+    for frame, fd in pairs(hookFrameData) do
+        local fc = _ecmeFC[frame]
+        local sid = fc and fc.spellID
+        if sid then
+            local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
+            local name = (info and info.name) or "?"
+            local pass = filter == ""
+                or tostring(sid) == filter
+                or name:lower():find(filter, 1, true) ~= nil
+            if pass then
+                n = n + 1
+                local ovr = C_SpellBook and C_SpellBook.FindSpellOverrideByID
+                    and C_SpellBook.FindSpellOverrideByID(sid)
+                local ovrName = "-"
+                if ovr and ovr > 0 and ovr ~= sid then
+                    local oi = C_Spell.GetSpellInfo(ovr)
+                    ovrName = ((oi and oi.name) or "?") .. " (" .. ovr .. ")"
+                end
+                local cdB = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(sid)
+                local chB = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+                local cdO = (ovr and ovr > 0 and ovr ~= sid and C_Spell.GetSpellCooldown)
+                    and C_Spell.GetSpellCooldown(ovr) or nil
+                print(("|cff0cd29f[desat]|r %s (%d)  shows: %s"):format(name, sid, ovrName))
+                print(("   flags   hideActiveOverriding=%s  isProcessingOverride=%s  desatHooked=%s  wasActive=%s"):format(
+                    S(fd._hideActiveOverriding), S(fd._isProcessingOverride),
+                    S(fd._desatOverrideHooked), S(fd._wasActive)))
+                print(("   base CD isActive=%s isOnGCD=%s   charges max=%s recharging=%s"):format(
+                    S(cdB and cdB.isActive), S(cdB and cdB.isOnGCD),
+                    S(chB and chB.maxCharges), S(chB and chB.isActive)))
+                if cdO then
+                    print(("   ovr  CD isActive=%s isOnGCD=%s"):format(S(cdO.isActive), S(cdO.isOnGCD)))
+                end
+                local hvds = type(frame.HasVisualDataSource_Charges) == "function"
+                    and frame:HasVisualDataSource_Charges() or nil
+                print(("   frame isOnActualCooldown=%s  HasVisualDataSource_Charges=%s  texDesaturated=%s"):format(
+                    S(frame.isOnActualCooldown), S(hvds),
+                    S(fd.tex and fd.tex.IsDesaturated and fd.tex:IsDesaturated())))
+                -- The isActive input. Suppress GCD ON stops the desaturation and
+                -- the desaturate block is NOT gated on suppression, so the icon
+                -- has to be reading active. isActive is (red ~= 0) off this
+                -- Blizzard-owned field, which EUI only ever reads. Print the raw
+                -- channel plus the setting that flips the symptom, so an ON/OFF
+                -- pair says whether the red actually moves or something upstream
+                -- of it does.
+                local sc = frame.cooldownSwipeColor
+                local scR, scType = nil, type(sc)
+                if sc and scType ~= "number" and sc.GetRGBA then scR = sc:GetRGBA() end
+                local bdP = fc.barKey and barDataByKey and barDataByKey[fc.barKey]
+                print(("   swipe   colorType=%s red=%s -> isActive=%s   bar suppressGCD=%s  desatNA=%s"):format(
+                    scType, S(scR),
+                    S(scR ~= nil and not (issecretvalue and issecretvalue(scR)) and (scR ~= 0) or nil),
+                    S(bdP and bdP.suppressGCD), S(fd._desatNA)))
+            end
+        end
+    end
+    if n == 0 then
+        print("|cff0cd29f[desat]|r no CDM frame matched" .. (filter ~= "" and (" \"" .. filter .. "\"") or ""))
+    end
+end
