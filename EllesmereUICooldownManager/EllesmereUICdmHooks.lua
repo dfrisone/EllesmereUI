@@ -9088,10 +9088,22 @@ SlashCmdList.CDMDESAT = function(msg)
                 local scR, scType = nil, type(sc)
                 if sc and scType ~= "number" and sc.GetRGBA then scR = sc:GetRGBA() end
                 local bdP = fc.barKey and barDataByKey and barDataByKey[fc.barKey]
-                print(("   swipe   colorType=%s red=%s -> isActive=%s   bar suppressGCD=%s  desatNA=%s"):format(
-                    scType, S(scR),
-                    S(scR ~= nil and not (issecretvalue and issecretvalue(scR)) and (scR ~= 0) or nil),
-                    S(bdP and bdP.suppressGCD), S(fd._desatNA)))
+                local isActiveP
+                if scR ~= nil and not (issecretvalue and issecretvalue(scR)) then
+                    isActiveP = (scR ~= 0)
+                end
+                print(("   swipe   colorType=%s red=%s -> isActive=%s   bar suppressGCD=%s  gcdSwipeHidden=%s"):format(
+                    scType, S(scR), S(isActiveP),
+                    S(bdP and bdP.suppressGCD), S(frame._gcdSwipeHidden)))
+                -- Which desaturation source owns this icon. The first dump showed
+                -- desatNA nil while the icon greys in game, so the greying is NOT
+                -- EUI's Desaturate When Not Active. Print the settings themselves
+                -- rather than inferring which path is in play.
+                local ssP = fc.barKey and ResolveSpellSettings
+                    and ResolveSpellSettings(frame, sid, ns.GetBarSpellData(fc.barKey))
+                print(("   desat   desatNA=%s  setting desatNotActive=%s  noDesatOnCD=%s  activeSwipeMode=%s"):format(
+                    S(fd._desatNA), S(ssP and ssP.desatNotActive),
+                    S(ssP and ssP.noDesatOnCD), S(ssP and ssP.activeSwipeMode)))
             end
         end
     end
