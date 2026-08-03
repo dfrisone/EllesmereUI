@@ -357,7 +357,13 @@ local function PreSkinCharacterSheet()
     -- needed. Backdrop + hover glow live on a sibling frame (3D model draws on top).
     if not GetFFD(frame).modelScene then
         local myModel = CreateFrame("PlayerModel", "EUI_CharSheet_ModelScene", frame)
-        myModel:SetFrameLevel(2)
+        -- RELATIVE to the parent, never absolute: SetFrameLevel takes an
+        -- absolute level, so a hardcoded 2 puts this BELOW CharacterFrame
+        -- whenever the panel manager seats that frame above level 2, and the
+        -- sheet's own background then draws straight over the 3D model. Field
+        -- case had CharacterFrame at level 45 with the model at 2, so the model
+        -- was invisible while every panel at 50+ kept working.
+        myModel:SetFrameLevel(frame:GetFrameLevel() + 2)
         if CharacterHeadSlot then
             myModel:SetPoint("TOPLEFT",  CharacterHeadSlot,  "TOPRIGHT", 0, 0)
         end
@@ -4003,7 +4009,12 @@ local function SkinCharacterSheet()
 
     -- Create overlay frame for text labels (above model, transparent, no mouse input)
     local textOverlayFrame = CreateFrame("Frame", "EUI_CharSheet_TextOverlay", frame)
-    textOverlayFrame:SetFrameLevel(5)  -- Higher than model (FrameLevel 2)
+    -- Same rule as the model above: relative, not absolute. This frame carries
+    -- the item level, upgrade track and enchant labels, so an absolute 5 sitting
+    -- under a higher-seated CharacterFrame hid all three at once and read as
+    -- "those three toggles do nothing" -- the toggles were fine, their output
+    -- was behind the background. Offset keeps it above the model as intended.
+    textOverlayFrame:SetFrameLevel(frame:GetFrameLevel() + 5)
     textOverlayFrame:EnableMouse(false)
     textOverlayFrame:Show()
     GetFFD(frame).textOverlayFrame = textOverlayFrame
