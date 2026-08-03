@@ -39,6 +39,15 @@ local TAINT_WATCH = {
     "GENERAL_CHAT_DOCK",
 }
 local _taintSeen, _taintCrumb, _taintLeft = {}, "load", #TAINT_WATCH
+local _taintLog = {}
+
+-- Output goes through AddMessage, not print(): print() is the C-side path the
+-- module documents as tainting the chat frame. Even this is only safe because
+-- the dump is user-triggered, after the fact.
+local function Say(msg)
+    local f = DEFAULT_CHAT_FRAME
+    if f then f:AddMessage(msg) end
+end
 
 function ECHAT.TaintMark(step)
     _taintCrumb = step
@@ -58,8 +67,15 @@ function ECHAT.TaintCheck(step)
                 local at = step or ("runtime, last breadcrumb: " .. tostring(prev))
                 _taintSeen[name] = at
                 _taintLeft = _taintLeft - 1
-                print(("|cffff5555EUI-TAINT|r %s tainted by |cffffd100%s|r -- at |cff00ff00%s|r")
-                    :format(name, tostring(who), at))
+                -- RECORDED, NEVER PRINTED. The global print() routes through
+                -- Blizzard's C-side handler and taints the chat frame execution
+                -- context (see EllesmereUI.Print) -- the exact thing this probe
+                -- is measuring. Printing unprompted would manufacture the taint
+                -- it is hunting, attributed to this very addon, inside the
+                -- window being measured. Findings go to a buffer that
+                -- /euichattaint dumps on demand.
+                _taintLog[#_taintLog + 1] = ("%s tainted by %s -- at %s")
+                    :format(name, tostring(who), at)
             end
         end
     end
@@ -77,16 +93,22 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        print("|cffff5555EUI-TAINT|r status:")
+        Say("|cffff5555EUI-TAINT|r status:")
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
             if secure then
-                print(("  %s: |cff00ff00clean|r"):format(name))
+                Say(("  %s: |cff00ff00clean|r"):format(name))
             else
-                print(("  %s: |cffff5555TAINTED|r by %s (first seen at: %s)")
+                Say(("  %s: |cffff5555TAINTED|r by %s (first seen at: %s)")
                     :format(name, tostring(who), tostring(_taintSeen[name])))
             end
+        end
+        if #_taintLog > 0 then
+            Say("|cffff5555EUI-TAINT|r first-flip log (recorded, not printed live):")
+            for i = 1, #_taintLog do Say("  " .. _taintLog[i]) end
+        else
+            Say("  (no flips recorded this session)")
         end
     end
 end
