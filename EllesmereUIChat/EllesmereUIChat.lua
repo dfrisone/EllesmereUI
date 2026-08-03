@@ -18,6 +18,79 @@ if not EUI then return end
 ns.ECHAT = ns.ECHAT or {}
 local ECHAT = ns.ECHAT
 
+-------------------------------------------------------------------------------
+--  TAINT PROBE -- temporary diagnostic, strip before PR.
+--
+--  The globals below are the bridge that carries EUI taint into Blizzard's
+--  chat receive path: once one of them is tainted, ChatHistory_GetAccessID
+--  indexes a forbidden table / converts a secret sender and every later chat
+--  message errors for the rest of the session. The 2026-08-02 taint.log only
+--  ever caught them ALREADY poisoned (its first line is a tainted READ, and
+--  two of the three entries are self-sustaining read-then-rewrite loops), so
+--  it cannot name the injector. This does: TaintCheck scans and reports the
+--  first flip of each global, TaintMark leaves a cheap breadcrumb in the hot
+--  paths, and the runtime ticker attributes a flip to the last breadcrumb.
+-------------------------------------------------------------------------------
+local TAINT_WATCH = {
+    "ACTIVE_CHAT_EDIT_BOX",
+    "LAST_ACTIVE_CHAT_EDIT_BOX",
+    "CURRENT_CHAT_FRAME_ID",
+    "CHAT_FRAMES",
+    "GENERAL_CHAT_DOCK",
+}
+local _taintSeen, _taintCrumb, _taintLeft = {}, "load", #TAINT_WATCH
+
+function ECHAT.TaintMark(step)
+    _taintCrumb = step
+end
+
+function ECHAT.TaintCheck(step)
+    local prev = _taintCrumb
+    if step then _taintCrumb = step end
+    if _taintLeft == 0 then return end
+    for i = 1, #TAINT_WATCH do
+        local name = TAINT_WATCH[i]
+        if not _taintSeen[name] then
+            local secure, who = issecurevariable(name)
+            if not secure then
+                -- A checkpoint names the code directly; the ticker can only
+                -- report the last breadcrumb the hot paths left behind.
+                local at = step or ("runtime, last breadcrumb: " .. tostring(prev))
+                _taintSeen[name] = at
+                _taintLeft = _taintLeft - 1
+                print(("|cffff5555EUI-TAINT|r %s tainted by |cffffd100%s|r -- at |cff00ff00%s|r")
+                    :format(name, tostring(who), at))
+            end
+        end
+    end
+end
+
+do
+    local probe = CreateFrame("Frame")
+    probe:RegisterEvent("PLAYER_LOGIN")
+    probe:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        -- Runtime watcher: the send path rewrites ACTIVE_CHAT_EDIT_BOX every
+        -- time the box clears, so a flip during play lands within one tick.
+        C_Timer.NewTicker(0.1, function() ECHAT.TaintCheck(nil) end)
+    end)
+
+    SLASH_EUICHATTAINT1 = "/euichattaint"
+    SlashCmdList["EUICHATTAINT"] = function()
+        print("|cffff5555EUI-TAINT|r status:")
+        for i = 1, #TAINT_WATCH do
+            local name = TAINT_WATCH[i]
+            local secure, who = issecurevariable(name)
+            if secure then
+                print(("  %s: |cff00ff00clean|r"):format(name))
+            else
+                print(("  %s: |cffff5555TAINTED|r by %s (first seen at: %s)")
+                    :format(name, tostring(who), tostring(_taintSeen[name])))
+            end
+        end
+    end
+end
+
 -- BISECT LADDER (whisper-creation taint). The gate-7 configuration below
 -- (every flag true) is the last field-CLEAN state. Gates are cleared ONE
 -- per tester cycle -- multiple taint sources are possible, so a returning
@@ -3484,6 +3557,7 @@ local function SkinEditBox(cf)
     local idx = tonumber(name:match("ChatFrame(%d+)"))
     if not eb or not idx or CFD(eb).skinned then return end
     CFD(eb).skinned = true
+    ECHAT.TaintCheck("skin-eb-enter-" .. idx)
 
     -- Hide Blizzard chrome textures
     for _, texName in ipairs({
@@ -3542,7 +3616,10 @@ local function SkinEditBox(cf)
     -- skinning only. (This matches the function header's stated intent and the
     -- 1-10 header-font gate in ECHAT.ApplyFonts.)
     if idx <= 10 then
-        eb:HookScript("OnEditFocusGained", function(self) ApplyEditBoxHeaderFont(self) end)
+        eb:HookScript("OnEditFocusGained", function(self)
+            ECHAT.TaintMark("eb-focus-gained-headerfont")
+            ApplyEditBoxHeaderFont(self)
+        end)
 
         -- Plain Up/Down input recall. The Midnight edit box performs no
         -- native recall on plain arrows regardless of alt-arrow mode, so the
@@ -3585,6 +3662,7 @@ local function SkinEditBox(cf)
             -- first and clears the box, so the text is shadowed on change and
             -- committed on send.
             eb:HookScript("OnTextChanged", function(self, userInput)
+                ECHAT.TaintMark("eb-text-changed-history")
                 local t = self:GetText()
                 if issecretvalue and issecretvalue(t) then
                     CFD(self).pendingLine = nil
@@ -3602,6 +3680,7 @@ local function SkinEditBox(cf)
                 CFD(self).pendingLine = t
             end)
             eb:HookScript("OnEnterPressed", function(self)
+                ECHAT.TaintMark("eb-enter-pressed-history")
                 local d = CFD(self)
                 local text = d.pendingLine
                 d.pendingLine = nil
@@ -3616,6 +3695,7 @@ local function SkinEditBox(cf)
                 end
             end)
             eb:HookScript("OnKeyDown", function(self, key)
+                ECHAT.TaintMark("eb-key-down-history")
                 if key ~= "UP" and key ~= "DOWN" then return end
                 if IsAltKeyDown() then return end
                 -- Narrow, field-proven restriction guards kept from the
@@ -3644,16 +3724,19 @@ local function SkinEditBox(cf)
                 end
             end)
             eb:HookScript("OnEditFocusLost", function(self)
+                ECHAT.TaintMark("eb-focus-lost-history")
                 CFD(self).histIdx = 0
             end)
         end
     end
+    ECHAT.TaintCheck("skin-eb-exit-" .. idx)
 end
 
 local function SkinChatFrame(cf)
     if not cf or _skinned[cf] then return end
     _skinned[cf] = true
     _alphaFrames = nil
+    ECHAT.TaintCheck("skin-cf-enter-" .. tostring(cf:GetName()))
     -- A frame skinned while the panel is fully hidden must join the
     -- passthrough set (deferred, so it runs after this skin completes).
     RequestPassthroughSweep()
@@ -4330,6 +4413,7 @@ local function SkinChatFrame(cf)
         if bar.Forward then bar.Forward:SetParent(_hiddenParent) end
         CFD(cf).scrollBarSkinned = true
     end
+    ECHAT.TaintCheck("skin-cf-exit-" .. tostring(cf:GetName()))
 end
 
 -------------------------------------------------------------------------------
@@ -4364,12 +4448,14 @@ end
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:SetScript("OnEvent", function(self)
+    ECHAT.TaintCheck("init-entry")
     self:UnregisterAllEvents()
     EnsureDB()
 
     ---------------------------------------------------------------------------
     --  1. Load saved background color/opacity before skinning any frames
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-1-load-saved")
     local p = ECHAT.DB()
     BG_R = p.bgR or BG_R
     BG_G = p.bgG or BG_G
@@ -4379,6 +4465,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  2. Skin all 20 chat frames (bg, tabs, scrollbar, edit box, etc.)
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-2-skin-all")
     for i = 1, 20 do
         local cf = _G["ChatFrame" .. i]
         if cf then SkinChatFrame(cf) end
@@ -4391,12 +4478,14 @@ initFrame:SetScript("OnEvent", function(self)
     --      The global hooksecurefunc("FCF_SetChatWindowFontSize") was removed
     --      because it tainted FCFDock_UpdateTabs -> PanelTemplates_TabResize.
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-2b-expanded-font")
     CHAT_FONT_HEIGHTS = { 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 }
 
 
     ---------------------------------------------------------------------------
     --  2c. Clickable URLs via message event filters
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-2c-clickable-urls")
     local URL_EVENTS = {
         "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_GUILD", "CHAT_MSG_OFFICER",
         "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER", "CHAT_MSG_RAID",
@@ -4419,6 +4508,7 @@ initFrame:SetScript("OnEvent", function(self)
     --     hooksecurefunc("FCF_OpenTemporaryWindow") which tainted edit box
     --     header arithmetic during window creation.
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-3-temporary-window")
     -- Shared skin pass: skins unskinned frames, re-strips tabs,
     -- re-applies font, hides Blizzard chrome. Called from whisper
     -- events and protected state watcher -- no timers.
@@ -4457,6 +4547,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  4. Global tab hooks (hooksecurefunc on globals).
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-4-global-tab")
     if FCFDock_SelectWindow then
         hooksecurefunc("FCFDock_SelectWindow", function()
             -- Blizzard rebuilds the tab anchor chain while selecting a window.
@@ -4633,6 +4724,7 @@ initFrame:SetScript("OnEvent", function(self)
     --  5. Tab color management
     --     Deferred update batches multiple tab changes into one pass.
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-5-tab-color")
     -- Blizzard performs additional dock sizing after the initial chat setup.
     -- Re-apply our text-derived widths across a few deferred passes so saved
     -- Inner Padding X is correct immediately, without requiring a tab click.
@@ -4662,6 +4754,7 @@ initFrame:SetScript("OnEvent", function(self)
     --     on active tab, whisper window, edit box focus/typing, or cursor
     --     entering the chat area (event-driven via OnEnter/OnLeave).
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-6-idle-fade")
     do
         local idleTimer = nil
 
@@ -4738,8 +4831,14 @@ initFrame:SetScript("OnEvent", function(self)
         for i = 1, 10 do
             local eb = _G["ChatFrame" .. i .. "EditBox"]
             if eb then
-                eb:HookScript("OnEditFocusGained", OnActiveMessage)
-                eb:HookScript("OnTextChanged", OnActiveMessage)
+                eb:HookScript("OnEditFocusGained", function(...)
+                    ECHAT.TaintMark("eb-focus-gained-idlereset")
+                    OnActiveMessage(...)
+                end)
+                eb:HookScript("OnTextChanged", function(...)
+                    ECHAT.TaintMark("eb-text-changed-idlereset")
+                    OnActiveMessage(...)
+                end)
             end
         end
 
@@ -4921,9 +5020,11 @@ initFrame:SetScript("OnEvent", function(self)
         local eb1 = _G["ChatFrame1EditBox"]
         if eb1 then
             eb1:HookScript("OnEditFocusGained", function()
+                ECHAT.TaintMark("eb-focus-gained-hover")
                 _editFocusCount = _editFocusCount + 1; UpdateHoverState()
             end)
             eb1:HookScript("OnEditFocusLost", function()
+                ECHAT.TaintMark("eb-focus-lost-hover")
                 _editFocusCount = max(0, _editFocusCount - 1); UpdateHoverState()
             end)
         end
@@ -4935,6 +5036,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  7. Accent color + timestamps
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-7-accent-color")
     if EUI.RegAccent then
         EUI.RegAccent({ type = "callback", fn = UpdateTabColors })
     end
@@ -4956,6 +5058,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  8. Apply all visual settings from DB
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-8-apply-all")
     ECHAT.ApplySidebarVisibility()
     -- ApplyBorders is DEFERRED out of the PLAYER_LOGIN execution (field-
     -- bisected 2026-07-25, ladder B3-B15): running it synchronously here
@@ -5041,6 +5144,7 @@ initFrame:SetScript("OnEvent", function(self)
     --  9-12. Chat positioning: Blizzard / Edit Mode owns position+size.
     --        No reparenting, no hooks, no unlock registration.
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-9-12-chat-positioning")
     -- Clamp state follows the saved "Force Chat on Screen" preference (default off:
     -- chat may be dragged off-screen). Toggled from the Chat options panel.
     ECHAT.ApplyForceOnScreen()
@@ -5128,6 +5232,7 @@ initFrame:SetScript("OnEvent", function(self)
     --      Breaks it out of Blizzard's Edit Mode hierarchy so we can call
     --      SetSize without tainting. Hides Edit Mode overlay + resize button.
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-10-reparent-chatframe")
     local chatContainer = CreateFrame("Frame", nil, UIParent)
     chatContainer:SetAllPoints(UIParent)
     chatContainer:EnableMouse(false)
@@ -5144,6 +5249,7 @@ initFrame:SetScript("OnEvent", function(self)
     --      Blocks Blizzard/Edit Mode from overriding our saved position.
     --      Allows unlock mode dragging and resize grip repositioning.
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-11-position-enforcement")
     pcall(ApplyChatPosition)
     -- SetPoint called once above via ApplyChatPosition. No reactive hook.
     -- hooksecurefunc on SetPoint taints HistoryKeeper during whisper
@@ -5153,6 +5259,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  12. Unlock mode registration (position + resize via EUI unlock mode)
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-12-unlock-mode")
     if EUI.RegisterUnlockElements then
         local MK = EUI.MakeUnlockElement
         EUI:RegisterUnlockElements({
@@ -5228,6 +5335,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  12b. BNet Toast notification -- position via unlock mode
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-12b-bnet-toast")
     do
         local toast = _G.BNToastFrame
         if toast then
@@ -5348,6 +5456,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  13. Visibility system registration
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-13-visibility-system")
     ECHAT.RefreshVisibility()
     if EUI.RegisterVisibilityUpdater then
         EUI.RegisterVisibilityUpdater(ECHAT.RefreshVisibility)
@@ -5356,6 +5465,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  14. Hide Blizzard social buttons (quick join, menu, channel, voice)
     ---------------------------------------------------------------------------
+    ECHAT.TaintCheck("before-14-hide-blizzard")
     for _, frameName in ipairs({
         "QuickJoinToastButton", "ChatFrameMenuButton", "ChatFrameChannelButton",
         "ChatFrameToggleVoiceDeafenButton", "ChatFrameToggleVoiceMuteButton",
@@ -5363,4 +5473,6 @@ initFrame:SetScript("OnEvent", function(self)
         local f = _G[frameName]
         if f then f:SetAlpha(0); f:EnableMouse(false) end
     end
+
+    ECHAT.TaintCheck("init-done")
 end)
