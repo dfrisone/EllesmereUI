@@ -10181,7 +10181,7 @@ local function CommitPositions()
     if EllesmereUI.SpecOverrides_HarvestUnlockLayout then
         local okH, errH = pcall(EllesmereUI.SpecOverrides_HarvestUnlockLayout, true)
         if not okH then
-            print("|cffff6060[EllesmereUI]|r Unlock layer harvest failed: "
+            EllesmereUI.Print("|cffff6060[EllesmereUI]|r Unlock layer harvest failed: "
                 .. tostring(errH))
         end
     end
@@ -10601,7 +10601,7 @@ end
 --- both baseline and spec-override data.
 function EllesmereUI.ForceCloseUnlockDiscard()
     if not isUnlocked then return end
-    print("|cffff6060[EllesmereUI]|r Spec changed: Unlock Mode closed, unsaved layout changes discarded.")
+    EllesmereUI.Print("|cffff6060[EllesmereUI]|r Spec changed: Unlock Mode closed, unsaved layout changes discarded.")
     pendingAfterClose = nil
     -- Unconditional: RevertPositions only runs below when positions changed,
     -- but the value-edit snapshot must never survive a discard-close.
@@ -11034,7 +11034,7 @@ end
 function ns.OpenUnlockMode()
     if isUnlocked then return end
     if InCombatLockdown() then
-        print("|cffff6060[EllesmereUI]|r Cannot enter Unlock Mode during combat.")
+        EllesmereUI.Print("|cffff6060[EllesmereUI]|r Cannot enter Unlock Mode during combat.")
         return
     end
     -- Standardized options-panel roundtrip: entering unlock mode by ANY means

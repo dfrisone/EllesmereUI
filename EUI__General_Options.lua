@@ -6325,12 +6325,12 @@ initFrame:SetScript("OnEvent", function(self)
                                         newName = newName and strtrim(newName) or ""
                                         if newName == "" or newName == capName then return end
                                         if newName == "Default" then
-                                            print(EllesmereUI.L("|cffff6060[EllesmereUI]|r Cannot rename to \"Default\"."))
+                                            EllesmereUI.Print(EllesmereUI.L("|cffff6060[EllesmereUI]|r Cannot rename to \"Default\"."))
                                             return
                                         end
                                         local _, profs = EllesmereUI.GetProfileList()
                                         if profs and profs[newName] then
-                                            print(EllesmereUI.Lf("|cffff6060[EllesmereUI]|r A profile named \"%1$s\" already exists.", newName))
+                                            EllesmereUI.Print(EllesmereUI.Lf("|cffff6060[EllesmereUI]|r A profile named \"%1$s\" already exists.", newName))
                                             return
                                         end
                                         EllesmereUI.RenameProfile(capName, newName)
