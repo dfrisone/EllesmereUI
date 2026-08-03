@@ -6620,6 +6620,10 @@ local function RefreshFocusCastProxyUnit()
     _focusCastProxy:UnregisterAllEvents()
     _focusCastProxy:RegisterUnitEvent("UNIT_SPELLCAST_START", unit)
     _focusCastProxy:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", unit)
+    -- TEMPORARY DIAGNOSTIC -- remove before merge. This is the suspected cure
+    -- path: the reporter says touching the options panel makes the sound work
+    -- again, and this is what the panel calls.
+    if ns._fkProbeDump then ns._fkProbeDump("options re-arm") end
 end
 ns.RefreshFocusCastProxyUnit = RefreshFocusCastProxyUnit
 local function EnsureFocusCastProxy()
@@ -7038,9 +7042,72 @@ ns.EnsureFocusReminderProxy = EnsureFocusReminderProxy
 -- runtime: no events registered anywhere, no ticker, zero cost. Called from
 -- setup and from the tail of every BuildAllCDMBars, so assigning the first
 -- kick spell (or removing the last) flips the family on/off live.
-function ns.RefreshFocusKickProxies()
+-- TEMPORARY DIAGNOSTIC -- remove before merge.
+-- The focus kick sound goes silent seemingly at random, comes back when the
+-- user changes anything in the options panel, and resets on zoning.
+-- RefreshFocusKickProxies is the ONLY thing that arms the sound proxy, and it
+-- tears the proxy down whenever hasContent is false. So the open question is
+-- which transient makes hasContent false across a loading screen, and why
+-- nothing re-arms afterwards. This logs every call, what it decided, and
+-- whether the proxy is actually listening once the call returns -- the last
+-- part matters because "the code ran" is not the same as "the proxy is live".
+do
+    local function fkSpells()
+        local sd = ns.GetBarSpellData and ns.GetBarSpellData(FOCUSKICK_BAR_KEY)
+        local spells = sd and sd.assignedSpells
+        if not spells then return "NIL" end
+        local pos = 0
+        for _, sid in ipairs(spells) do
+            if type(sid) == "number" and sid > 0 then pos = pos + 1 end
+        end
+        return ("%d(%d pos)"):format(#spells, pos)
+    end
+    local function fkProxyState()
+        if not _focusCastProxy then return "|cffff4040NOT CREATED|r" end
+        if _focusCastProxy:IsEventRegistered("UNIT_SPELLCAST_START") then
+            return "|cff40ff40LISTENING|r"
+        end
+        return "|cffff4040DEAF|r"
+    end
+    function ns._fkProbeCall(why, bd)
+        print(("|cff00c0ffCDM|r fk refresh: why=%s bd=%s enabled=%s spells=%s"):format(
+            tostring(why or "?"), bd and "ok" or "|cffff4040NIL|r",
+            bd and tostring(bd.enabled) or "-", fkSpells()))
+    end
+    function ns._fkProbeResult(hasContent, _)
+        print(("   -> hasContent=%s sound=%s unit=%s"):format(
+            tostring(hasContent), fkProxyState(),
+            tostring(ns.GetFocusKickUnit and ns.GetFocusKickUnit() or "?")))
+    end
+    function ns._fkProbeDump(tag)
+        local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
+        local sound = bd and (bd.focusCastSoundKey or "none") or "-"
+        print(("|cff00c0ffCDM|r fk [%s]: bd=%s enabled=%s spells=%s soundKey=%s unit=%s sound=%s"):format(
+            tostring(tag), bd and "ok" or "|cffff4040NIL|r",
+            bd and tostring(bd.enabled) or "-", fkSpells(), tostring(sound),
+            tostring(ns.GetFocusKickUnit and ns.GetFocusKickUnit() or "?"),
+            fkProxyState()))
+    end
+    -- Sample across the whole loading-screen settle, not just at PEW: the
+    -- teardown and any later re-arm can land on different ticks, and only the
+    -- LAST state decides whether the sound works.
+    local watcher = CreateFrame("Frame")
+    watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+    watcher:SetScript("OnEvent", function()
+        ns._fkProbeDump("PEW+0")
+        C_Timer.After(1, function() ns._fkProbeDump("PEW+1s") end)
+        C_Timer.After(5, function() ns._fkProbeDump("PEW+5s") end)
+        C_Timer.After(15, function() ns._fkProbeDump("PEW+15s") end)
+    end)
+    SLASH_EUIKICK1 = "/euikick"
+    SlashCmdList["EUIKICK"] = function() ns._fkProbeDump("manual") end
+end
+
+function ns.RefreshFocusKickProxies(why)
     local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
     local hasContent = false
+    -- TEMPORARY DIAGNOSTIC -- remove before merge. See ns._fkProbe below.
+    ns._fkProbeCall(why, bd)
     if bd and bd.enabled ~= false then
         local sd = ns.GetBarSpellData and ns.GetBarSpellData(FOCUSKICK_BAR_KEY)
         local spells = sd and sd.assignedSpells
@@ -7073,6 +7140,8 @@ function ns.RefreshFocusKickProxies()
             _focusCastProxy:UnregisterAllEvents()
         end
     end
+    -- TEMPORARY DIAGNOSTIC -- remove before merge.
+    ns._fkProbeResult(hasContent, _focusCastProxy)
 end
 
 
@@ -7880,7 +7949,7 @@ BuildAllCDMBars = function()
     -- Every full rebuild re-evaluates the FocusKick demand gate, so
     -- assigning the first kick spell (or removing the last) flips the
     -- feature family on/off live.
-    if ns.RefreshFocusKickProxies then ns.RefreshFocusKickProxies() end
+    if ns.RefreshFocusKickProxies then ns.RefreshFocusKickProxies("BuildAllCDMBars") end
 end
 
 -- Expose for options
@@ -8977,7 +9046,7 @@ function ECME:CDMFinishSetup()
 
     -- FocusKick family (anchor proxy + plate watcher, reminder text, cast
     -- sound): demand-gated -- an EMPTY kick bar installs nothing at all.
-    ns.RefreshFocusKickProxies()
+    ns.RefreshFocusKickProxies("setup")
     -- SharedMedia sounds feed the options dropdowns; append regardless.
     if EllesmereUI.AppendSharedMediaSounds then
         EllesmereUI.AppendSharedMediaSounds(
