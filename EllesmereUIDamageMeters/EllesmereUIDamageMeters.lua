@@ -1594,7 +1594,7 @@ local function EnsureTooltipFrame()
     _ttFrame._combatMsg:SetJustifyH("CENTER"); _ttFrame._combatMsg:SetWordWrap(true)
     SetDMFont(_ttFrame._combatMsg, 10)
     _ttFrame._combatMsg:SetTextColor(0.6, 0.6, 0.6, 1)
-    _ttFrame._combatMsg:SetText("Detailed information is\nsecret while in combat")
+    _ttFrame._combatMsg:SetText(EllesmereUI.L("Detailed information is\nsecret while in combat"))
     _ttFrame._combatMsg:Hide()
 
     _ttFrame:SetScript("OnShow", function() _ttVisible = true end)
@@ -1663,7 +1663,7 @@ local function PopulatePreview(bar, curSession, curSessionID, curDMType)
     -- Helper: apply header styling
     local function ApplyTTHeader(playerName, typeName)
         EnsureTooltipFrame()
-        _ttFrame._hdrText:SetText(playerName .. "'s " .. typeName .. " Breakdown")
+        _ttFrame._hdrText:SetText(EllesmereUI.Lf("%1$s's %2$s Breakdown", playerName, typeName))
         local cfg = DB()
         local hc = cfg.hdrBgColor; local hR = hc and hc.r or 0x1B/255; local hG = hc and hc.g or 0x1B/255; local hB = hc and hc.b or 0x1B/255
         _ttFrame._hdrBg:SetColorTexture(hR, hG, hB, cfg.hdrBgAlpha or 1)
@@ -1688,7 +1688,7 @@ local function PopulatePreview(bar, curSession, curSessionID, curDMType)
         -- Reverse to oldest-first
         local reversed = {}
         for ri = #raw, 1, -1 do reversed[#reversed + 1] = raw[ri] end
-        ApplyTTHeader(StripRealm(bar._src.name) or "Unknown", "Death Recap")
+        ApplyTTHeader(StripRealm(bar._src.name) or "Unknown", EllesmereUI.L("Death Recap"))
         local texPath, texKey = GetBreakdownBarTexturePath()
         local deathTime = reversed[#reversed] and reversed[#reversed].timestamp or GetTime()
         local total = #reversed
@@ -1877,7 +1877,7 @@ local function PopulatePreview(bar, curSession, curSessionID, curDMType)
                 _ttFrame._tgtDivider:SetHeight(PhysicalPixels(1)); _ttFrame._tgtDivider:SetColorTexture(1, 1, 1, 0.15)
                 _ttFrame._tgtLabel = _ttFrame:CreateFontString(nil, "OVERLAY")
                 SetDMFont(_ttFrame._tgtLabel, 9); _ttFrame._tgtLabel:SetTextColor(0.6, 0.6, 0.6, 1)
-                _ttFrame._tgtLabel:SetText("Targets")
+                _ttFrame._tgtLabel:SetText(EllesmereUI.L("Targets"))
                 _ttFrame._tgtBars = {}
                 for ti = 1, 3 do
                     local tb = {}
@@ -2432,7 +2432,7 @@ local function CreateDMWindow(winIdx)
                 if not hasRecap then
                     EnsureTooltipFrame()
                     local playerName = StripRealm(bar._src.name) or "Unknown"
-                    _ttFrame._hdrText:SetText(playerName .. "'s Death Recap")
+                    _ttFrame._hdrText:SetText(EllesmereUI.Lf("%1$s's Death Recap", playerName))
                     local cfg2 = DB()
                     local hc = cfg2.hdrBgColor; local hR = hc and hc.r or 0x1B/255; local hG = hc and hc.g or 0x1B/255; local hB = hc and hc.b or 0x1B/255
                     _ttFrame._hdrBg:SetColorTexture(hR, hG, hB, cfg2.hdrBgAlpha or 1)
@@ -2441,7 +2441,7 @@ local function CreateDMWindow(winIdx)
                     else local tc = cfg2.hdrTextColor; tR = tc and tc.r or 1; tG = tc and tc.g or 1; tB = tc and tc.b or 1 end
                     _ttFrame._hdrText:SetTextColor(tR, tG, tB, 1)
                     for bi = 1, #_ttBars do if _ttBars[bi] then _ttBars[bi].row:Hide() end end
-                    _ttFrame._combatMsg:SetText("No death recap available")
+                    _ttFrame._combatMsg:SetText(EllesmereUI.L("No death recap available"))
                     _ttFrame._combatMsg:Show()
                     _ttFrame:SetSize(TT_WIDTH, TT_HDR_H + 40)
                     ns._AnchorBreakdownFrame(bar.row, W.frame)
@@ -2454,7 +2454,7 @@ local function CreateDMWindow(winIdx)
                 -- Show header with player name + type
                 local playerName = StripRealm(bar._src and bar._src.name) or "Unknown"
                 local typeName = L(DM_TYPE_NAMES[W.curDMType] or "Damage Done")
-                _ttFrame._hdrText:SetText(playerName .. "'s " .. typeName .. " Breakdown")
+                _ttFrame._hdrText:SetText(EllesmereUI.Lf("%1$s's %2$s Breakdown", playerName, typeName))
                 local cfg2 = DB()
                 local hc = cfg2.hdrBgColor; local hR = hc and hc.r or 0x1B/255; local hG = hc and hc.g or 0x1B/255; local hB = hc and hc.b or 0x1B/255
                 _ttFrame._hdrBg:SetColorTexture(hR, hG, hB, cfg2.hdrBgAlpha or 1)
@@ -2464,7 +2464,7 @@ local function CreateDMWindow(winIdx)
                 _ttFrame._hdrText:SetTextColor(tR, tG, tB, 1)
                 -- Hide bars, show combat message
                 for bi = 1, #_ttBars do if _ttBars[bi] then _ttBars[bi].row:Hide() end end
-                _ttFrame._combatMsg:SetText("Detailed information is\nsecret while in combat")
+                _ttFrame._combatMsg:SetText(EllesmereUI.L("Detailed information is\nsecret while in combat"))
                 _ttFrame._combatMsg:Show()
                 _ttFrame:SetSize(TT_WIDTH, TT_HDR_H + 40)
                 ns._AnchorBreakdownFrame(bar.row, W.frame)
@@ -2672,6 +2672,14 @@ local function CreateDMWindow(winIdx)
                 wdb.hideInRaid = not wdb.hideInRaid
                 for _, w in ipairs(_windows) do w.UpdateVisibility() end
             end },
+            { text = L("Hide in Delves"), isActive = wdb.hideInDelve, onClick = function()
+                wdb.hideInDelve = not wdb.hideInDelve
+                for _, w in ipairs(_windows) do w.UpdateVisibility() end
+            end },
+            { text = L("Hide in PvP"), isActive = wdb.hideInPvP, onClick = function()
+                wdb.hideInPvP = not wdb.hideInPvP
+                for _, w in ipairs(_windows) do w.UpdateVisibility() end
+            end },
             { text = L("Hide out of Instances"), isActive = wdb.hideOutOfInstance, onClick = function()
                 wdb.hideOutOfInstance = not wdb.hideOutOfInstance
                 for _, w in ipairs(_windows) do w.UpdateVisibility() end
@@ -2852,7 +2860,7 @@ local function CreateDMWindow(winIdx)
                 if #_windows >= MAX_WINDOWS then
                     iconTex:SetAlpha(0.2)
                     if EUI.HideWidgetTooltip then EUI.HideWidgetTooltip() end
-                    if EUI.ShowWidgetTooltip then EUI.ShowWidgetTooltip(self, "You may only have " .. MAX_WINDOWS .. " windows active") end
+                    if EUI.ShowWidgetTooltip then EUI.ShowWidgetTooltip(self, EllesmereUI.Lf("You may only have %1$d windows active", MAX_WINDOWS)) end
                 end
             end)
         else
@@ -3790,8 +3798,8 @@ local function CreateDMWindow(winIdx)
 
         W.UpdateTimerText()
         local isOverall = (not W.curSessionID and W.curSession == Enum.DamageMeterSessionType.Overall)
-        local titlePrefix = isOverall and "Overall " or ""
-        W._fullTitle = L(titlePrefix .. (DM_TYPE_NAMES[W.curDMType] or "Damage Done"))
+        local typeName = L(DM_TYPE_NAMES[W.curDMType] or "Damage Done")
+        W._fullTitle = isOverall and EllesmereUI.Lf("Overall %1$s", typeName) or typeName
         W.FitTitle()
         if winIdx == 1 then UpdateSATimerText() end
 
@@ -4110,7 +4118,7 @@ local function CreateDMWindow(winIdx)
                     W._targetDivider:SetHeight(PhysicalPixels(1)); W._targetDivider:SetColorTexture(1, 1, 1, 0.15)
                     W._targetLabel = W.srcContent:CreateFontString(nil, "OVERLAY")
                     SetDMFont(W._targetLabel, leftFS - 1)
-                    W._targetLabel:SetTextColor(0.6, 0.6, 0.6, 1); W._targetLabel:SetText("Targets")
+                    W._targetLabel:SetTextColor(0.6, 0.6, 0.6, 1); W._targetLabel:SetText(EllesmereUI.L("Targets"))
                 end
                 W._targetDivider:ClearAllPoints()
                 W._targetDivider:SetPoint("TOPLEFT", W.srcContent, "TOPLEFT", 0, divY)
@@ -4354,10 +4362,10 @@ local function CreateDMWindow(winIdx)
             homeAddBtn._plus:SetText("+")
             homeAddBtn._plus:SetTextColor(1, 1, 1, 0.3)
             homeAddBtn._lbl:SetFont(fontPath, CTX_FONT_SZ, outline)
-            homeAddBtn._lbl:SetText("ADD NEW")
+            homeAddBtn._lbl:SetText(EllesmereUI.L("ADD NEW"))
             homeAddBtn._lbl:SetTextColor(1, 1, 1, 0.3)
             homeAddBtn._hint:SetFont(fontPath, 9, outline)
-            homeAddBtn._hint:SetText("(middle click to remove)")
+            homeAddBtn._hint:SetText(EllesmereUI.L("(middle click to remove)"))
             homeAddBtn._hint:SetTextColor(1, 1, 1, 0.3)
             -- Center the group: offset label so plus+label+hint are visually centered
             local plusW = homeAddBtn._plus:GetStringWidth() + 4
@@ -4381,7 +4389,7 @@ local function CreateDMWindow(winIdx)
                 for dt, n in pairs(DM_TYPE_NAMES) do
                     local pinned = false
                     for _, b in ipairs(bookmarks) do if b == dt then pinned = true; break end end
-                    if not pinned then items[#items + 1] = { text = n, onClick = function()
+                    if not pinned then items[#items + 1] = { text = EllesmereUI.L(n), onClick = function()
                         bookmarks[#bookmarks + 1] = dt; RefreshHome()
                     end } end
                 end
@@ -4478,6 +4486,8 @@ local function CreateDMWindow(winIdx)
         local _, iType = IsInInstance()
         if wdb.hideInDungeon and iType == "party" then frame:Hide(); return end
         if wdb.hideInRaid and iType == "raid" then frame:Hide(); return end
+        if wdb.hideInDelve and C_PartyInfo and C_PartyInfo.IsDelveInProgress and C_PartyInfo.IsDelveInProgress() then frame:Hide(); return end
+        if wdb.hideInPvP and (iType == "pvp" or iType == "arena") then frame:Hide(); return end
         if wdb.hideOutOfInstance and (iType == "none" or iType == nil) then frame:Hide(); return end
         if vis == "mouseover" then frame:Hide()
         else frame:SetAlpha(1); frame:EnableMouse(true); frame:Show() end

@@ -1626,8 +1626,9 @@ local function RenderStandalone()
         ApplyShadow(f._deathFS)
         local dR, dG, dB = GetColor(p.deathTextColor, 0.93, 0.33, 0.33)
         f._deathFS:SetTextColor(dR, dG, dB)
-        f._deathFS:SetText(format("%d Death%s  -%s",
-            run.deaths, run.deaths ~= 1 and "s" or "", FormatTime(run.deathTimeLost)))
+        f._deathFS:SetText(run.deaths == 1
+            and EllesmereUI.Lf("%1$d Death  -%2$s", run.deaths, FormatTime(run.deathTimeLost))
+            or EllesmereUI.Lf("%1$d Deaths  -%2$s", run.deaths, FormatTime(run.deathTimeLost)))
         f._deathFS:ClearAllPoints()
         f._deathFS:SetPoint("TOPLEFT", f, "TOPLEFT", dPad, y - 5)
         f._deathFS:SetPoint("TOPRIGHT", f, "TOPRIGHT", -dPad, y - 5)

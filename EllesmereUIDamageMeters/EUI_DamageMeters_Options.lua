@@ -263,7 +263,7 @@ initFrame:SetScript("OnEvent", function(self)
             kbLbl:SetPoint("CENTER")
 
             local function FormatKey(key)
-                if not key then return "Not Bound" end
+                if not key then return EllesmereUI.L("Not Bound") end
                 local parts = {}
                 for mod in key:gmatch("(%u+)%-") do
                     parts[#parts + 1] = mod:sub(1, 1) .. mod:sub(2):lower()
@@ -1618,6 +1618,8 @@ initFrame:SetScript("OnEvent", function(self)
         local SH_ICON_VIS_ITEMS = {
             { key = "iconHideInDungeon",      label = "Hide in Dungeons" },
             { key = "iconHideInRaid",         label = "Hide in Raids" },
+            { key = "iconHideInDelve",        label = "Hide in Delves" },
+            { key = "iconHideInPvP",          label = "Hide in PvP" },
             { key = "iconHideOutOfInstance",   label = "Hide out of Instances" },
         }
         local iconVisRow
@@ -1734,6 +1736,8 @@ initFrame:SetScript("OnEvent", function(self)
         local SH_BAR_VIS_ITEMS = {
             { key = "barHideInDungeon",      label = "Hide in Dungeons" },
             { key = "barHideInRaid",         label = "Hide in Raids" },
+            { key = "barHideInDelve",        label = "Hide in Delves" },
+            { key = "barHideInPvP",          label = "Hide in PvP" },
             { key = "barHideOutOfInstance",   label = "Hide out of Instances" },
         }
         local barVisRow

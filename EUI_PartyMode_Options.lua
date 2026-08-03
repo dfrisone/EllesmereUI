@@ -98,7 +98,7 @@ do
             kbLbl:SetPoint("CENTER")
 
             local function FormatKey(key)
-                if not key then return "Not Bound" end
+                if not key then return EllesmereUI.L("Not Bound") end
                 local parts = {}
                 for mod in key:gmatch("(%u+)%-") do
                     parts[#parts + 1] = mod:sub(1, 1) .. mod:sub(2):lower()

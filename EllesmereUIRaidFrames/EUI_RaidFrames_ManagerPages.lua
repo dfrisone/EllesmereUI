@@ -535,7 +535,7 @@ local function TileSubtitle(t)
     local names = {}
     if t.claim then
         for _, cat in ipairs(CAT_ORDER) do
-            if t.claim[cat] then names[#names + 1] = CAT_VALUES[cat] end
+            if t.claim[cat] then names[#names + 1] = L(CAT_VALUES[cat]) end
         end
     end
     if #names == 0 then return L("No filters routed") end

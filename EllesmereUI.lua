@@ -11162,7 +11162,7 @@ local function ShowSidebarUnlockTip()
         msg:SetWidth(TIP_W - 30)
         msg:SetJustifyH("CENTER")
         msg:SetSpacing(6)
-        msg:SetText("Unlock Mode is where you can adjust\npositioning for all the elements of EllesmereUI")
+        msg:SetText(EllesmereUI.L("Unlock Mode is where you can adjust\npositioning for all the elements of EllesmereUI"))
 
         -- Okay button
         local okBtn = CreateFrame("Button", nil, tip)

@@ -1411,8 +1411,32 @@ local function RegisterButtonWithController(btn)
     ActionButtonController:WrapScript(btn, "OnReceiveDrag", BTN_ON_RECEIVE_DRAG_BEFORE, BTN_ON_RECEIVE_DRAG_AFTER)
     ActionButtonController:WrapScript(btn, "OnShow", BTN_ON_SHOW_HIDE)
     ActionButtonController:WrapScript(btn, "OnHide", BTN_ON_SHOW_HIDE)
+    -- Combat drag belt: dragging FROM one of our buttons reveals empty drop
+    -- targets through the controller's secure broadcast, independent of the
+    -- ActionButton1 showgrid monitor (which depends on Blizzard's retained
+    -- MainActionBar event chain staying secure end to end). The pre-wrap
+    -- returns nothing, so the native drag proceeds untouched; the matching
+    -- grid-off arrives via the monitor or, failing that, the regen apply.
+    ActionButtonController:WrapScript(btn, "OnDragStart", [[
+        control:RunAttribute("SetShowGrid", true, 2)
+    ]])
 
-    -- Per-button showgrid: toggle the flag bit and update visibility
+    -- Per-button showgrid: toggle the flag bit and update visibility.
+    --
+    -- TRANSIENT grid reasons (GAME_EVENT drag / SPELLBOOK / KEYBOUND -- every
+    -- bit below ALWAYS) override statehidden for within-cutoff buttons: with
+    -- "Always Show Buttons" off, empty slots are parked statehidden + Hidden
+    -- + alpha 0 + mouse off, and every insecure reversal path is gated on
+    -- being out of combat -- so a combat spell drag had NO drop targets
+    -- (reported: cannot move a keybound ability to an empty slot in combat).
+    -- The reveal must therefore be complete IN the restricted environment:
+    -- Show, alpha, and mouse are all restored here (HANDLE:SetAlpha and
+    -- HANDLE:EnableMouse exist in the restricted API), gated on the
+    -- hidden->shown edge so a live on-CD alpha on an already-visible button
+    -- is never stomped. eab-withincutoff keeps icon-cutoff buttons out of
+    -- the override (revealing those would paint slots the user configured
+    -- away); eab-click carries the bar's click-through setting so a reveal
+    -- never turns a click-through bar clickable.
     btn:SetAttributeNoHandler("SetShowGrid", [[
         local show, reason, force = ...
         local cur = self:GetAttribute("showgrid") or 0
@@ -1426,19 +1450,49 @@ local function RegisterButtonWithController(btn)
 
         if (prev ~= cur) or force then
             self:SetAttribute("showgrid", cur)
-            local vis = (cur > 0 or HasAction(self:GetAttribute("action") or 0))
-                and not self:GetAttribute("statehidden")
-            if vis then self:Show(true) else self:Hide(true) end
+            local vis
+            if (cur % 32) > 0 and (self:GetAttribute("eab-withincutoff") or 1) ~= 0 then
+                vis = true
+            else
+                vis = (cur > 0 or HasAction(self:GetAttribute("action") or 0))
+                    and not self:GetAttribute("statehidden")
+            end
+            if vis then
+                if not self:IsShown() then
+                    self:SetAlpha(1)
+                    if (self:GetAttribute("eab-click") or 1) ~= 0 then
+                        self:EnableMouse(true)
+                    end
+                end
+                self:Show(true)
+            else
+                self:Hide(true)
+            end
         end
     ]])
 
     -- Visibility evaluation: show if grid is active or action exists,
-    -- unless the button is explicitly state-hidden.
+    -- unless the button is explicitly state-hidden. Same transient-grid
+    -- override and same edge-gated alpha/mouse restore as SetShowGrid, so
+    -- a mid-drag flush (action attribute change -> pending-vis batch)
+    -- cannot re-hide a revealed drop target.
     btn:SetAttributeNoHandler("UpdateShown", [[
-        local grid = (self:GetAttribute("showgrid") or 0) > 0
+        local cur = self:GetAttribute("showgrid") or 0
         local hasAct = HasAction(self:GetAttribute("action") or 0)
         local hidden = self:GetAttribute("statehidden")
-        if (grid or hasAct) and not hidden then
+        local vis
+        if (cur % 32) > 0 and (self:GetAttribute("eab-withincutoff") or 1) ~= 0 then
+            vis = true
+        else
+            vis = (cur > 0 or hasAct) and not hidden
+        end
+        if vis then
+            if not self:IsShown() then
+                self:SetAlpha(1)
+                if (self:GetAttribute("eab-click") or 1) ~= 0 then
+                    self:EnableMouse(true)
+                end
+            end
             self:Show(true)
         else
             self:Hide(true)
@@ -2547,10 +2601,24 @@ ns.LayoutPagingFrame = LayoutPagingFrame
 
 -- Secure snippet appended to each button's _childupdate-eab-page handler (and
 -- reused as the _childupdate-eab-empower handler): after the action attr changes
--- on a page swap, re-evaluate pressAndHoldAction/typerelease for empowered /
--- hold-release spells. IsPressHoldReleaseSpell and GetActionInfo are available
--- in the restricted environment even though they are gone from _G.
+-- on a page swap, re-evaluate pressAndHoldAction for empowered / hold-release
+-- spells. IsPressHoldReleaseSpell and GetActionInfo are available in the
+-- restricted environment even though they are gone from _G (GetActionInfo as a
+-- scrubbing wrapper, RestrictedEnvironment.lua).
 -- Stored on ns (not a file local) to stay clear of Lua's 200-local chunk cap.
+--
+-- Writes pressAndHoldAction ONLY, exactly like Blizzard's own
+-- UpdatePressAndHoldAction. It must NOT touch typerelease: Blizzard sets that
+-- to "actionrelease" once in the button mixin's OnLoad and never clears it,
+-- and SecureTemplates reads it on EVERY key release when the
+-- ActionButtonUseKeyHeldSpell CVar is on, not just for empowered spells
+-- (releasePressAndHoldAction = (not down) and (pressAndHoldAction or CVar)).
+-- Clearing it on non-empower buttons would leave those users' key-up path with
+-- no action type at all. The old version did clear it, which was harmless only
+-- because this snippet never actually ran outside a page change -- the
+-- re-check trigger was wired to an _onattributechanged handler that
+-- SecureHandlerStateTemplate does not implement. Fixing the trigger made this
+-- snippet live addon-wide, so the clear had to go with it.
 ns._eabEmpowerSnippet = [[
     local slot = self:GetAttribute('action')
     if slot and IsPressHoldReleaseSpell then
@@ -2563,12 +2631,8 @@ ns._eabEmpowerSnippet = [[
         end
         if spellID and IsPressHoldReleaseSpell(spellID) then
             self:SetAttribute('pressAndHoldAction', true)
-            self:SetAttribute('typerelease', 'actionrelease')
         else
             self:SetAttribute('pressAndHoldAction', false)
-            if self:GetAttribute('typerelease') then
-                self:SetAttribute('typerelease', nil)
-            end
         end
     end
 ]]
@@ -2682,12 +2746,22 @@ local function CreateBarFrame(info)
 
     barFrames[key] = frame
 
-    -- Empower re-check: when addon code sets "eab-empower-trigger", dispatch
+    -- Empower re-check: when addon code sets "state-eabempower", dispatch
     -- ChildUpdate to re-evaluate pressAndHoldAction on all child buttons.
-    frame:SetAttributeNoHandler("_onattributechanged", [[
-        if name == "eab-empower-trigger" then
-            self:ChildUpdate("eab-empower", "")
-        end
+    --
+    -- This MUST be an _onstate- handler on a state- attribute. These bar
+    -- frames are SecureHandlerStateTemplate, whose
+    -- SecureHandler_StateOnAttributeChanged only matches "^state%-(.+)" and
+    -- dispatches to "_onstate-<id>". It has no _onattributechanged path at
+    -- all -- that belongs to SecureHandlerAttributeTemplate (which is what
+    -- OverrideController above correctly uses). The original trigger was an
+    -- _onattributechanged snippet keyed on a plain "eab-empower-trigger"
+    -- attribute, so setting it fired NOTHING: the re-check has never once run
+    -- through this path since it was written. Every empower repair outside a
+    -- page change silently did nothing, which is why an empowered spell that
+    -- lost pressAndHoldAction stayed lost.
+    frame:SetAttributeNoHandler("_onstate-eabempower", [[
+        self:ChildUpdate("eab-empower", "")
     ]])
 
     -- Install a secure visibility handler so we can show/hide the frame
@@ -2916,8 +2990,8 @@ local function SetupBar(info, skipProtected)
                     btn:SetAttributeNoHandler("_childupdate-eab-page", ns._eabBuildPageChildSnippet(i))
                 end
                 -- Empower re-check on slot change (spec swap, drag, etc.)
-                -- The bar header's _onattributechanged dispatches ChildUpdate
-                -- when addon code sets "eab-empower-trigger" on slot change.
+                -- The bar header's _onstate-eabempower dispatches ChildUpdate
+                -- when addon code sets "state-eabempower".
                 if not btn:GetAttribute("_childupdate-eab-empower") then
                     btn:SetAttributeNoHandler("_childupdate-eab-empower", ns._eabEmpowerSnippet)
                 end
@@ -3440,21 +3514,14 @@ do
     local _empowerReroutePending = false
 
     -- Empower keybind reroute, shared by the immediate and the deferred path.
-    -- UpdateKeybinds returns false when the routing signature is unchanged
-    -- (mouseover-conditional macro storms re-fire ACTIONBAR_SLOT_CHANGED on
-    -- every flip without changing any binding or empower state). Skip the
-    -- secure re-trigger in that case: rebuilding bindings and running the
-    -- ChildUpdate snippet on every bar every frame is what tanked FPS while
-    -- hovering across nameplates.
+    -- The secure re-trigger that re-evaluates pressAndHoldAction now lives in
+    -- UpdateKeybinds itself (pass 3), so it can never be omitted by a caller;
+    -- it is still skipped when the routing signature is unchanged, which is
+    -- what keeps mouseover-conditional macro storms (ACTIONBAR_SLOT_CHANGED on
+    -- every flip) from rebuilding bindings and running the ChildUpdate snippet
+    -- on every bar every frame.
     local function _EmpowerReroute()
-        if _G._EAB_UpdateKeybinds and _G._EAB_UpdateKeybinds() then
-            for _, info in ipairs(BAR_CONFIG) do
-                local frame = barFrames[info.key]
-                if frame then
-                    frame:SetAttribute("eab-empower-trigger", GetTime())
-                end
-            end
-        end
+        if _G._EAB_UpdateKeybinds then _G._EAB_UpdateKeybinds() end
     end
 
     -- Deferral shell for that reroute. ACTIONBAR_SLOT_CHANGED fires freely IN
@@ -3805,6 +3872,22 @@ do
             -- Cost: only in that racy interleaving, one extra push
             -- of the wave that was owed to the cast anyway.
             ns._cdCastWave = true
+            -- ...and re-open the two rate gates for the same reason. The cast
+            -- branch zeroes both, but a cooldown event in the cast's OWN frame
+            -- consumes that opening and re-arms them (storm cap to +0.15s, slow
+            -- tier to +0.5s) off state read inside the transient window. The
+            -- kick would then be capped out of the walk entirely, and the slow
+            -- tier -- every utility spell, item and macro, i.e. most of the bar
+            -- -- would keep whatever that transient push painted until its gate
+            -- expired, or until the ~1/sec heartbeat if no event landed at the
+            -- gate. Measured before this: swipe start a mean 231-304ms late
+            -- over two captures, a fifth to a third of them past 500ms, tail
+            -- reaching 616ms; after, 85ms mean with nothing past 208ms and the
+            -- 500ms+ band empty. Reopening is
+            -- self-limiting: the kick is once per cast (pending guard), and
+            -- when the wave was NOT stolen these are already 0.
+            ns._cdWalkNext = 0
+            ns._cdSlowNext = 0
             local d2 = ns._cdDispatcher
             local h2 = d2 and d2:GetScript("OnEvent")
             if h2 then h2(d2, "ACTIONBAR_UPDATE_COOLDOWN") end
@@ -7143,6 +7226,17 @@ function EAB:ApplyAlwaysShowButtons(barKey)
         for _, btn in ipairs(buttons) do
             if btn then
                 SetShowGridInsecure(btn, showEmpty, SHOWGRID.ALWAYS)
+                -- Heal transient drag/spellbook bits. A COMBAT drag reveals
+                -- empty slots through the secure path (which honors these
+                -- bits), but its HIDEGRID may land while the insecure
+                -- handler is combat-gated -- without this, a bit stuck from
+                -- a mid-combat drag would keep empty slots visible after
+                -- combat. This runs from the post-drag re-assert and the
+                -- regen-deferred ApplyAll, both outside any live drag.
+                if not _gridState.shown then
+                    SetShowGridInsecure(btn, false, SHOWGRID.GAME_EVENT)
+                    SetShowGridInsecure(btn, false, SHOWGRID.SPELLBOOK)
+                end
             end
         end
     end
@@ -7172,6 +7266,13 @@ function EAB:ApplyAlwaysShowButtons(barKey)
                 bfd.shapeBorder:SetShown(visible and EFD(bfd.shapeBorder).wantsShow == true)
             end
 
+            -- Stamp the secure-side facts the restricted reveal needs
+            -- (see the SetShowGrid snippet): this button is within the icon
+            -- cutoff, and whether a reveal may enable mouse clicks.
+            if not InCombatLockdown() then
+                btn:SetAttributeNoHandler("eab-withincutoff", 1)
+                btn:SetAttributeNoHandler("eab-click", clickable and 1 or 0)
+            end
             if not visible then
                 btn:SetAlpha(0)
                 -- Invisible empty slots should not catch mouse events.
@@ -7215,6 +7316,9 @@ function EAB:ApplyAlwaysShowButtons(barKey)
             btn:SetAlpha(0)
             SafeEnableMouse(btn, false)
             if not InCombatLockdown() then
+                -- Cutoff buttons are excluded from the secure drag reveal:
+                -- revealing them would paint slots the user configured away.
+                btn:SetAttributeNoHandler("eab-withincutoff", 0)
                 btn:SetAttributeNoHandler("statehidden", true)
                 btn:Hide()
             end
@@ -7406,6 +7510,36 @@ ns._eabReleaseRangeSlots = function(barKey)
     end
 end
 
+-- Re-evaluate a bar's range state from the live API and repaint it.
+--
+-- Acquiring a slot yields NO initial state: EnableActionRangeCheck is silent
+-- until the next transition, so a slot whose refcount just went 0->1 has
+-- nothing to paint from and the cache entry the release wiped stays wiped.
+-- The flip handler's "no change, return" gate then swallows the next report,
+-- stranding whatever tint was last painted (a button already red when the
+-- release landed stays red for as long as the player remains in range).
+-- Before slots were released on re-acquire this could not bite: acquisition
+-- only ever added slots, so cache and tint always survived. (On ns: this
+-- chunk is at the 200-local cap.)
+ns._eabRangeSweepBar = function(barKey)
+    local buttons = barButtons[barKey]
+    local s = EAB.db.profile.bars[barKey]
+    if not buttons or not s or not s.outOfRangeColoring then return end
+    if ns._eabBarDormant[barKey] then return end
+    for _, btn in ipairs(buttons) do
+        local slot = GetButtonActionSlot(btn)
+        if slot and HasAction(slot) then
+            local isOut = (IsActionInRange(slot) == false)
+            _range.outOfRange[slot] = isOut or nil
+            ApplyRangeTint(btn, isOut, s)
+        elseif slot then
+            -- Slot lost its action (talent swap, drag): clear stale tint.
+            _range.outOfRange[slot] = nil
+            ApplyRangeTint(btn, false, s)
+        end
+    end
+end
+
 -- Enable range checking for all active button slots on a bar
 local function EnableRangeCheckForBar(barKey)
     local buttons = barButtons[barKey]
@@ -7435,6 +7569,11 @@ local function EnableRangeCheckForBar(barKey)
             end
         end
     end
+    -- Every acquire path lands here, so the post-acquire re-evaluation lives
+    -- here too rather than in each caller. Unconditional: a bar sharing slots
+    -- another bar already holds takes no 0->1 edge but still needs its own
+    -- buttons painted.
+    ns._eabRangeSweepBar(barKey)
 end
 
 -- Disable range checking for all slots on a bar and clear tints
@@ -7458,24 +7597,15 @@ end
 
 -- Dormancy edges for range (called via ns from ApplyBarDormancy, which is
 -- defined earlier in the chunk than these locals). Hide releases the bar's
--- slots; show re-acquires and repaints from the stale-tolerant cache --
--- live events correct any drift on the next flip.
+-- slots; show re-acquires, and the acquire sweep repaints from the live API.
+-- Repainting from the cache instead would paint every button in-range, since
+-- the release that ran on hide wiped the bar's entries.
 ns._eabRangeBarDormancy = function(barKey, dormant)
     if dormant then
         ns._eabReleaseRangeSlots(barKey)
         return
     end
     EnableRangeCheckForBar(barKey)
-    local buttons = barButtons[barKey]
-    local s = EAB.db.profile.bars[barKey]
-    if buttons and s and s.outOfRangeColoring then
-        for _, btn in ipairs(buttons) do
-            local slot = GetButtonActionSlot(btn)
-            if slot then
-                ApplyRangeTint(btn, _range.outOfRange[slot] or false, s)
-            end
-        end
-    end
 end
 
 -- Recompute a bar's flyout direction from its current screen position.
@@ -7715,29 +7845,9 @@ function EAB:ApplyRangeColoring()
         local key = info.key
         local s = self.db.profile.bars[key]
         if s and s.outOfRangeColoring then
+            -- The acquire path sweeps: EnableActionRangeCheck fires no initial
+            -- event, so slots already out of range need the live poll.
             EnableRangeCheckForBar(key)
-            -- Immediate sweep: apply tint for slots already out of range
-            -- since EnableActionRangeCheck does not fire an initial event.
-            local btns = barButtons[key]
-            if btns then
-                for _, btn in ipairs(btns) do
-                    local slot = GetButtonActionSlot(btn)
-                    if slot and HasAction(slot) then
-                        local inRange = IsActionInRange(slot)
-                        if inRange == false then
-                            _range.outOfRange[slot] = true
-                            ApplyRangeTint(btn, true, s)
-                        else
-                            _range.outOfRange[slot] = nil
-                            ApplyRangeTint(btn, false, s)
-                        end
-                    elseif slot and _range.outOfRange[slot] then
-                        -- Slot lost its action (e.g., talent swap). Clear stale tint.
-                        _range.outOfRange[slot] = nil
-                        ApplyRangeTint(btn, false, s)
-                    end
-                end
-            end
         else
             DisableRangeCheckForBar(key)
         end
@@ -10632,6 +10742,35 @@ local function UpdateKeybinds()
             end
         end
     end
+    -- Pass 3: re-evaluate pressAndHoldAction on every button.
+    -- Routing the key is only HALF of hold-and-release -- a CLICK-routed key
+    -- still behaves as Press-and-Tap unless the button also carries that
+    -- attr. The only writers are this re-check and _childupdate-eab-page, and
+    -- that page handler is installed on MainBar and custom-paged bars alone.
+    --
+    -- Meanwhile Blizzard writes the attribute too, and gets the last word on
+    -- every loading screen: BUTTON_EVENT_LISTS.action registers
+    -- PLAYER_ENTERING_WORLD per button, the template wires OnEvent to the
+    -- mixin, and its PEW branch calls Update() -> UpdatePressAndHoldAction().
+    -- Zoning into an instance is where that lands wrong, and because the page
+    -- state does not change across the loading screen (page 1 -> page 1)
+    -- nothing re-ran our snippet afterwards, so an empowered spell sat on
+    -- pressAndHoldAction=false -- Press-and-Tap behaviour -- for the rest of
+    -- the session.
+    --
+    -- The re-check also used to be fired from the ACTIONBAR_SLOT_CHANGED
+    -- reroute only, so every other caller (load time, UPDATE_BINDINGS, the
+    -- combat re-arm above, the housing restore, and the post-loading-screen
+    -- restore) rebuilt the routing and left the attrs stale. Firing it here
+    -- covers all of them. SetAttribute on a secure header is protected, but
+    -- the combat bail at the top of this function guarantees we only reach
+    -- here out of combat.
+    for _, info in ipairs(BAR_CONFIG) do
+        local frame = barFrames[info.key]
+        if frame then
+            frame:SetAttribute("state-eabempower", GetTime())
+        end
+    end
     return true
 end
 _G._EAB_UpdateKeybinds = UpdateKeybinds
@@ -10697,16 +10836,36 @@ do
         vehVis:RegisterEvent("PLAYER_ENTERING_WORLD")
         vehVis:RegisterEvent("PLAYER_REGEN_ENABLED")
         vehVis:SetScript("OnEvent", function(self, event, unit)
-            if event == "PLAYER_REGEN_ENABLED" then
-                local show = CanExitVehicle and CanExitVehicle()
-                btn:SetShown(show or false)
+            -- Only the UNIT_ events carry a unit; PLAYER_ENTERING_WORLD's first
+            -- arg is isInitialLogin, so testing it as a unit skipped the whole
+            -- pass on a fresh login.
+            if (event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE")
+                and unit ~= "player" then
                 return
             end
-            if unit and unit ~= "player" then return end
-            -- Protected instances (M+/raid) block SetShown during combat
-            if InCombatLockdown() and EllesmereUI.InProtectedInstance and EllesmereUI.InProtectedInstance() then return end
-            local show = CanExitVehicle and CanExitVehicle()
-            btn:SetShown(show or false)
+            if event ~= "PLAYER_REGEN_ENABLED" then
+                -- MainMenuBarVehicleLeaveButton is EditMode-managed, so SetShown
+                -- routes through the protected HideBase/ShowBase and is blocked
+                -- in ANY combat, not only inside a live keystone. This gate used
+                -- to AND InCombatLockdown with InProtectedInstance, which is
+                -- false in every normal dungeon AND goes false the instant a key
+                -- COMPLETES (it requires IsChallengeModeActive), so combat
+                -- vehicle events called straight through and tripped
+                -- ADDON_ACTION_BLOCKED -- field-reported from the end of a M+
+                -- run. Same rule the micro menu / bag bar site states above: the
+                -- restriction being worked around is "protected frame op blocked
+                -- in combat", so InCombatLockdown is the whole gate. Nothing is
+                -- lost by deferring: the protected call could not have succeeded
+                -- during combat either way, and the PLAYER_REGEN_ENABLED arm
+                -- re-applies the correct state the moment lockdown clears.
+                if InCombatLockdown() then return end
+            end
+            local show = (CanExitVehicle and CanExitVehicle()) or false
+            -- A redundant SetShown on a frame already in that state still trips
+            -- the block, so only issue the protected op on a real transition.
+            if btn:IsShown() ~= show then
+                btn:SetShown(show)
+            end
         end)
     end
 end

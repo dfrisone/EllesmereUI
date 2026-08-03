@@ -1196,7 +1196,7 @@ initFrame:SetScript("OnEvent", function(self)
             { "graphicsComputeEffects",     "0" },
             { "graphicsOutlineMode",        "0" },
             { "graphicsTextureResolution",  "2" },
-            { "graphicsSpellDensity",       "1" },
+            { "graphicsSpellDensity",       "0" },
             { "graphicsProjectedTextures",  "1" },
             { "graphicsViewDistance",        "1" },
             { "graphicsEnvironmentDetail",  "1" },

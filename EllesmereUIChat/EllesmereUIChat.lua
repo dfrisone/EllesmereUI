@@ -169,8 +169,13 @@ local BISECT_TEX_SHIFT_OFF = false      -- 8: CLEARED (this cycle) -- textures
 local _tabHostClip
 local function GetTabHostClip()
     if _tabHostClip then return _tabHostClip end
+    -- MEDIUM, not DIALOG: the chrome only has to beat the chat tabs and dock
+    -- (ChatTabTemplate / DockManagerTemplate are both LOW), and DIALOG kept the
+    -- 1px tab underline on top of MEDIUM Blizzard panels that Raise() over the
+    -- UI, such as the maximized world map. Do NOT drop this to LOW -- that
+    -- washes out the active-tab underline. Levels carry all of the ordering.
     local clip = CreateFrame("Frame", nil, UIParent)
-    clip:SetFrameStrata("DIALOG")
+    clip:SetFrameStrata("MEDIUM")
     clip:EnableMouse(false)
     clip:SetClipsChildren(true)
     local gdm = _G.GeneralDockManager
@@ -738,11 +743,11 @@ function ECHAT.ApplyExtendedBackground()
         -- fill covers its inward half and only the outward half frames the
         -- panel.
         local showBehind = cfg.panelBorderBehind == true
-        border:SetFrameStrata(showBehind and "BACKGROUND" or "DIALOG")
+        border:SetFrameStrata(showBehind and "BACKGROUND" or "MEDIUM")
         -- Solid borders use a child at host + 1, while textured borders render
         -- directly at host level. In behind mode both stay at 0, under the
-        -- extended strip (level 1) and the chat bg. Cap below 100: the options
-        -- window sits at DIALOG level 100 and must draw over the chat border.
+        -- extended strip (level 1) and the chat bg. Cap below 100: the per-tab
+        -- border hosts sit at level 100 and must draw over the chat border.
         local borderLevel = showBehind and 0 or max(96, min(98, cf1:GetFrameLevel() + 20))
         border:SetFrameLevel(borderLevel)
 
@@ -789,7 +794,7 @@ function ECHAT.ApplyExtendedBackground()
                     sbBorder:ClearAllPoints()
                     sbBorder:SetPoint("TOPLEFT", sb, "TOPLEFT", 0, sbTop)
                     sbBorder:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
-                    sbBorder:SetFrameStrata(showBehind and "BACKGROUND" or "DIALOG")
+                    sbBorder:SetFrameStrata(showBehind and "BACKGROUND" or "MEDIUM")
                     sbBorder:SetFrameLevel(borderLevel)
                     EllesmereUI.ApplyBorderStyle(sbBorder, sizes[thicknessKey] or 1,
                         color.r, color.g, color.b, alpha, cfg.panelBorderTexture or "solid",
@@ -3171,8 +3176,8 @@ function ECHAT.ApplyTabBorders()
             if host:GetParent() ~= wantedParent then
                 host:SetParent(wantedParent)
             end
-            host:SetFrameStrata("DIALOG")
-            -- Constant level: hosts render on our clip at DIALOG strata,
+            host:SetFrameStrata("MEDIUM")
+            -- Constant level: hosts render on our clip at MEDIUM strata,
             -- so a tab-derived level is meaningless -- and tab:GetFrameLevel
             -- was an un-exonerated tab getter in this (dirty-tested) pass.
             local level = 100
@@ -3248,7 +3253,7 @@ function ECHAT.ApplyTabSeparators()
         end
         if not ns._tabPanelSepHost then
             local host = CreateFrame("Frame", nil, clip)
-            host:SetFrameStrata("DIALOG")
+            host:SetFrameStrata("MEDIUM")
             host:SetFrameLevel(90)
             host:EnableMouse(false)
             host:SetHeight((PP and PP.mult) or 1)
@@ -3334,7 +3339,7 @@ local function SkinTab(cf)
 
     local separatorHost = CreateFrame("Frame", nil, hostParent)
     separatorHost:Hide()
-    separatorHost:SetFrameStrata("DIALOG")
+    separatorHost:SetFrameStrata("MEDIUM")
     separatorHost:SetFrameLevel(90)
     separatorHost:EnableMouse(false)
     local onePx = (PP and PP.mult) or 1
@@ -3359,7 +3364,7 @@ local function SkinTab(cf)
 
     local underlineHost = CreateFrame("Frame", nil, hostParent)
     underlineHost:Hide()
-    underlineHost:SetFrameStrata("DIALOG")
+    underlineHost:SetFrameStrata("MEDIUM")
     underlineHost:SetFrameLevel(95)
     underlineHost:EnableMouse(false)
     local activeUnderline = underlineHost:CreateTexture(nil, "OVERLAY", nil, 7)

@@ -4865,7 +4865,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
         titleFS:SetWordWrap(false)
         -- v2: named indicators (the seeded filter groups) show their name.
         if ns.BM2_Enabled and ind.name then
-            titleFS:SetText(ind.name)
+            titleFS:SetText(EllesmereUI.L(ind.name))
         else
             titleFS:SetText(EllesmereUI.L(typeName))
         end
@@ -6147,7 +6147,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
         -- v2: named filter-driven groups head their settings with the group
         -- name; spell-driven indicators keep the legacy name list.
         if ns.BM2_Enabled and ind.name then
-            spellsTitle:SetText("(" .. ind.name .. ")")
+            spellsTitle:SetText("(" .. EllesmereUI.L(ind.name) .. ")")
         else
             local spellNames = {}
             if ind.spells then
