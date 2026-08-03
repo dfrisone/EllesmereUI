@@ -5637,15 +5637,27 @@ local function SkinRCRow(child, isCurrency)
 end
 
 local function HookRCScrollBox(box, isCurrency)
-    if not box or not box.ForEachFrame then return end
-    local skin = function(row) SkinRCRow(row, isCurrency) end
-    pcall(box.ForEachFrame, box, skin)
+    if not box then return end
+    -- Currency rows are left 100% stock (see SkinRCRow, which returns
+    -- immediately for them), so there is nothing to register here and no
+    -- reason to touch that ScrollBox at all.
+    if isCurrency then return end
     local d = GetFFD(box)
-    if box.Update and not d.rowHook then
-        d.rowHook = true
-        hooksecurefunc(box, "Update", function(b)
-            pcall(b.ForEachFrame, b, skin)
-        end)
+    if d.rowCb then return end
+    -- Blizzard's own row callback instead of hooksecurefunc(box, "Update").
+    -- hooksecurefunc(object, "method", fn) ASSIGNS object.method = wrapper --
+    -- a field write onto a Blizzard frame, which is the taint vector this
+    -- codebase already had to remove from the chat edit box. Doing it to the
+    -- ScrollBox puts our insecure wrapper in the middle of Blizzard's own list
+    -- build for the Reputation and Currency panes. AddAcquiredFrameCallback is
+    -- the supported API for "style each row as it appears", writes nothing onto
+    -- the box, and is already the idiom used for the quest-log event rows in
+    -- this same file. iterateExisting covers rows that already exist, which is
+    -- what the old up-front ForEachFrame pass did.
+    if _G.ScrollUtil and _G.ScrollUtil.AddAcquiredFrameCallback then
+        d.rowCb = true
+        pcall(_G.ScrollUtil.AddAcquiredFrameCallback, box,
+            function(_, row) SkinRCRow(row, isCurrency) end, box, true)
     end
 end
 
