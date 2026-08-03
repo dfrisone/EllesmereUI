@@ -16,6 +16,9 @@ EUI_ActionBars_Flyout.lua
 # Options
 EUI_ActionBars_Options.lua
 
+# Dev-only: /eablag repaint-latency harness. Inert until switched on.
+EUI_ActionBars_LagHarness.lua
+
 # Note: Bindings.xml (custom Bar9/Bar10 keybind commands) is intentionally NOT
 # listed here -- WoW auto-loads a file named Bindings.xml from the addon root.
 # Listing it would load it a second time through the UI-XML parser ("Unrecognized

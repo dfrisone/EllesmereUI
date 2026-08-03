@@ -1000,8 +1000,10 @@ local function ForceCooldownPaint(btn)
             and C_ActionBar.GetActionCooldownDuration(action)
         if durObj then
             cd:SetCooldownFromDurationObject(durObj)
+            if ns._eabLagPaint then ns._eabLagPaint(btn, true) end
         else
             cd:Clear()
+            if ns._eabLagPaint then ns._eabLagPaint(btn, false) end
         end
     end
 end
@@ -3657,10 +3659,14 @@ do
                             fd.pushGen = ns._gcdGen
                         end
                         durObj = C_ActionBar.GetActionCooldownDuration(action)
-                        if durObj then cd:SetCooldownFromDurationObject(durObj) end
+                        if durObj then
+                            cd:SetCooldownFromDurationObject(durObj)
+                            if ns._eabLagPaint then ns._eabLagPaint(btn, true) end
+                        end
                     end
                 elseif fd.cdWasActive then
                     cd:Clear()
+                    if ns._eabLagPaint then ns._eabLagPaint(btn, false) end
                 end
             end
             if visOn and ((active ~= (fd.cdWasActive or false)) or fd.chargeWasLive
