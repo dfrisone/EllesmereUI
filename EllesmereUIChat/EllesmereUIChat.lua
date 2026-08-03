@@ -2824,6 +2824,7 @@ end
 
 -- URL click handler: open copy popup when user clicks a wrapped URL link.
 hooksecurefunc("SetItemRef", function(link)
+    ECHAT.TaintMark("hook-SetItemRef")
     if not link then return end
     local url = link:match("^" .. addonName .. "url:(.+)$")
     if url then
@@ -4577,6 +4578,7 @@ initFrame:SetScript("OnEvent", function(self)
     ECHAT.TaintCheck("before-4-global-tab")
     if FCFDock_SelectWindow then
         hooksecurefunc("FCFDock_SelectWindow", function()
+            ECHAT.TaintMark("hook-FCFDock_SelectWindow")
             -- Blizzard rebuilds the tab anchor chain while selecting a window.
             -- Re-apply spacing after that secure update has fully completed.
             C_Timer.After(0, function()
@@ -4655,6 +4657,7 @@ initFrame:SetScript("OnEvent", function(self)
     -- top-level user action, safe to hook (not inside a secure chain).
     if FCF_Close then
         hooksecurefunc("FCF_Close", function()
+            ECHAT.TaintMark("hook-FCF_Close")
             C_Timer.After(0, function()
                 UpdateTabColors()
                 ECHAT.ApplyTabLayout()
@@ -4693,6 +4696,7 @@ initFrame:SetScript("OnEvent", function(self)
     -- tab, ID, and dock state.
     if FCF_OpenNewWindow then
         hooksecurefunc("FCF_OpenNewWindow", function()
+            ECHAT.TaintMark("hook-FCF_OpenNewWindow")
             C_Timer.After(0, SkinPass)
             C_Timer.After(0.10, SkinPass)
         end)
