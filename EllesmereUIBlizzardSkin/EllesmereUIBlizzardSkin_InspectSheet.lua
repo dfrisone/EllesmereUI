@@ -1073,7 +1073,14 @@ local function SkinInspectSheet()
         frame.TitleContainer:Show()
         frame.TitleContainer:SetAlpha(1)
         frame.TitleContainer:SetFrameStrata("HIGH")
-        frame.TitleContainer:SetFrameLevel(20)
+        -- Relative, not absolute. SetFrameLevel takes an absolute level, so a
+        -- hardcoded 20 puts this BELOW InspectFrame on any client whose panel
+        -- manager seats that frame higher, and the window background then draws
+        -- over the name and title. Setting the same strata as the parent does
+        -- not save it: within one strata the level decides. The character sheet
+        -- had this exact bug with CharacterFrame measured at level 45 while its
+        -- model sat at 2 and its label overlay at 5.
+        frame.TitleContainer:SetFrameLevel(frame:GetFrameLevel() + 20)
         frame.TitleContainer:ClearAllPoints()
         frame.TitleContainer:SetWidth(406)
         frame.TitleContainer:SetPoint("TOP", frame, "TOP", 0, 0)
