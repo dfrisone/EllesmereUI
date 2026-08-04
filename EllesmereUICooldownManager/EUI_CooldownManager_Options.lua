@@ -17716,6 +17716,24 @@ initFrame:SetScript("OnEvent", function(self)
                     spellValues["__none"] = "(no spells on bar)"
                     spellOrder[#spellOrder + 1] = "__none"
                 end
+                -- The stored selection can outlive its spell: removing the kick
+                -- from the bar empties assignedSpells while
+                -- focusKickInterruptSpellID keeps pointing at it. With no label
+                -- for that key the dropdown falls back to rendering the key
+                -- itself, so the row displayed a bare spell id (field report:
+                -- "47528"). Give it a NAME but deliberately do NOT add it to
+                -- spellOrder -- it must not appear as a selectable option on a
+                -- bar that no longer holds it.
+                local selSid = BD and BD() and BD().focusKickInterruptSpellID
+                if selSid then
+                    local selKey = tostring(selSid)
+                    if not spellValues[selKey] then
+                        local selInfo = C_Spell and C_Spell.GetSpellInfo
+                            and C_Spell.GetSpellInfo(selSid)
+                        spellValues[selKey] = (selInfo and selInfo.name)
+                            or ("Spell " .. selKey)
+                    end
+                end
             end
             RebuildSpellOptions()
 

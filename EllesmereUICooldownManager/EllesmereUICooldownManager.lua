@@ -6615,7 +6615,20 @@ ns.FOCUSKICK_SOUND_ORDER = FOCUSKICK_SOUND_ORDER
 -- token follows focus changes automatically.
 local _focusCastProxy
 local function RefreshFocusCastProxyUnit()
-    if not _focusCastProxy then return end
+    if not _focusCastProxy then
+        -- The proxy does not exist yet, so there is no unit to re-point. That
+        -- happens whenever the bar had no assigned spell the last time the
+        -- arming ran: RefreshFocusKickProxies only builds the proxy on its
+        -- hasContent branch, and its ONLY two callers are setup and the tail of
+        -- BuildAllCDMBars. Adding a spell in the options writes assignedSpells
+        -- without re-arming anything, so the sound stayed dead with the bar
+        -- fully populated -- field-confirmed by the probe reporting
+        -- spells=1(1 pos) alongside sound=NOT CREATED at the same instant.
+        -- Returning here was what made the state unrecoverable without a
+        -- rebuild; run the full refresh so this path can create it.
+        if ns.RefreshFocusKickProxies then ns.RefreshFocusKickProxies() end
+        return
+    end
     local unit = GetFocusKickUnit()
     _focusCastProxy:UnregisterAllEvents()
     _focusCastProxy:RegisterUnitEvent("UNIT_SPELLCAST_START", unit)
@@ -7041,8 +7054,18 @@ ns.EnsureFocusReminderProxy = EnsureFocusReminderProxy
 function ns.RefreshFocusKickProxies()
     local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
     local hasContent = false
+    -- "No spell data available" is NOT the same as "the bar is empty".
+    -- GetBarSpellData returns nil while the active spec key is unresolved
+    -- (not specKey or specKey == "0"), which is exactly the state during a
+    -- loading screen. Treating that as empty ran the teardown below and
+    -- UNREGISTERED a perfectly good proxy, which is the field report of the
+    -- sound dying after a port or a zone change and only coming back when
+    -- something else rebuilt the bars. When the store is not ready we now
+    -- leave the proxy exactly as it is; the next rebuild arms it properly.
+    local storeReady, soundWanted = true, false
     if bd and bd.enabled ~= false then
         local sd = ns.GetBarSpellData and ns.GetBarSpellData(FOCUSKICK_BAR_KEY)
+        if not sd then storeReady = false end
         local spells = sd and sd.assignedSpells
         if spells then
             for _, sid in ipairs(spells) do
@@ -7052,13 +7075,50 @@ function ns.RefreshFocusKickProxies()
                 end
             end
         end
+        -- The cast SOUND has a weaker requirement than the rest of the family.
+        -- Its handler needs a configured sound and an interrupt spell id to run
+        -- the "is my kick ready" check against; the bar's assigned spells are
+        -- only the FALLBACK source for that id, so an explicit
+        -- focusKickInterruptSpellID satisfies it alone. Gating the sound on
+        -- hasContent made a legitimate setup impossible: the focus-cast sound
+        -- WITHOUT the kick icon on the focus bar.
+        local sk = bd.focusCastSoundKey
+        if sk and sk ~= "none" then
+            local pick = bd.focusKickInterruptSpellID
+            soundWanted = (type(pick) == "number" and pick > 0) or hasContent
+        end
     end
+
+    if not hasContent and not storeReady then
+        -- Spell store unresolved: hold the current state rather than tearing
+        -- down something that may still be correct, and COME BACK. Arming is
+        -- otherwise a one-shot -- its only callers are setup and the tail of
+        -- BuildAllCDMBars -- so a login or zone where the spec key has not
+        -- resolved yet leaves the proxy unbuilt for the whole session, with a
+        -- fully populated bar. Field-confirmed: spells=1(1 pos) alongside
+        -- sound=NOT CREATED, cured only by a spec change (which reruns
+        -- BuildAllCDMBars).
+        --
+        -- An explicit interrupt spell id lives on the bar data, not in the
+        -- spell store, so the sound can arm right now even though the store is
+        -- still unresolved. Only the bar-content dependent parts have to wait.
+        if soundWanted then EnsureFocusCastProxy() end
+        -- One pending retry at a time, self-cancelling.
+        if not ns._fkRearmPending then
+            ns._fkRearmPending = true
+            C_Timer.After(2, function()
+                ns._fkRearmPending = nil
+                if ns.RefreshFocusKickProxies then ns.RefreshFocusKickProxies() end
+            end)
+        end
+        return
+    end
+    -- Icon-bearing parts of the family keep the original bar-content gate.
     if hasContent then
         EnsureFocusKickProxy()
         ApplyFocusKickAnchor()
         EnsureFocusReminderProxy()
         RefreshFocusReminders()
-        EnsureFocusCastProxy()
     else
         if _focusKickProxy then
             _focusKickProxy:UnregisterAllEvents()
@@ -7069,9 +7129,12 @@ function ns.RefreshFocusKickProxies()
             _focusReminderProxy:UnregisterAllEvents()
             HideAllFocusReminders()
         end
-        if _focusCastProxy then
-            _focusCastProxy:UnregisterAllEvents()
-        end
+    end
+
+    if soundWanted then
+        EnsureFocusCastProxy()
+    elseif _focusCastProxy then
+        _focusCastProxy:UnregisterAllEvents()
     end
 end
 
@@ -8978,6 +9041,22 @@ function ECME:CDMFinishSetup()
     -- FocusKick family (anchor proxy + plate watcher, reminder text, cast
     -- sound): demand-gated -- an EMPTY kick bar installs nothing at all.
     ns.RefreshFocusKickProxies()
+    -- ...and again after every loading screen. Demand-gating makes arming a
+    -- one-shot, so any pass that runs before the spell store resolves leaves
+    -- the cast-sound proxy unbuilt until something unrelated rebuilds the bars
+    -- (a spec change, or opening the options). That is the reported "sound
+    -- stops working after I port" and it never recovers on its own. The
+    -- refresh is cheap and idempotent: it early-returns when the bar is empty
+    -- and re-registers the same events when it is not.
+    do
+        local fkRearm = CreateFrame("Frame")
+        fkRearm:RegisterEvent("PLAYER_ENTERING_WORLD")
+        fkRearm:SetScript("OnEvent", function()
+            C_Timer.After(2, function()
+                if ns.RefreshFocusKickProxies then ns.RefreshFocusKickProxies() end
+            end)
+        end)
+    end
     -- SharedMedia sounds feed the options dropdowns; append regardless.
     if EllesmereUI.AppendSharedMediaSounds then
         EllesmereUI.AppendSharedMediaSounds(
