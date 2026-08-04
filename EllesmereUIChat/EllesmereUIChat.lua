@@ -249,7 +249,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C7, CF1 fields + uptime) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C8, FCF hooks REMOVED) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -4794,18 +4794,64 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
-    --  4. Global tab hooks (hooksecurefunc on globals).
+    --  4. Chat-frame state watcher (replaces the FCF_* hooksecurefunc hooks).
+    --
+    --  NO hooksecurefunc on FCFDock_SelectWindow / FCF_Close /
+    --  FCF_OpenNewWindow. Deferring the BODY to C_Timer.After(0) does not
+    --  help: the hook WRAPPER still executes inside the caller's own
+    --  execution, and hooksecurefunc does not exit the secure chain, so the
+    --  rest of that caller runs tainted. Field-measured 2026-08-03 --
+    --  ChatFrame11.isLocked came back "TAINTED by EllesmereUIChat", first
+    --  seen right after the FCF_Close hook fired:
+    --
+    --    our FCF_Close hook taints the caller's remaining execution
+    --      -> a later FCF_DockFrame (or FCF_CopyChatSettings) reaches
+    --         FCF_SetLocked, whose `chatFrame.isLocked = isLocked` write
+    --         (FloatingChatFrame.lua:990) lands under that taint
+    --      -> the FIELD is now permanently tainted, surviving every later
+    --         secure pass, which is why probe rounds watching only GLOBALS
+    --         always read clean
+    --      -> FCF_Tab_SetupMenu reads tabChatFrame.isLocked (:399, :405)
+    --         while building the tab menu, so every closure it creates --
+    --         including "Close Whisper Window" at :446 -- is born tainted,
+    --         and picking one dies iterating the forbidden
+    --         privateMessageList
+    --      -> the same tainted field is read by FCF_UpdateResizeButton
+    --         (:984) during the temp-window OPEN, tainting that chain into
+    --         the re-fire at :2531 and its secret whisper-name math
+    --
+    --  One field explains both reported error classes. Everything these
+    --  hooks did was cosmetic re-assertion, so poll the same state instead:
+    --  entirely outside Blizzard's dispatch, at the cost of up to one tick
+    --  of latency on a tab restyle.
     ---------------------------------------------------------------------------
     ECHAT.TaintCheck("before-4-global-tab")
-    if FCFDock_SelectWindow then
-        hooksecurefunc("FCFDock_SelectWindow", function()
-            ECHAT.TaintMark("hook-FCFDock_SelectWindow")
-            -- Blizzard rebuilds the tab anchor chain while selecting a window.
-            -- Re-apply spacing after that secure update has fully completed.
-            C_Timer.After(0, function()
+    do
+        local lastSelected, lastShown = nil, {}
+        C_Timer.NewTicker(0.15, function()
+            local dirty = false
+            -- Selected dock window changed (was: FCFDock_SelectWindow hook).
+            if GENERAL_CHAT_DOCK and FCFDock_GetSelectedWindow then
+                local sel = FCFDock_GetSelectedWindow(GENERAL_CHAT_DOCK)
+                if sel ~= lastSelected then lastSelected = sel; dirty = true end
+            end
+            -- A frame appeared or closed (was: FCF_Close / FCF_OpenNewWindow).
+            -- New frames also need skinning before the restyle.
+            local needSkin = false
+            for i = 1, 20 do
+                local cf = _G["ChatFrame" .. i]
+                local shown = cf and cf:IsShown() or false
+                if shown ~= lastShown[i] then
+                    lastShown[i] = shown
+                    dirty = true
+                    if shown and cf and not _skinned[cf] then needSkin = true end
+                end
+            end
+            if needSkin then SkinPass() end
+            if dirty then
                 UpdateTabColors()
                 ECHAT.ApplyTabLayout()
-            end)
+            end
         end)
     end
     -- NO synchronous hooks on FCFTab_UpdateColors or FCFDock_UpdateTabs.
@@ -4872,19 +4918,13 @@ initFrame:SetScript("OnEvent", function(self)
             end)
         end
     end
-    -- Tab close: Blizzard resets all tab colors via FCFTab_UpdateColors
-    -- but FCFDock_SelectWindow only fires if the ACTIVE tab was closed.
-    -- Closing a non-active tab skips our color refresh. FCF_Close is a
-    -- top-level user action, safe to hook (not inside a secure chain).
-    if FCF_Close then
-        hooksecurefunc("FCF_Close", function()
-            ECHAT.TaintMark("hook-FCF_Close")
-            C_Timer.After(0, function()
-                UpdateTabColors()
-                ECHAT.ApplyTabLayout()
-            end)
-        end)
-    end
+    -- Tab close is covered by the state watcher above. The old comment here
+    -- claimed FCF_Close was "a top-level user action, safe to hook (not
+    -- inside a secure chain)" -- that was the wrong test. FCF_Close is also
+    -- reached from FCF_PopInWindow (the tab menu's own Close button) and
+    -- from the dock teardown, and even from a genuine top-level click the
+    -- hook taints the REST of the caller, which is what poisoned
+    -- ChatFrame11.isLocked. See the watcher's note.
     -- Temp window creation: re-run SkinPass to catch new frames.
     -- NEVER hooksecurefunc("FCF_OpenTemporaryWindow") -- field-proven taint
     -- TWICE (pre-841 module history, and again in the 2026-07-21 tester
@@ -4924,16 +4964,10 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end)
     end
-    -- User-created permanent chat windows use a separate creation path from
-    -- temporary whisper windows. Skin after Blizzard has assigned the frame,
-    -- tab, ID, and dock state.
-    if FCF_OpenNewWindow then
-        hooksecurefunc("FCF_OpenNewWindow", function()
-            ECHAT.TaintMark("hook-FCF_OpenNewWindow")
-            C_Timer.After(0, SkinPass)
-            C_Timer.After(0.10, SkinPass)
-        end)
-    end
+    -- User-created permanent chat windows are picked up by the state watcher
+    -- too (a new frame becomes shown, which triggers SkinPass before the
+    -- restyle) -- no hooksecurefunc on FCF_OpenNewWindow. It is created from
+    -- the same tab menu whose closures must stay untainted.
 
     -- Pin scroll frame flush to dock manager after Blizzard's dock is
     -- fully set up. Can't do this in StyleDockManager (too early, breaks
