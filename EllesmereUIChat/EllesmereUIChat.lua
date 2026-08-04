@@ -37,6 +37,10 @@ local TAINT_WATCH = {
     "CURRENT_CHAT_FRAME_ID",
     "CHAT_FRAMES",
     "GENERAL_CHAT_DOCK",
+    -- Convicted 2026-08-03 (tab-menu detonation): doubles as the stale-build
+    -- check -- clean on a build with the fix, TAINTED by EllesmereUIChat on
+    -- any build that still runs the init-time replacement.
+    "CHAT_FONT_HEIGHTS",
 }
 local _taintSeen, _taintCrumb, _taintLeft = {}, "load", #TAINT_WATCH
 local _taintLog = {}
@@ -93,7 +97,7 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        Say("|cffff5555EUI-TAINT|r status:")
+        Say("|cffff5555EUI-TAINT|r status (probe C2, font-heights fix):")
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -4502,12 +4506,16 @@ initFrame:SetScript("OnEvent", function(self)
     -- login (the skin loop creates the bg textures with the solid color).
     ECHAT.ApplyBackground()
     ---------------------------------------------------------------------------
-    --  2b. Expanded font size options. Font is applied at skin time only.
-    --      The global hooksecurefunc("FCF_SetChatWindowFontSize") was removed
-    --      because it tainted FCFDock_UpdateTabs -> PanelTemplates_TabResize.
+    --  2b. Expanded font size options -- REMOVED. Replacing the global
+    --      CHAT_FONT_HEIGHTS makes every read of it tainted, and Blizzard's
+    --      tab context menu iterates it mid-build (FloatingChatFrame.lua:474),
+    --      so the whole menu -- every click handler wired after that read --
+    --      runs tainted. Any item touching a whisper window's secret-keyed
+    --      tables then errors (FCF_RestoreChatsToFrame forbidden-table
+    --      iteration). Blizzard's menu shows stock sizes only; EUI font size
+    --      is applied at skin time and unaffected.
     ---------------------------------------------------------------------------
     ECHAT.TaintCheck("before-2b-expanded-font")
-    CHAT_FONT_HEIGHTS = { 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 }
 
 
     ---------------------------------------------------------------------------
