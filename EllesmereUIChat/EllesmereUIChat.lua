@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C18, extended bg off) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C19, sidebar layout chain FIX, all else restored) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -410,11 +410,11 @@ local BISECT_TAB_SKIN_OFF = false
 --            (fixed then by deferring it). A second conviction at a different
 --            moment would fit that history exactly.
 --   dirty -> ApplySidebarIcons, which touches almost nothing of Blizzard's.
-local BISECT_PAD_GDM_OFF = true
+local BISECT_PAD_GDM_OFF = false        -- C19: RESTORED (exonerated C17)
 
-local BISECT_TAB_GEOMETRY_OFF = true    -- exonerated C15, restore after
+local BISECT_TAB_GEOMETRY_OFF = false   -- C19: RESTORED (exonerated C15)
 local BISECT_TAB_PADDING_OFF = false    -- ON (convicted; now being split)
-local BISECT_TAB_BORDERS_OFF = true     -- exonerated C16, restore after. 4: EXONERATED 2026-07-25 (field-
+local BISECT_TAB_BORDERS_OFF = false    -- C19: RESTORED (exonerated C16)
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
@@ -429,7 +429,7 @@ local BISECT_TAB_BORDERS_OFF = true     -- exonerated C16, restore after. 4: EXO
 -- en route: gate-4 border engine, gdm anchor ties, sfc pin, BNToast block,
 -- FCFDock_SelectWindow hook, frame HookScripts, temp Skin*, eb anchors,
 -- whisper URL filter.
-local BISECT_EXT_BG_OFF = true          -- C18: OFF (suspect). 5: CLEARED (prev cycle)
+local BISECT_EXT_BG_OFF = false         -- C19: RESTORED (exonerated C18)
 local BISECT_DEFERRED_PASSES_OFF = false -- 6: CLEARED (this cycle)
 local BISECT_EB_ANCHORS_OFF = false     -- 7: CLEARED (this cycle)
 local BISECT_TEX_SHIFT_OFF = false      -- 8: CLEARED (this cycle) -- textures
@@ -1296,6 +1296,51 @@ local function HideSidebarIconTooltip(owner)
         owner._euiSidebarUsesGameTooltip = false
     elseif EUI.HideWidgetTooltip then
         EUI.HideWidgetTooltip()
+    end
+end
+
+-- Visibility ONLY: the SetShown half of ApplySidebarIcons, without its
+-- ClearAllPoints/SetPoint layout chain.
+--
+-- ApplyTabPadding used to call the full ApplySidebarIcons on every tab pass,
+-- purely so the icons' shown state tracks the sidebar fade. That layout chain
+-- was already known to be taint-risky here: it is deliberately skipped at
+-- init and in _ECHAT_RefreshAll, both of which use a minimal SetShown block
+-- instead ("causes taint (full layout chain)"). The tab-pass call site was
+-- missed, and it is the one that fires immediately after a whisper opens a
+-- temp window -- so our re-anchoring lands while Blizzard's dock pass is
+-- still resolving, exactly the collision that poisons ChatFrame.isLocked.
+--
+-- Fade only needs shown/hidden, never re-anchoring, so this covers the
+-- purpose of that call with none of the risk. Re-anchoring still happens on
+-- the paths that actually change the chain (icon order, spacing, free-move).
+function ECHAT.ApplySidebarIconVisibility()
+    local cfg = ECHAT.DB()
+    local cf1 = _G.ChatFrame1
+    local sbd = cf1 and CFD(cf1)
+    if not (cfg and sbd and sbd.sidebar) then return end
+    local sbMode = cfg.sidebarVisibility or "always"
+    local sbHidden = sbMode == "never"
+        or (sbMode == "mouseover" and _sidebarFadeTarget == 0 and _sidebarFadeAlpha == 0)
+        or ns._chatPassthrough == true
+    local PAIRS = {
+        { "showFriends", "friendsBtn", "friendsCount" },
+        { "showGuild", "guildBtn", "guildCount" },
+        { "showDurability", "durabilityBtn", "durabilityPct" },
+        { "showCopy", "copyBtn" },
+        { "showPortals", "portalBtn" },
+        { "showVoice", "voiceBtn" },
+        { "showSettings", "settingsBtn" },
+    }
+    for i = 1, #PAIRS do
+        local key, btnKey, tailKey = PAIRS[i][1], PAIRS[i][2], PAIRS[i][3]
+        local btn = sbd[btnKey]
+        if btn then
+            local shown = cfg[key] ~= false and not sbHidden
+            if btn:IsShown() ~= shown then btn:SetShown(shown) end
+            local tail = tailKey and sbd[tailKey]
+            if tail and tail:IsShown() ~= shown then tail:SetShown(shown) end
+        end
     end
 end
 
@@ -3867,7 +3912,10 @@ function ECHAT.ApplyTabPadding()
         end
     end
     if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
-    if ECHAT.ApplySidebarIcons then ECHAT.ApplySidebarIcons() end
+    -- Visibility only -- NOT the full ApplySidebarIcons layout chain. See
+    -- ApplySidebarIconVisibility: the chain is taint-risky from a tab pass,
+    -- and this call site only ever needed the fade's shown state.
+    if ECHAT.ApplySidebarIconVisibility then ECHAT.ApplySidebarIconVisibility() end
 end
 
 -- Position and style GeneralDockManager as our tab bar (one-time)
