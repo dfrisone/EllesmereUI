@@ -145,7 +145,7 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        Say("|cffff5555EUI-TAINT|r status (probe C3, pool-field watch):")
+        Say("|cffff5555EUI-TAINT|r status (probe C4, convIcon reparent fix):")
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -431,6 +431,31 @@ end
 
 local _hiddenParent = CreateFrame("Frame")
 _hiddenParent:Hide()
+
+-- Hides a chat tab's whisper conversation icon.
+--
+-- ALPHA, never SetParent. Reparenting it to our hidden frame made the icon
+-- an insecure-owned region while Blizzard kept the reference in
+-- chatTab.conversationIcon -- and FCF_SetTemporaryWindowType, which runs
+-- INSIDE FCF_OpenTemporaryWindow, anchors it to the tab's own fontstring
+-- (FloatingChatFrame.lua:679) and then paints its texture. That is the
+-- convicted injector shape from this file's own ladder ("an insecure frame
+-- ANCHORED to a Blizzard chat tab poisons the secure pass"), except
+-- Blizzard builds the tie itself, mid-open, every single time a whisper
+-- window opens. The taint entered at :679, the open returned to
+-- FloatingChatFrameManager_OnEvent:2530 still tainted, and the re-fire on
+-- :2531 ran MessageEventHandler -> FCFManager_GetChatTarget -> strupper on
+-- the SECRET whisper name -> the reported error. It left no poisoned global
+-- or pool field behind, which is why four probe rounds read perfectly clean
+-- while the error kept firing.
+--
+-- Alpha is inert here: Blizzard drives this icon with SetPoint,
+-- SetAtlas/SetTexture, SetVertexColor and Show/Hide, and never writes its
+-- alpha, so a 0 set once stays put and nothing of ours enters its chain.
+local function HideConversationIcon(tab)
+    local icon = tab and tab.conversationIcon
+    if icon then icon:SetAlpha(0) end
+end
 
 -- Unified fade system: all alpha changes go through a target + lerp.
 local _visChatVisible = true
@@ -3002,10 +3027,9 @@ local function UpdateTabStyle(tab)
         ShiftRect(d.hover)
     end
 
-    -- Reparent whisper conversation icon to hidden container
-    if tab.conversationIcon and tab.conversationIcon:GetParent() ~= _hiddenParent then
-        tab.conversationIcon:SetParent(_hiddenParent)
-    end
+    -- Hide the whisper conversation icon with ALPHA, never by reparenting:
+    -- see HideConversationIcon.
+    HideConversationIcon(tab)
 
     -- Use cached tab.Text ref from SkinTab (avoids GetFontString() on
     -- Blizzard tab). Safe here: UpdateTabStyle only runs from deferred
@@ -3444,10 +3468,7 @@ local function SkinTab(cf)
     CFD(tab).activeUnderlineHost = underlineHost
     CFD(tab).activeUnderline = activeUnderline
 
-    -- Reparent the whisper conversation icon to hidden container
-    if tab.conversationIcon then
-        tab.conversationIcon:SetParent(_hiddenParent)
-    end
+    HideConversationIcon(tab)
 
     -- NO hooksecurefunc(tab, "SetPoint") -- removed 2026-07-21 with the
     -- other synchronous tab hooks: its body executed inside the secure
@@ -4315,6 +4336,16 @@ local function SkinChatFrame(cf)
     SkinTab(cf)
 
     -- 6. Hide Blizzard button frame
+    -- SUSPECT, same class as HideConversationIcon: FCF_SetButtonSide (reached
+    -- from FCF_DockFrame inside FCF_OpenTemporaryWindow) ClearAllPoints +
+    -- SetPoints this frame against chatFrame.Background, so while it is
+    -- parented to ours Blizzard builds an insecure tie mid-open. It only
+    -- fires when buttonSide actually changes (nil on a NEWLY created pool
+    -- frame -- FCF_CopyChatSettings does not copy it), so it is rarer than
+    -- the conversation icon and is deliberately left for a separate cycle:
+    -- one variable per tester round. Blizzard drives this frame's ALPHA
+    -- (UIFrameFadeIn/Out on hover), so the icon's alpha trick will not work
+    -- here -- it needs its own hide strategy.
     local btnFrame = _G[name .. "ButtonFrame"]
     if btnFrame then
         btnFrame:SetParent(_hiddenParent)
