@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C16, PADDING on / BORDERS off) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C17, gdm re-anchor off) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -388,9 +388,24 @@ local BISECT_TAB_SKIN_OFF = false
 --   clean -> ApplyTabBorders / ApplyTabSeparators, i.e. the border engine
 --            (ApplyBorderStyle + PP pixel-snap walk) on the clip hosts --
 --            the "gate 4" the old ladder marked RETEST and never resolved
-local BISECT_TAB_GEOMETRY_OFF = true    -- C16: still off (exonerated, restore later)
-local BISECT_TAB_PADDING_OFF = false    -- C16: ON (suspect A)
-local BISECT_TAB_BORDERS_OFF = true     -- C16: OFF (suspect B held back). 4: EXONERATED 2026-07-25 (field-
+-- C16 RESULT: DIRTY with borders OFF -> **ApplyTabPadding is convicted**,
+-- and the border engine is exonerated (so is geometry, from C15).
+--
+-- ApplyTabPadding does exactly three things. C17 gates the only one that
+-- writes a BLIZZARD frame -- the GeneralDockManager re-anchor -- and keeps
+-- its two callees (ApplyExtendedBackground, ApplySidebarIcons), which touch
+-- our own frames only.
+--   clean -> the gdm RE-ANCHOR is the injector. Note StyleDockManager does
+--            the same writes once at init and ran in both CLEAN builds, so
+--            the difference is TIMING (this one repeats on every tab pass
+--            and can land inside a dock pass) or the alignFull variant that
+--            anchors gdm to the SIDEBAR instead of the background.
+--   dirty -> ApplyExtendedBackground or ApplySidebarIcons.
+local BISECT_PAD_GDM_OFF = true
+
+local BISECT_TAB_GEOMETRY_OFF = true    -- exonerated C15, restore after
+local BISECT_TAB_PADDING_OFF = false    -- ON (convicted; now being split)
+local BISECT_TAB_BORDERS_OFF = true     -- exonerated C16, restore after. 4: EXONERATED 2026-07-25 (field-
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
@@ -3816,6 +3831,13 @@ function ECHAT.ApplyTabPadding()
     local gdm = _G.GeneralDockManager
     local cf1 = _G.ChatFrame1
     local bg = cf1 and CFD(cf1).bg
+    -- C17: gate ONLY the gdm re-anchor, keeping the two passes below. This
+    -- is the one part of ApplyTabPadding that writes a BLIZZARD frame, and
+    -- unlike StyleDockManager's identical one-shot version at init, this one
+    -- re-runs on every tab pass -- i.e. it can land inside a dock pass. Same
+    -- content, different timing, which is exactly the distinction that
+    -- convicted ApplyBorders in the earlier ladder.
+    if BISECT_PAD_GDM_OFF then gdm = nil end
     if gdm and bg then
         local padding = GetTabPadding()
         local cfg = ECHAT.DB()
