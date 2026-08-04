@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C17, gdm re-anchor off) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C18, extended bg off) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -401,6 +401,15 @@ local BISECT_TAB_SKIN_OFF = false
 --            and can land inside a dock pass) or the alignFull variant that
 --            anchors gdm to the SIDEBAR instead of the background.
 --   dirty -> ApplyExtendedBackground or ApplySidebarIcons.
+-- C17 RESULT: DIRTY. The gdm re-anchor is NOT the injector either (it stays
+-- gated only to keep the variable count down; restore it after).
+-- Remaining: ApplyTabPadding's two callees. C18 gates ApplyExtendedBackground
+-- (BISECT_EXT_BG_OFF below) and keeps ApplySidebarIcons.
+--   clean -> ApplyExtendedBackground, whose payload includes ns._chatPanelBorder
+--            -- the SAME component the earlier B-ladder convicted at init time
+--            (fixed then by deferring it). A second conviction at a different
+--            moment would fit that history exactly.
+--   dirty -> ApplySidebarIcons, which touches almost nothing of Blizzard's.
 local BISECT_PAD_GDM_OFF = true
 
 local BISECT_TAB_GEOMETRY_OFF = true    -- exonerated C15, restore after
@@ -420,7 +429,7 @@ local BISECT_TAB_BORDERS_OFF = true     -- exonerated C16, restore after. 4: EXO
 -- en route: gate-4 border engine, gdm anchor ties, sfc pin, BNToast block,
 -- FCFDock_SelectWindow hook, frame HookScripts, temp Skin*, eb anchors,
 -- whisper URL filter.
-local BISECT_EXT_BG_OFF = false         -- 5: CLEARED (this cycle)
+local BISECT_EXT_BG_OFF = true          -- C18: OFF (suspect). 5: CLEARED (prev cycle)
 local BISECT_DEFERRED_PASSES_OFF = false -- 6: CLEARED (this cycle)
 local BISECT_EB_ANCHORS_OFF = false     -- 7: CLEARED (this cycle)
 local BISECT_TEX_SHIFT_OFF = false      -- 8: CLEARED (this cycle) -- textures
