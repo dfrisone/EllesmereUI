@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C12, bg off chat frame) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C13, ALL TAB SKINNING OFF) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -325,9 +325,31 @@ end
 -- which breadcrumb is last anyway -- see RuntimeAt's gap measurement.
 local BISECT_EB_HOOKS_OFF = false
 
-local BISECT_TAB_GEOMETRY_OFF = false   -- 1: CLEARED (this cycle)
-local BISECT_TAB_PADDING_OFF = false    -- 3: CLEARED (this cycle)
-local BISECT_TAB_BORDERS_OFF = false    -- 4: EXONERATED 2026-07-25 (field-
+-- C13 DIAGNOSTIC ONLY, NEVER SHIP TRUE. Disables EVERYTHING this module does
+-- to Blizzard chat tabs, as one halving bisect rather than another
+-- single-suspect guess (seven of those have now missed).
+--
+-- Why tabs: the flip was measured INSIDE the temp-window open (the 0.591s
+-- gap), and FCFDock_UpdateTabs is the FIRST thing FCF_DockFrame does
+-- (:1426), well before the FCF_SetLocked write at :1458 that poisons
+-- ChatFrame.isLocked. FCFDock_UpdateTabs calls PanelTemplates_TabResize
+-- (:2047/:2084), which MEASURES the tab's fontstring -- and we set fonts on
+-- tab text, strip tab textures, create textures on tabs, and re-anchor tabs.
+--
+-- Clean  -> the injector is in tab styling; narrow next to font vs texture
+--           vs geometry.
+-- Dirty  -> tab styling is exonerated wholesale and the remaining space is
+--           the chat-frame font (cf:SetFont, hasOwnFontObject=true on every
+--           frame in every captured error) and the blanked cf.Background.
+-- Either answer halves what is left, which no previous round did.
+--
+-- Cost while true: tabs render in Blizzard's default style (no dark bg, no
+-- custom font, no borders/separators/spacing). Visually obvious, harmless.
+local BISECT_TAB_SKIN_OFF = true
+
+local BISECT_TAB_GEOMETRY_OFF = true    -- C13: forced true (was CLEARED)
+local BISECT_TAB_PADDING_OFF = true     -- C13: forced true (was CLEARED)
+local BISECT_TAB_BORDERS_OFF = true     -- C13: forced true. 4: EXONERATED 2026-07-25 (field-
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
@@ -3528,6 +3550,7 @@ end
 
 -- One-time reskin of a Blizzard chat tab (strip textures, add our visuals)
 local function SkinTab(cf)
+    if BISECT_TAB_SKIN_OFF then return end   -- C13 bisect, diagnostic only
     local name = cf:GetName()
     if not name then return end
     local tab = _G[name .. "Tab"]
