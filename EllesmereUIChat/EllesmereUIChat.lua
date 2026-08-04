@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C11, btnFrame reparent fix) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C12, bg off chat frame) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -4009,13 +4009,33 @@ local function SkinChatFrame(cf)
     -- the C-level event dispatcher. Idle reset + pulse detection are
     -- handled by standalone event frames (see sections 5/6 below).
 
-    -- Unified dark background (covers chat + edit box as one panel)
+    -- Unified dark background (covers chat + edit box as one panel).
+    --
+    -- Parented to UIParent, NOT to the chat frame. An insecure frame
+    -- parented to a Blizzard chat frame is the one pattern this module's own
+    -- host design forbids ("NEVER CreateFrame with a Blizzard chat tab/frame
+    -- as parent") -- the tab hosts were moved onto a UIParent clip for
+    -- exactly that reason and this background was simply never moved with
+    -- them. It is the last remaining insecure frame living inside Blizzard's
+    -- chat hierarchy, and the taint that poisons ChatFrame.isLocked was
+    -- measured 19-39 SECONDS away from any callback of ours, i.e. it comes
+    -- from structure rather than from code we run.
+    --
+    -- Two things the parent used to provide have to be replaced: draw order
+    -- (strata + level, re-asserted by the state watcher because Blizzard
+    -- moves chat frames between levels on dock passes) and visibility (a
+    -- child hides with its parent; a UIParent child does not, and the
+    -- anchors still resolve against a hidden chat frame). The watcher owns
+    -- both -- deliberately NOT an OnShow hook on the chat frame, which is
+    -- what C5 had to remove.
     if not CFD(cf).bg then
-        local bg = CreateFrame("Frame", nil, cf)
+        local bg = CreateFrame("Frame", nil, UIParent)
         local eb = _G[name .. "EditBox"]
         bg:SetPoint("TOPLEFT", cf, "TOPLEFT", -10, 3)
         bg:SetPoint("BOTTOMRIGHT", eb or cf, "BOTTOMRIGHT", 5, eb and -4 or -6)
+        bg:SetFrameStrata(cf:GetFrameStrata())
         bg:SetFrameLevel(max(0, cf:GetFrameLevel() - 1))
+        bg:SetShown(cf:IsShown())
 
         local bgTex = bg:CreateTexture(nil, "BACKGROUND")
         bgTex._euiOwned = true
@@ -4920,6 +4940,23 @@ initFrame:SetScript("OnEvent", function(self)
                     if bf and bf:GetAlpha() ~= 0 then bf:SetAlpha(0) end
                     local sb = cf.ScrollToBottomButton
                     if sb and sb:GetAlpha() ~= 0 then sb:SetAlpha(0) end
+                end
+                -- The background is a UIParent child now (see SkinChatFrame),
+                -- so it no longer inherits the chat frame's visibility or
+                -- draw order. Track both here: Blizzard re-levels chat frames
+                -- on dock passes, and the anchors resolve fine against a
+                -- hidden frame, which would leave the panel floating.
+                local d = cf and CFD(cf)
+                local bg = d and d.bg
+                if bg then
+                    local want = cf:IsShown()
+                    if bg:IsShown() ~= want then bg:SetShown(want) end
+                    if want then
+                        local lvl = max(0, cf:GetFrameLevel() - 1)
+                        if bg:GetFrameLevel() ~= lvl then bg:SetFrameLevel(lvl) end
+                        local st = cf:GetFrameStrata()
+                        if bg:GetFrameStrata() ~= st then bg:SetFrameStrata(st) end
+                    end
                 end
             end
         end)
