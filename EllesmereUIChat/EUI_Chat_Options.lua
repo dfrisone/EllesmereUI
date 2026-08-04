@@ -1603,6 +1603,17 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v) Set("whisperSoundKey", v) end })
         y = y - h
 
+        -- Row 3: Inline Whispers
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Inline Whispers",
+              tooltip="Show whispers in your chat frame instead of opening a separate conversation window and tab for each person.\n\nReplying is unchanged (/r, clicking a name, and the whisper box all work as normal).\n\nThis also avoids the Blizzard whisper-window errors some players see in instanced content. Takes full effect after a logout; turning it off restores your previous setting.",
+              getValue=function() return Cfg("inlineWhispers") or false end,
+              setValue=function(v)
+                  Set("inlineWhispers", v)
+                  if ECHAT.ApplyInlineWhispers then ECHAT.ApplyInlineWhispers() end
+              end })
+        y = y - h
+
         end -- isChat
 
         return math.abs(y)
@@ -1619,6 +1630,10 @@ initFrame:SetScript("OnEvent", function(self)
         onReset = function()
             local d = _G._ECHAT_DB
             if d and d.ResetProfile then d:ResetProfile() end
+            -- Hand whisper routing back: the reset turns the option off, and
+            -- the CVar must follow or the user is left inline with the
+            -- toggle already reading false.
+            if ECHAT.ApplyInlineWhispers then ECHAT.ApplyInlineWhispers() end
             RefreshAll()
             EllesmereUI:InvalidatePageCache()
         end,

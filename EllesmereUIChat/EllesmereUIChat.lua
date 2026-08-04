@@ -200,6 +200,11 @@ local CHAT_DEFAULTS = {
             idleFadeEnabled = true,
             inputOnTop = false,
             lockChatSize = false,
+            -- Route whispers inline instead of into popout conversation
+            -- windows (see ApplyInlineWhispers). Opt-in; the previous
+            -- whisperMode is kept so unticking restores it exactly.
+            inlineWhispers = false,
+            inlineWhispersPrev = nil,
             hideSidebarBg = false,
             sidebarIconScale = 1.0,
             sidebarIconSpacing = 10,
@@ -4364,6 +4369,62 @@ end
 
 
 -------------------------------------------------------------------------------
+--  Inline whispers
+--
+--  Blizzard's whisperMode CVar decides whether an incoming whisper opens a
+--  popout conversation window ("popout" / "popout_and_inline") or simply
+--  prints in the chat frame ("inline"). Every temp-window code path is
+--  gated on the two popout values, so "inline" means Blizzard never runs
+--  FCF_OpenTemporaryWindow, never creates whisper tabs, and never stores a
+--  whisper name in a frame's privateMessageList.
+--
+--  That matters beyond preference: whisper names are SECRET values, and the
+--  popout machinery does string math on them (FCFManager_GetChatTarget) and
+--  keys tables with them. Any addon taint present in those code paths turns
+--  that into a hard error. Routing whispers inline removes the machinery
+--  rather than the taint, so it is a reliable escape hatch for anyone
+--  hitting those errors while the underlying cause is being tracked down.
+--
+--  Opt-in, and reversible: the CVar in force when the option is switched ON
+--  is stored and written back verbatim when it is switched OFF. While the
+--  option is on, EUI re-asserts inline at each login (a persistent setting
+--  the user expects to stick); turning it off hands control back to
+--  Blizzard's own chat settings for good.
+-------------------------------------------------------------------------------
+local WHISPER_MODE_CVAR = "whisperMode"
+-- Session-scoped copy of the same value. A profile reset clears the stored
+-- one while the CVar stays applied, which would strand the user on inline
+-- with nothing to restore from; this outlives the DB because it is a plain
+-- local. Only ever set when WE are the ones who switched the CVar.
+local _inlinePrevSession = nil
+
+function ECHAT.ApplyInlineWhispers()
+    local cfg = ECHAT.DB()
+    if not cfg then return end
+    local SetCV = (C_CVar and C_CVar.SetCVar) or SetCVar
+    local GetCV = (C_CVar and C_CVar.GetCVar) or GetCVar
+    if not (SetCV and GetCV) then return end
+    local current = GetCV(WHISPER_MODE_CVAR)
+    if cfg.inlineWhispers then
+        if current ~= "inline" then
+            -- Remember only a real popout mode: re-entering from "inline"
+            -- (an /reload while already applied) must not overwrite the
+            -- user's original choice with our own value.
+            cfg.inlineWhispersPrev = current
+            _inlinePrevSession = current
+            SetCV(WHISPER_MODE_CVAR, "inline")
+        end
+    else
+        local restore = cfg.inlineWhispersPrev or _inlinePrevSession
+        cfg.inlineWhispersPrev = nil
+        _inlinePrevSession = nil
+        -- Never write when we have nothing of our own to restore: a user who
+        -- chose inline in Blizzard's own settings must not be overridden.
+        if restore and current == "inline" then SetCV(WHISPER_MODE_CVAR, restore) end
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Initialization (PLAYER_LOGIN)
 -------------------------------------------------------------------------------
 local initFrame = CreateFrame("Frame")
@@ -4380,6 +4441,10 @@ initFrame:SetScript("OnEvent", function(self)
     BG_G = p.bgG or BG_G
     BG_B = p.bgB or BG_B
     BG_A = p.bgAlpha or BG_A
+
+    -- Whisper routing: re-assert (or hand back) before any whisper can
+    -- arrive this session.
+    ECHAT.ApplyInlineWhispers()
 
     ---------------------------------------------------------------------------
     --  2. Skin all 20 chat frames (bg, tabs, scrollbar, edit box, etc.)
