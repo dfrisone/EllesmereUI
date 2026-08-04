@@ -91,8 +91,42 @@ local function Say(msg)
     if f then f:AddMessage(msg) end
 end
 
+-- C5 ring buffer. The earlier rounds reported "zero breadcrumb flips", but a
+-- breadcrumb was only ever SURFACED when a watched global flipped -- and this
+-- taint writes no state at all, so the crumbs were being collected and thrown
+-- away. That is the one thing worth measuring against a stateless injector:
+-- WHICH of our callbacks executed, and whether one landed in the same instant
+-- as the whisper that errored. Timestamps are relative to the whisper mark.
+local _crumbLog, _crumbAt = {}, 0
+local CRUMB_MAX = 24
+
 function ECHAT.TaintMark(step)
     _taintCrumb = step
+    _crumbAt = _crumbAt + 1
+    _crumbLog[(_crumbAt - 1) % CRUMB_MAX + 1] = { t = GetTime(), step = step }
+end
+
+-- Called by the whisper event frame so the dump can show which callbacks ran
+-- in the same tick as an incoming whisper (the open+re-fire window).
+function ECHAT.TaintMarkWhisper(event)
+    ECHAT.TaintMark("<< WHISPER " .. tostring(event) .. " >>")
+end
+
+local function DumpCrumbs(Say)
+    if _crumbAt == 0 then
+        Say("  callback trail: |cff888888(nothing ran)|r")
+        return
+    end
+    Say("|cffff5555EUI-TAINT|r callback trail (newest last, seconds before now):")
+    local n = math.min(_crumbAt, CRUMB_MAX)
+    local now = GetTime()
+    for i = n, 1, -1 do
+        local slot = (_crumbAt - i) % CRUMB_MAX + 1
+        local c = _crumbLog[slot]
+        if c then
+            Say(("  -%.2fs  %s"):format(now - c.t, tostring(c.step)))
+        end
+    end
 end
 
 function ECHAT.TaintCheck(step)
@@ -145,7 +179,7 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        Say("|cffff5555EUI-TAINT|r status (probe C4, convIcon reparent fix):")
+        Say("|cffff5555EUI-TAINT|r status (probe C5, OnShow fix + trail):")
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -177,6 +211,7 @@ do
         else
             Say("  (no flips recorded this session)")
         end
+        DumpCrumbs(Say)
     end
 end
 
@@ -3876,10 +3911,17 @@ local function SkinChatFrame(cf)
         bgTex:SetAllPoints()
         bgTex:SetColorTexture(BG_R, BG_G, BG_B, BG_A)
 
-        if not cf:IsShown() then
-            bg:Hide()
-            cf:HookScript("OnShow", function() bg:Show() end)
-        end
+        -- NO bg:Hide() + cf:HookScript("OnShow") here. bg is a CHILD of cf,
+        -- so it is already invisible whenever cf is -- the pair was
+        -- redundant, and the hook was an insecure callback sitting directly
+        -- in Blizzard's Show path. FCF_OpenTemporaryWindow shows the pooled
+        -- frame (FCF_CheckShowChatFrame -> SetShown, FloatingChatFrame.lua
+        -- :767), so on any frame skinned while hidden -- a pooled temp
+        -- window between conversations, or one restored by a /reload with a
+        -- whisper open -- our closure ran INSIDE the open, tainting the rest
+        -- of it and the re-fire on :2531 that follows. B4 gated the
+        -- hyperlink and section-3 OnShow hooks but never this one; it is
+        -- created inside the bg block, so it was invisible to that round.
         CFD(cf).bg = bg
     end
 
@@ -4786,7 +4828,8 @@ initFrame:SetScript("OnEvent", function(self)
         tempWinFrame:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
         tempWinFrame:RegisterEvent("CHAT_MSG_BN_WHISPER")
         tempWinFrame:RegisterEvent("CHAT_MSG_BN_WHISPER_INFORM")
-        tempWinFrame:SetScript("OnEvent", function()
+        tempWinFrame:SetScript("OnEvent", function(_, event)
+            ECHAT.TaintMarkWhisper(event)
             C_Timer.After(0, SkinPass)
             -- Recolor + layout (incl. the dynamic-tab seat normalize) after
             -- the skin lands; QueueTabPass coalesces with other triggers.
