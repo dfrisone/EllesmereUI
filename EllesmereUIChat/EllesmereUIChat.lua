@@ -4141,10 +4141,31 @@ local function SkinChatFrame(cf)
     --    background, border, separators, and layout hooks)
     SkinTab(cf)
 
-    -- 6. Hide Blizzard button frame
+    -- 6. Hide Blizzard button frame -- ALPHA, never SetParent.
+    --
+    -- FCF_DockFrame calls FCF_SetButtonSide (FloatingChatFrame.lua:1454),
+    -- which does ClearAllPoints + SetPoint on chatFrame.buttonFrame against
+    -- chatFrame.Background, and FOUR LINES LATER calls FCF_SetLocked
+    -- (:1458), whose `chatFrame.isLocked = isLocked` write (:990) a probe
+    -- caught tainted in the field. Reparenting the button frame to ours made
+    -- Blizzard manipulate an insecure-owned frame mid-dock, so the rest of
+    -- that dock -- including the field write -- ran tainted. Nothing of ours
+    -- executes anywhere near it: the last EUI callback was measured 39.4
+    -- SECONDS before the flip.
+    --
+    -- That one field feeds both whisper errors: FCF_Tab_SetupMenu reads it
+    -- at :399/:405, so every closure the tab menu builds is born tainted
+    -- (the Close Whisper Window crash), and FCF_UpdateResizeButton reads it
+    -- at :984 during the temp-window open (the FCFManager_GetChatTarget
+    -- crash in the re-fire).
+    --
+    -- Blizzard fades this frame back in on hover (UIFrameFadeIn/Out), so the
+    -- zero is re-asserted by the state watcher rather than set once. Same
+    -- idiom the scroll and minimize buttons below already use.
     local btnFrame = _G[name .. "ButtonFrame"]
     if btnFrame then
-        btnFrame:SetParent(_hiddenParent)
+        btnFrame:SetAlpha(0)
+        btnFrame:EnableMouse(false)
     end
 
     -- Restyle Blizzard's resize button to align with our bg (all chat frames).
@@ -4183,8 +4204,13 @@ local function SkinChatFrame(cf)
         local btn = _G[name .. suffix]
         if btn then btn:SetAlpha(0); btn:EnableMouse(false) end
     end
+    -- Same class as the button frame above: FCF_UpdateScrollbarAnchors
+    -- anchors Blizzard's own ScrollBar TO this button (:974), reached from
+    -- FCF_SetLocked via FCF_UpdateResizeButton (:993). Alpha, not SetParent,
+    -- matching the three scroll buttons immediately above.
     if cf.ScrollToBottomButton then
-        cf.ScrollToBottomButton:SetParent(_hiddenParent)
+        cf.ScrollToBottomButton:SetAlpha(0)
+        cf.ScrollToBottomButton:EnableMouse(false)
     end
 
     -- Minimize button
@@ -4516,6 +4542,19 @@ initFrame:SetScript("OnEvent", function(self)
             if dirty then
                 UpdateTabColors()
                 ECHAT.ApplyTabLayout()
+            end
+            -- Blizzard fades the button frame and scroll-to-bottom button
+            -- back in on hover, so their zero has to be re-asserted. They are
+            -- hidden by alpha rather than reparenting because reparenting
+            -- them is what tainted ChatFrame.isLocked -- see SkinChatFrame.
+            for i = 1, 20 do
+                local cf = _G["ChatFrame" .. i]
+                if cf and lastShown[i] then
+                    local bf = _G["ChatFrame" .. i .. "ButtonFrame"]
+                    if bf and bf:GetAlpha() ~= 0 then bf:SetAlpha(0) end
+                    local sb = cf.ScrollToBottomButton
+                    if sb and sb:GetAlpha() ~= 0 then sb:SetAlpha(0) end
+                end
             end
         end)
     end
