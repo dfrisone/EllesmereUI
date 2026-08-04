@@ -108,8 +108,11 @@ local function EUI_GetEnchantText(slotID, unit)
     if cached ~= nil then return cached end
 
     local data = EUI_ScanInventoryItem(slotID, unit)
-    if not (data and data.lines) then
-        _enchantNameCache[enchantID] = ""
+    if not (data and data.lines and #data.lines > 0) then
+        -- No tooltip data (yet): early paints can scan before item data
+        -- hydrates, and caching "" here blanked the label for the whole
+        -- session. Report empty but leave it uncached so a later repaint
+        -- (equipment events, sheet OnShow) rescans.
         return ""
     end
 
@@ -130,11 +133,27 @@ local function EUI_GetEnchantText(slotID, unit)
         end
     end
 
-    _enchantNameCache[enchantID] = ""
+    -- A negative result is only trustworthy once the item's data is fully
+    -- cached client-side; an incomplete tooltip during hydration must not
+    -- poison the session cache.
+    local itemID = tonumber(link:match("item:(%d+)"))
+    if not (C_Item and C_Item.IsItemDataCachedByID)
+       or (itemID and C_Item.IsItemDataCachedByID(itemID)) then
+        _enchantNameCache[enchantID] = ""
+    end
     return ""
 end
 
 EllesmereUI.GetEnchantText  = EUI_GetEnchantText
+
+-- 12.0 dropped the hardcoded Professions-ChatIcon-Quality-Tier atlases
+-- (quality icons are data-driven via C_TradeSkillUI now); an |A| escape
+-- naming a dead atlas renders nothing, so validate at load and fall back
+-- to a plain red mark for the missing-enchant flag.
+local _MISSING_ENCHANT_MARK = (C_Texture and C_Texture.GetAtlasInfo
+        and C_Texture.GetAtlasInfo("Professions-ChatIcon-Quality-Tier5"))
+    and "|A:Professions-ChatIcon-Quality-Tier5:14:14:0:0:229:73:73|a"
+    or "|cffe54949!|r"
 
 -- Empty-socket atlas map (key names come from GetItemStats return keys).
 local EUI_EMPTY_SOCKET_ATLAS = {
@@ -4652,9 +4671,9 @@ local function SkinCharacterSheet()
 
             local iconOnly, tooltipText
             if isMissing then
-                -- Same hex atlas the enchanted items show, tinted red
-                -- (#e54949 → RGB 229, 73, 73 in the atlas-escape color fields).
-                iconOnly    = "|A:Professions-ChatIcon-Quality-Tier5:14:14:0:0:229:73:73|a"
+                -- Red-tinted quality hex where the atlas still exists,
+                -- plain red "!" where 12.0 removed it.
+                iconOnly    = _MISSING_ENCHANT_MARK
                 tooltipText = "Enchant missing"
             elseif hasEnchant then
                 -- Concatenate every |A:...|a atlas escape, drop everything else.
@@ -4674,7 +4693,10 @@ local function SkinCharacterSheet()
             -- missing-enchant warning always keeps its red icon (no name to
             -- show). Falls back to the icon for any item without a real enchant.
             local showNames = EllesmereUIDB and EllesmereUIDB.charSheetEnchantNames
-            local useName = showNames and hasEnchant and tooltipText and tooltipText ~= ""
+            -- iconOnly == "": the enchant line carried no |A| atlas escapes
+            -- (12.0 quality-icon rework) -- icon mode would render an empty
+            -- label, so fall back to the readable name.
+            local useName = (showNames or iconOnly == "") and hasEnchant and tooltipText and tooltipText ~= ""
             local labelText = useName and tooltipText or iconOnly
 
             if showEnchants and labelText and labelText ~= "" then
