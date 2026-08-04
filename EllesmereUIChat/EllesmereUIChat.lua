@@ -91,40 +91,94 @@ local function Say(msg)
     if f then f:AddMessage(msg) end
 end
 
--- C5 ring buffer. The earlier rounds reported "zero breadcrumb flips", but a
--- breadcrumb was only ever SURFACED when a watched global flipped -- and this
--- taint writes no state at all, so the crumbs were being collected and thrown
--- away. That is the one thing worth measuring against a stateless injector:
--- WHICH of our callbacks executed, and whether one landed in the same instant
--- as the whisper that errored. Timestamps are relative to the whisper mark.
-local _crumbLog, _crumbAt = {}, 0
-local CRUMB_MAX = 24
+-- C6 whisper-window capture.
+--
+-- C5's flat ring buffer was self-defeating: the edit-box hooks fire three
+-- times per KEYSTROKE, so typing "/euichattaint" (13 chars) overwrote all 24
+-- slots before the dump could print them. The instrument destroyed its own
+-- evidence -- every C5 trail is guaranteed to show nothing but the act of
+-- asking for it.
+--
+-- So capture is now scoped to the thing being measured. A whisper mark opens
+-- a 0.25s WINDOW; crumbs during that window are recorded with their delta
+-- from the whisper, and the window is then sealed. Completed windows are
+-- kept (last two) and can never be touched by later typing. A crumb at
+-- delta 0.000 ran in the SAME FRAME as the whisper -- i.e. inside
+-- FloatingChatFrameManager_OnEvent's open + re-fire -- which is exactly the
+-- injector signature we are hunting.
+local WHISPER_WINDOW = 0.25
+local _wOpen, _wKept, _wCount = nil, {}, 0
+-- Frame-dispatch order across event frames is not guaranteed, so Blizzard's
+-- FloatingChatFrameManager (and the whole open + re-fire) may already have
+-- run by the time OUR whisper frame marks the arrival. A small pre-ring
+-- makes the capture order-independent: on a whisper mark, any crumb from the
+-- SAME frame that landed just before it is folded into the window with a
+-- negative delta. Either way an in-stack callback shows up at ~0.000s.
+local _pre, _preAt = {}, 0
+local PRE_MAX = 12
+
+local function SealWhisperWindow()
+    if not _wOpen then return end
+    _wKept[#_wKept + 1] = _wOpen
+    if #_wKept > 2 then table.remove(_wKept, 1) end
+    _wOpen = nil
+end
 
 function ECHAT.TaintMark(step)
     _taintCrumb = step
-    _crumbAt = _crumbAt + 1
-    _crumbLog[(_crumbAt - 1) % CRUMB_MAX + 1] = { t = GetTime(), step = step }
+    local now = GetTime()
+    _preAt = _preAt + 1
+    _pre[(_preAt - 1) % PRE_MAX + 1] = { t = now, step = step }
+    if _wOpen then
+        if now - _wOpen.t0 <= WHISPER_WINDOW then
+            if #_wOpen.crumbs < 40 then
+                _wOpen.crumbs[#_wOpen.crumbs + 1] = { d = now - _wOpen.t0, step = step }
+            end
+        else
+            SealWhisperWindow()
+        end
+    end
 end
 
--- Called by the whisper event frame so the dump can show which callbacks ran
--- in the same tick as an incoming whisper (the open+re-fire window).
+-- Called by the whisper event frame: opens a fresh capture window, seeded
+-- with any same-frame crumbs that ran just BEFORE the mark.
 function ECHAT.TaintMarkWhisper(event)
-    ECHAT.TaintMark("<< WHISPER " .. tostring(event) .. " >>")
+    -- Filters run once per receiving chat frame, so one whisper can call this
+    -- several times in the same frame; keep the first window of that instant.
+    if _wOpen and GetTime() - _wOpen.t0 <= 0.001 then return end
+    SealWhisperWindow()
+    _wCount = _wCount + 1
+    local t0 = GetTime()
+    local w = { t0 = t0, event = tostring(event), n = _wCount, crumbs = {} }
+    local n = math.min(_preAt, PRE_MAX)
+    for i = n, 1, -1 do
+        local c = _pre[(_preAt - i) % PRE_MAX + 1]
+        if c and t0 - c.t <= 0.001 then
+            w.crumbs[#w.crumbs + 1] = { d = c.t - t0, step = c.step }
+        end
+    end
+    _wOpen = w
 end
 
 local function DumpCrumbs(Say)
-    if _crumbAt == 0 then
-        Say("  callback trail: |cff888888(nothing ran)|r")
+    if _wOpen and GetTime() - _wOpen.t0 > WHISPER_WINDOW then SealWhisperWindow() end
+    if _wCount == 0 then
+        Say("  whisper windows: |cff888888none seen this session|r")
         return
     end
-    Say("|cffff5555EUI-TAINT|r callback trail (newest last, seconds before now):")
-    local n = math.min(_crumbAt, CRUMB_MAX)
-    local now = GetTime()
-    for i = n, 1, -1 do
-        local slot = (_crumbAt - i) % CRUMB_MAX + 1
-        local c = _crumbLog[slot]
-        if c then
-            Say(("  -%.2fs  %s"):format(now - c.t, tostring(c.step)))
+    Say(("|cffff5555EUI-TAINT|r whisper windows (%d seen, last %d shown):")
+        :format(_wCount, #_wKept))
+    for i = 1, #_wKept do
+        local w = _wKept[i]
+        Say(("  #%d %s -- %d callback(s) within %.2fs")
+            :format(w.n, w.event, #w.crumbs, WHISPER_WINDOW))
+        if #w.crumbs == 0 then
+            Say("     |cff00ff00(nothing of ours ran)|r")
+        end
+        for j = 1, #w.crumbs do
+            local c = w.crumbs[j]
+            local tag = (c.d < 0.001) and "|cffff5555SAME FRAME|r" or ""
+            Say(("     +%.3fs  %s  %s"):format(c.d, tostring(c.step), tag))
         end
     end
 end
@@ -179,7 +233,7 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        Say("|cffff5555EUI-TAINT|r status (probe C5, OnShow fix + trail):")
+        Say("|cffff5555EUI-TAINT|r status (probe C6, whisper-event dereg):")
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -2977,9 +3031,16 @@ local CHAT_MSG_EVENTS = {
     CHAT_MSG_RAID = true, CHAT_MSG_RAID_LEADER = true, CHAT_MSG_RAID_WARNING = true,
     CHAT_MSG_INSTANCE_CHAT = true, CHAT_MSG_INSTANCE_CHAT_LEADER = true,
     CHAT_MSG_GUILD = true, CHAT_MSG_OFFICER = true,
-    CHAT_MSG_WHISPER = true, CHAT_MSG_WHISPER_INFORM = true,
-    CHAT_MSG_BN_WHISPER = true, CHAT_MSG_BN_WHISPER_INFORM = true,
     CHAT_MSG_CHANNEL = true,
+    -- WHISPER / BN_WHISPER (+ _INFORM) are excluded for the SAME reason
+    -- MONSTER_SAY / MONSTER_YELL are: a whisper's sender is a SECRET value,
+    -- and registering an insecure frame for an event whose payload carries
+    -- secrets taints Blizzard's own handling of that event. The rule above
+    -- was written and field-proven for monster lines but never applied to
+    -- whispers, which is the one place it matters most (the temp-window
+    -- open + re-fire at FloatingChatFrame:2530-2531 does secret-name math).
+    -- Idle-fade reset now rides the taint-isolated message filter instead
+    -- (see WhisperSignalFilter).
 }
 
 -------------------------------------------------------------------------------
@@ -4822,18 +4883,29 @@ initFrame:SetScript("OnEvent", function(self)
     -- selected) anchors the tab during the open itself, before this
     -- deferred pass installs the per-tab SetPoint hook -- SkinTab's
     -- one-shot anchor catch-up handles that missed first write.
+    -- NO event registration for the whisper events here. An insecure frame
+    -- registered for an event whose payload carries SECRET values taints
+    -- Blizzard's own handling of that event -- the rule this module already
+    -- states (and field-proved) for MONSTER_SAY / MONSTER_YELL, which was
+    -- never applied to whispers even though a whisper sender is exactly such
+    -- a secret. Detect new temp windows by POLLING instead: ten global
+    -- lookups on a quarter-second tick, entirely outside Blizzard's dispatch.
     do
-        local tempWinFrame = CreateFrame("Frame")
-        tempWinFrame:RegisterEvent("CHAT_MSG_WHISPER")
-        tempWinFrame:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
-        tempWinFrame:RegisterEvent("CHAT_MSG_BN_WHISPER")
-        tempWinFrame:RegisterEvent("CHAT_MSG_BN_WHISPER_INFORM")
-        tempWinFrame:SetScript("OnEvent", function(_, event)
-            ECHAT.TaintMarkWhisper(event)
-            C_Timer.After(0, SkinPass)
-            -- Recolor + layout (incl. the dynamic-tab seat normalize) after
-            -- the skin lands; QueueTabPass coalesces with other triggers.
-            C_Timer.After(0, QueueTabPass)
+        local seen = {}
+        C_Timer.NewTicker(0.25, function()
+            local found = false
+            for i = 11, 20 do
+                local cf = _G["ChatFrame" .. i]
+                if cf and cf.isTemporary and cf:IsShown() then
+                    if not seen[i] then seen[i] = true; found = true end
+                elseif seen[i] and not (cf and cf:IsShown()) then
+                    seen[i] = nil   -- closed; re-skin if it is reused later
+                end
+            end
+            if found then
+                SkinPass()
+                QueueTabPass()
+            end
         end)
     end
     -- User-created permanent chat windows use a separate creation path from
@@ -5020,8 +5092,13 @@ initFrame:SetScript("OnEvent", function(self)
 
         ---------------------------------------------------------------------------
         --  7. Whisper sound alert
-        --     Plays a configurable sound on incoming whispers. Uses a standalone
-        --     event frame (not a message filter) for zero taint risk.
+        --     Driven by a MESSAGE FILTER, not an event frame. On 12.0.7 the
+        --     safe and unsafe options have swapped: Blizzard now invokes every
+        --     filter through securecallfunction behind a canaccessvalue guard
+        --     (ChatFrameFilters.lua:35-42, :146), so a filter is taint-ISOLATED,
+        --     while an insecure frame REGISTERED for a secret-carrying event
+        --     taints Blizzard's handling of it (the MONSTER_SAY/YELL rule).
+        --     The filter reads no arguments, changes nothing, and returns false.
         ---------------------------------------------------------------------------
         do
             local _SOUNDS_DIR = "Interface\\AddOns\\EllesmereUI\\media\\sounds\\"
@@ -5082,19 +5159,29 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             local _whisperThrottle = 0
-            local whisperFrame = CreateFrame("Frame")
-            whisperFrame:RegisterEvent("CHAT_MSG_WHISPER")
-            whisperFrame:RegisterEvent("CHAT_MSG_BN_WHISPER")
-            whisperFrame:SetScript("OnEvent", function()
+            local function WhisperSignalFilter(_, event)
+                -- Probe marker + idle reset ride here too: this is now the
+                -- only whisper touchpoint, and it is the isolated one.
+                if ECHAT.TaintMarkWhisper then ECHAT.TaintMarkWhisper(event) end
+                OnActiveMessage()
                 local cfg = ECHAT.DB()
                 local key = cfg and cfg.whisperSoundKey
-                if not key or key == "none" then return end
-                local now = GetTime()
-                if now - _whisperThrottle < 5 then return end
-                _whisperThrottle = now
-                local path = WHISPER_SOUND_PATHS[key]
-                if path then PlaySoundFile(path, "Master") end
-            end)
+                if key and key ~= "none" then
+                    local now = GetTime()
+                    if now - _whisperThrottle >= 5 then
+                        _whisperThrottle = now
+                        local path = WHISPER_SOUND_PATHS[key]
+                        if path then PlaySoundFile(path, "Master") end
+                    end
+                end
+                return false
+            end
+            local AddFilter = (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter)
+                or ChatFrame_AddMessageEventFilter
+            if AddFilter then
+                AddFilter("CHAT_MSG_WHISPER", WhisperSignalFilter)
+                AddFilter("CHAT_MSG_BN_WHISPER", WhisperSignalFilter)
+            end
         end
 
         -- Event-driven hover detection: zero CPU when idle.
