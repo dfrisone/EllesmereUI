@@ -5288,31 +5288,35 @@ initFrame:SetScript("OnEvent", function(self)
             -- identically), so a filter that breaks on its first call fails
             -- silently and forever. Count at the very top, before anything
             -- that could throw, and count registration separately.
-            local function WhisperSignalFilter(_, event)
+            -- MEASURED DEAD, reverted to an event frame. Routing the whisper
+            -- sound through a message filter cannot work on 12.0.7: Blizzard
+            -- wraps every filter in
+            --     if canaccessvalue(...) then callback(...) end
+            -- (ChatFrameFilters.lua:114-117), so a message carrying ANY value
+            -- the addon cannot access -- e.g. the secret sender name on every
+            -- BN whisper -- skips the callback entirely. The probe proved it:
+            -- registered=true, calls=0, across a whole session of whispers.
+            -- The reason the sound was moved here in the first place (that
+            -- registering an insecure frame for a secret-carrying event is
+            -- what tainted chat) no longer stands either -- the taint was
+            -- measured 19-39 SECONDS away from any callback of ours.
+            local whisperFrame = CreateFrame("Frame")
+            whisperFrame:RegisterEvent("CHAT_MSG_WHISPER")
+            whisperFrame:RegisterEvent("CHAT_MSG_BN_WHISPER")
+            whisperFrame:SetScript("OnEvent", function(_, event)
                 ECHAT._whisperFilterCalls = (ECHAT._whisperFilterCalls or 0) + 1
-                -- Probe marker + idle reset ride here too: this is now the
-                -- only whisper touchpoint, and it is the isolated one.
                 if ECHAT.TaintMarkWhisper then ECHAT.TaintMarkWhisper(event) end
                 OnActiveMessage()
                 local cfg = ECHAT.DB()
                 local key = cfg and cfg.whisperSoundKey
-                if key and key ~= "none" then
-                    local now = GetTime()
-                    if now - _whisperThrottle >= 5 then
-                        _whisperThrottle = now
-                        local path = WHISPER_SOUND_PATHS[key]
-                        if path then PlaySoundFile(path, "Master") end
-                    end
-                end
-                return false
-            end
-            local AddFilter = (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter)
-                or ChatFrame_AddMessageEventFilter
-            if AddFilter then
-                AddFilter("CHAT_MSG_WHISPER", WhisperSignalFilter)
-                AddFilter("CHAT_MSG_BN_WHISPER", WhisperSignalFilter)
-                ECHAT._whisperFilterRegistered = true
-            end
+                if not key or key == "none" then return end
+                local now = GetTime()
+                if now - _whisperThrottle < 5 then return end
+                _whisperThrottle = now
+                local path = WHISPER_SOUND_PATHS[key]
+                if path then PlaySoundFile(path, "Master") end
+            end)
+            ECHAT._whisperFilterRegistered = true
         end
 
         -- Event-driven hover detection: zero CPU when idle.
