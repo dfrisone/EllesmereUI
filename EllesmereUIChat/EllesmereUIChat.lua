@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C20, C18 config + sidebar fix) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C21, extbg CALL skipped too) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -410,6 +410,18 @@ local BISECT_TAB_SKIN_OFF = false
 --            (fixed then by deferring it). A second conviction at a different
 --            moment would fit that history exactly.
 --   dirty -> ApplySidebarIcons, which touches almost nothing of Blizzard's.
+-- C20 RESULT: DIRTY. The sidebar layout-chain change did NOT fix it, so the
+-- earlier "ApplySidebarIcons convicted" call was wrong too (same subtract
+-- fallacy). In the C18/C20 configuration ApplyTabPadding still executed TWO
+-- things: the ApplyExtendedBackground CALL (whose gated early-return path
+-- still Hide()s three frames every pass -- gating the body never removed the
+-- call's side effects) and the sidebar visibility update.
+--
+-- C21 separates exactly those two, one variable:
+--   clean -> the ApplyExtendedBackground call is the injector
+--   dirty -> the sidebar visibility update is
+local BISECT_PAD_EXTBG_CALL_OFF = true
+
 local BISECT_PAD_GDM_OFF = true         -- C20: back to C18 state
 
 local BISECT_TAB_GEOMETRY_OFF = true    -- C20: back to C18 state
@@ -3911,7 +3923,13 @@ function ECHAT.ApplyTabPadding()
             gdm:SetPoint("BOTTOMRIGHT", bg, "TOPRIGHT", offX, padding)
         end
     end
-    if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
+    -- C21: skip the CALL, not just its body. BISECT_EXT_BG_OFF only makes
+    -- ApplyExtendedBackground return early, and its early-return path still
+    -- Hide()s three of our frames on every pass -- so C18/C20 never actually
+    -- removed this call's side effects.
+    if not BISECT_PAD_EXTBG_CALL_OFF then
+        if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
+    end
     -- Visibility only -- NOT the full ApplySidebarIcons layout chain. See
     -- ApplySidebarIconVisibility: the chain is taint-risky from a tab pass,
     -- and this call site only ever needed the fade's shown state.
