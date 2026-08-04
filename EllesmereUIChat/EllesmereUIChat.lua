@@ -43,6 +43,7 @@ local TAINT_WATCH = {
     "CHAT_FONT_HEIGHTS",
 }
 local _taintSeen, _taintCrumb = {}, "load"
+local _taintCrumbAt = 0
 local _taintLog = {}
 
 -- C3: field-level watches. The 2026-08-03 round proved the arrival-class
@@ -136,6 +137,7 @@ end
 
 function ECHAT.TaintMark(step)
     _taintCrumb = step
+    _taintCrumbAt = GetTime()
     local now = GetTime()
     _preAt = _preAt + 1
     _pre[(_preAt - 1) % PRE_MAX + 1] = { t = now, step = step }
@@ -193,6 +195,20 @@ local function DumpCrumbs(Say)
     end
 end
 
+-- THE decisive datum. A breadcrumb name alone is worthless once the poll
+-- interval is wider than the gap between our callback and the flip: C8
+-- blamed eb-enter-pressed and C9 blamed init-done, and neither was
+-- necessarily involved. Record HOW LONG BEFORE the flip our last callback
+-- ran instead. Sub-frame (<0.02s) means one of our callbacks was plausibly
+-- in the same call stack; seconds or minutes means NO code of ours was
+-- anywhere near it, and the taint comes from state Blizzard reads off
+-- objects we modified -- a different class of bug needing a different fix.
+local function RuntimeAt(prev)
+    local gap = GetTime() - (_taintCrumbAt or 0)
+    return ("runtime, last breadcrumb: %s (%.3fs before flip)")
+        :format(tostring(prev), gap)
+end
+
 function ECHAT.TaintCheck(step)
     local prev = _taintCrumb
     if step then _taintCrumb = step end
@@ -203,7 +219,7 @@ function ECHAT.TaintCheck(step)
             if not secure then
                 -- A checkpoint names the code directly; the ticker can only
                 -- report the last breadcrumb the hot paths left behind.
-                local at = step or ("runtime, last breadcrumb: " .. tostring(prev))
+                local at = step or RuntimeAt(prev)
                 _taintSeen[name] = at
                 -- RECORDED, NEVER PRINTED. The global print() routes through
                 -- Blizzard's C-side handler and taints the chat frame execution
@@ -222,7 +238,7 @@ function ECHAT.TaintCheck(step)
         if not _taintSeen[label] then
             local secure, who = FieldSecure(tbl, field)
             if not secure then
-                local at = step or ("runtime, last breadcrumb: " .. tostring(prev))
+                local at = step or RuntimeAt(prev)
                 _taintSeen[label] = at
                 _taintLog[#_taintLog + 1] = ("%s tainted by %s -- at %s")
                     :format(label, tostring(who), at)
@@ -238,7 +254,13 @@ do
         self:UnregisterAllEvents()
         -- Runtime watcher: the send path rewrites ACTIVE_CHAT_EDIT_BOX every
         -- time the box clears, so a flip during play lands within one tick.
-        C_Timer.NewTicker(0.1, function() ECHAT.TaintCheck(nil) end)
+        -- Per FRAME, not 0.1s. At 0.1s the flip could land up to a tenth of a
+        -- second after whatever caused it, which is an eternity in dispatch
+        -- terms and is why two rounds got blamed on unrelated breadcrumbs.
+        -- Polling in OnUpdate pins the flip to a single frame, so the gap
+        -- recorded by RuntimeAt is meaningful.
+        local watcher = CreateFrame("Frame")
+        watcher:SetScript("OnUpdate", function() ECHAT.TaintCheck(nil) end)
     end)
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
@@ -249,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C9, eb hooks OFF) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C10, per-frame + gap) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -291,16 +313,14 @@ end
 -- error attributes to the single flag flipped that cycle. The clip-homed
 -- tab hosts (GetTabHostClip) are the root-cause fix for gate 7A and are
 -- ACTIVE; this build's only new variable vs the clean state.
--- C9 (diagnostic only, never ship true): drop ALL nine HookScripts on
--- Blizzard chat edit boxes. C8 removed the three FCF_* hooksecurefunc hooks
--- and ChatFrame11.isLocked STILL came back tainted, with the breadcrumb
--- moving from hook-FCF_Close to eb-enter-pressed-history -- i.e. the hooks
--- were one entry point into the same field, not the only one. These are the
--- remaining insecure callbacks that run inside Blizzard's own chat dispatch,
--- so this build answers whether they are the second entry point.
--- Costs while true: chat history recall (Up/Down), edit-box header font on
--- focus, idle-fade reset on typing, and hover tracking.
-local BISECT_EB_HOOKS_OFF = true
+-- C9 ran this true and ChatFrame11.isLocked was STILL tainted, with the
+-- breadcrumb falling back to "init-done" -- i.e. with every edit-box hook
+-- absent, nothing of ours ran before the flip at all. **The edit-box hooks
+-- are EXONERATED**, so they are back on (they cost the user chat history
+-- recall, the focus header font, idle reset and hover tracking, and there
+-- is no longer a reason to pay that). Attribution no longer depends on
+-- which breadcrumb is last anyway -- see RuntimeAt's gap measurement.
+local BISECT_EB_HOOKS_OFF = false
 
 local BISECT_TAB_GEOMETRY_OFF = false   -- 1: CLEARED (this cycle)
 local BISECT_TAB_PADDING_OFF = false    -- 3: CLEARED (this cycle)
@@ -4452,8 +4472,14 @@ local function SkinChatFrame(cf)
     --    OnHyperlinkEnter/Leave for tooltip, OnHyperlinkClick for item toggle
     if not CFD(cf).hyperlinkHooked then
         CFD(cf).hyperlinkHooked = true
-        cf:HookScript("OnHyperlinkEnter", OnHyperlinkEnter)
-        cf:HookScript("OnHyperlinkLeave", OnHyperlinkLeave)
+        cf:HookScript("OnHyperlinkEnter", function(...)
+            ECHAT.TaintMark("cf-hyperlink-enter")
+            OnHyperlinkEnter(...)
+        end)
+        cf:HookScript("OnHyperlinkLeave", function(...)
+            ECHAT.TaintMark("cf-hyperlink-leave")
+            OnHyperlinkLeave(...)
+        end)
         -- Item tooltip toggle + URL click handled by global SetItemRef hook
     end
 
@@ -4925,6 +4951,7 @@ initFrame:SetScript("OnEvent", function(self)
         end)
         if EditModeManagerFrame then
             EditModeManagerFrame:HookScript("OnHide", function()
+                ECHAT.TaintMark("editmode-onhide")
                 C_Timer.After(0, QueueEditModeTabStyle)
             end)
         end
@@ -5698,6 +5725,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- Same shape as the FCFDock_SelectWindow hook this module already
             -- replaced for taint reasons.
             toast:HookScript("OnShow", function()
+                ECHAT.TaintMark("bntoast-onshow")
                 if EUI._unlockActive then return end
                 local cfg = ECHAT.DB()
                 if not (cfg and cfg.toastPosition) then return end
