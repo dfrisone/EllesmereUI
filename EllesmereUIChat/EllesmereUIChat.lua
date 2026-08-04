@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C15, only tab GEOMETRY off) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C16, PADDING on / BORDERS off) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -371,9 +371,26 @@ local BISECT_TAB_SKIN_OFF = false
 -- frames.
 --   clean -> tab GEOMETRY writes convicted
 --   dirty -> padding or borders after all
-local BISECT_TAB_GEOMETRY_OFF = true    -- C15: still OFF (the suspect)
-local BISECT_TAB_PADDING_OFF = false    -- C15: restored
-local BISECT_TAB_BORDERS_OFF = false    -- C15: restored. 4: EXONERATED 2026-07-25 (field-
+-- C15 RESULT: DIRTY. Geometry was NOT the culprit (prediction wrong again).
+-- The taint returned when PADDING + BORDERS came back, so it is one of
+-- those two. Geometry writes on Blizzard tabs are therefore EXONERATED and
+-- can be restored once this is over.
+--
+-- Ruled out by inspection rather than a round: anchoring GeneralDockManager
+-- to our bg is NOT sufficient. StyleDockManager does exactly the same
+-- ClearAllPoints + SetPoint(gdm -> CFD(cf1).bg) and is ungated, so it ran in
+-- BOTH clean builds (C13, C14). Matches the old ladder's B7 finding.
+--
+-- C16 splits the last pair: PADDING on, BORDERS off.
+--   dirty -> ApplyTabPadding, whose real payload is the two calls it makes
+--            (ApplyExtendedBackground, ApplySidebarIcons) plus its
+--            sidebar-relative gdm anchoring
+--   clean -> ApplyTabBorders / ApplyTabSeparators, i.e. the border engine
+--            (ApplyBorderStyle + PP pixel-snap walk) on the clip hosts --
+--            the "gate 4" the old ladder marked RETEST and never resolved
+local BISECT_TAB_GEOMETRY_OFF = true    -- C16: still off (exonerated, restore later)
+local BISECT_TAB_PADDING_OFF = false    -- C16: ON (suspect A)
+local BISECT_TAB_BORDERS_OFF = true     -- C16: OFF (suspect B held back). 4: EXONERATED 2026-07-25 (field-
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
