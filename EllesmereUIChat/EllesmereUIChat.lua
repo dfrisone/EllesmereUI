@@ -42,8 +42,46 @@ local TAINT_WATCH = {
     -- any build that still runs the init-time replacement.
     "CHAT_FONT_HEIGHTS",
 }
-local _taintSeen, _taintCrumb, _taintLeft = {}, "load", #TAINT_WATCH
+local _taintSeen, _taintCrumb = {}, "load"
 local _taintLog = {}
+
+-- C3: field-level watches. The 2026-08-03 round proved the arrival-class
+-- error fires with every watched GLOBAL clean and zero breadcrumbs, and the
+-- 12.0.7 source shows message filters are securecalled (ChatFrameFilters.lua
+-- :146), so the poison must live in state issecurevariable(name) cannot see:
+-- fields on the temp-window POOL frames (FCF_GetAvailableChatFrame reads
+-- inUse/isTemporary; the open path reads chatType/chatTarget/
+-- privateMessageList) and the dock table's interior. A field written once
+-- under taint re-taints every later open that reads it -- the seed theory.
+local FIELD_WATCH_DOCK = { "DOCKED_CHAT_FRAMES", "primary", "selected" }
+local FIELD_WATCH_POOL = {
+    "inUse", "chatType", "chatTarget", "isTemporary", "isRegistered",
+    "privateMessageList",
+}
+
+-- pcall: a field may hold a secret value; never let the probe throw.
+local function FieldSecure(tbl, field)
+    local ok, secure, who = pcall(issecurevariable, tbl, field)
+    if not ok then return true, nil end   -- unreadable: report clean, not a flip
+    return secure, who
+end
+
+local function EachWatchedField(fn)
+    local dock = _G.GENERAL_CHAT_DOCK
+    if dock then
+        for i = 1, #FIELD_WATCH_DOCK do
+            fn(dock, FIELD_WATCH_DOCK[i], "GENERAL_CHAT_DOCK." .. FIELD_WATCH_DOCK[i])
+        end
+    end
+    for idx = 11, 20 do
+        local cf = _G["ChatFrame" .. idx]
+        if cf then
+            for i = 1, #FIELD_WATCH_POOL do
+                fn(cf, FIELD_WATCH_POOL[i], "ChatFrame" .. idx .. "." .. FIELD_WATCH_POOL[i])
+            end
+        end
+    end
+end
 
 -- Output goes through AddMessage, not print(): print() is the C-side path the
 -- module documents as tainting the chat frame. Even this is only safe because
@@ -60,7 +98,6 @@ end
 function ECHAT.TaintCheck(step)
     local prev = _taintCrumb
     if step then _taintCrumb = step end
-    if _taintLeft == 0 then return end
     for i = 1, #TAINT_WATCH do
         local name = TAINT_WATCH[i]
         if not _taintSeen[name] then
@@ -70,7 +107,6 @@ function ECHAT.TaintCheck(step)
                 -- report the last breadcrumb the hot paths left behind.
                 local at = step or ("runtime, last breadcrumb: " .. tostring(prev))
                 _taintSeen[name] = at
-                _taintLeft = _taintLeft - 1
                 -- RECORDED, NEVER PRINTED. The global print() routes through
                 -- Blizzard's C-side handler and taints the chat frame execution
                 -- context (see EllesmereUI.Print) -- the exact thing this probe
@@ -83,6 +119,18 @@ function ECHAT.TaintCheck(step)
             end
         end
     end
+    -- C3: pool/dock field flips, same first-flip bookkeeping keyed by label.
+    EachWatchedField(function(tbl, field, label)
+        if not _taintSeen[label] then
+            local secure, who = FieldSecure(tbl, field)
+            if not secure then
+                local at = step or ("runtime, last breadcrumb: " .. tostring(prev))
+                _taintSeen[label] = at
+                _taintLog[#_taintLog + 1] = ("%s tainted by %s -- at %s")
+                    :format(label, tostring(who), at)
+            end
+        end
+    end)
 end
 
 do
@@ -97,7 +145,7 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        Say("|cffff5555EUI-TAINT|r status (probe C2, font-heights fix):")
+        Say("|cffff5555EUI-TAINT|r status (probe C3, pool-field watch):")
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -107,6 +155,21 @@ do
                 Say(("  %s: |cffff5555TAINTED|r by %s (first seen at: %s)")
                     :format(name, tostring(who), tostring(_taintSeen[name])))
             end
+        end
+        -- C3: pool/dock fields. Clean fields stay silent (up to 60+ of them);
+        -- only tainted ones print, plus a one-line summary so a fully clean
+        -- dump is still explicit.
+        local dirty = 0
+        EachWatchedField(function(tbl, field, label)
+            local secure, who = FieldSecure(tbl, field)
+            if not secure then
+                dirty = dirty + 1
+                Say(("  %s: |cffff5555TAINTED|r by %s (first seen at: %s)")
+                    :format(label, tostring(who), tostring(_taintSeen[label])))
+            end
+        end)
+        if dirty == 0 then
+            Say("  pool/dock fields: |cff00ff00all clean|r")
         end
         if #_taintLog > 0 then
             Say("|cffff5555EUI-TAINT|r first-flip log (recorded, not printed live):")
