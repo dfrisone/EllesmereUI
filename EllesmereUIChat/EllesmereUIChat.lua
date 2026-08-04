@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C14, tab VISUALS on, GEOMETRY off) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C15, only tab GEOMETRY off) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -358,9 +358,22 @@ local BISECT_EB_HOOKS_OFF = false
 --            width/height/anchor writes are re-measured by Blizzard mid-dock
 local BISECT_TAB_SKIN_OFF = false
 
-local BISECT_TAB_GEOMETRY_OFF = true    -- C13: forced true (was CLEARED)
-local BISECT_TAB_PADDING_OFF = true     -- C13: forced true (was CLEARED)
-local BISECT_TAB_BORDERS_OFF = true     -- C13: forced true. 4: EXONERATED 2026-07-25 (field-
+-- C14 RESULT: CLEAN. SkinTab's visual work (texture stripping, bg/hover
+-- textures on the tab, tab font, conversationIcon) is EXONERATED. The
+-- injector is in this geometry/padding/borders group.
+--
+-- C15 isolates GEOMETRY alone: padding and borders go back on, geometry
+-- stays off. Geometry is the prime suspect because it is the only one that
+-- WRITES Blizzard's own tab widgets -- tab:SetHeight / SetWidth /
+-- ClearAllPoints / SetPoint -- while PanelTemplates_TabResize sizes and
+-- measures those same tabs inside FCFDock_UpdateTabs, the first thing
+-- FCF_DockFrame does. Padding and borders only touch OUR clip-parented host
+-- frames.
+--   clean -> tab GEOMETRY writes convicted
+--   dirty -> padding or borders after all
+local BISECT_TAB_GEOMETRY_OFF = true    -- C15: still OFF (the suspect)
+local BISECT_TAB_PADDING_OFF = false    -- C15: restored
+local BISECT_TAB_BORDERS_OFF = false    -- C15: restored. 4: EXONERATED 2026-07-25 (field-
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
