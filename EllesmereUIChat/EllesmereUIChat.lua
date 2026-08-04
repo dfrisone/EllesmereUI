@@ -271,7 +271,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C10, per-frame + gap) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C11, btnFrame reparent fix) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -303,6 +303,9 @@ do
         else
             Say("  (no flips recorded this session)")
         end
+        Say(("  whisper filter: registered=%s calls=%d")
+            :format(tostring(ECHAT._whisperFilterRegistered or false),
+                    ECHAT._whisperFilterCalls or 0))
         DumpCrumbs(Say)
     end
 end
@@ -4491,20 +4494,30 @@ local function SkinChatFrame(cf)
     --    background, border, separators, and layout hooks)
     SkinTab(cf)
 
-    -- 6. Hide Blizzard button frame
-    -- SUSPECT, same class as HideConversationIcon: FCF_SetButtonSide (reached
-    -- from FCF_DockFrame inside FCF_OpenTemporaryWindow) ClearAllPoints +
-    -- SetPoints this frame against chatFrame.Background, so while it is
-    -- parented to ours Blizzard builds an insecure tie mid-open. It only
-    -- fires when buttonSide actually changes (nil on a NEWLY created pool
-    -- frame -- FCF_CopyChatSettings does not copy it), so it is rarer than
-    -- the conversation icon and is deliberately left for a separate cycle:
-    -- one variable per tester round. Blizzard drives this frame's ALPHA
-    -- (UIFrameFadeIn/Out on hover), so the icon's alpha trick will not work
-    -- here -- it needs its own hide strategy.
+    -- 6. Hide Blizzard button frame -- ALPHA, never SetParent.
+    --
+    -- CONVICTED 2026-08-03. FCF_DockFrame calls FCF_SetButtonSide
+    -- (FloatingChatFrame.lua:1454) which does ClearAllPoints + SetPoint on
+    -- chatFrame.buttonFrame against chatFrame.Background -- and FOUR LINES
+    -- LATER calls FCF_SetLocked (:1458), whose `chatFrame.isLocked = ...`
+    -- write (:990) is the field the probe caught tainted. While the button
+    -- frame is parented to ours, Blizzard is manipulating an insecure-owned
+    -- frame mid-dock, so the rest of that dock -- including the field write
+    -- -- runs tainted. No callback of ours is involved, which is exactly
+    -- what the probe measured: the last EUI callback ran 39.4 SECONDS
+    -- before the flip.
+    --
+    -- That one tainted field then feeds both reported errors:
+    -- FCF_Tab_SetupMenu reads it at :399/:405 (tab-menu class) and
+    -- FCF_UpdateResizeButton at :984 during the open (arrival class).
+    --
+    -- Blizzard drives this frame's alpha on hover (UIFrameFadeIn/Out), so
+    -- the zero is re-asserted by the state watcher rather than set once.
+    -- Same idiom the scroll buttons and minimize button already use here.
     local btnFrame = _G[name .. "ButtonFrame"]
     if btnFrame then
-        btnFrame:SetParent(_hiddenParent)
+        btnFrame:SetAlpha(0)
+        btnFrame:EnableMouse(false)
     end
 
     -- Restyle Blizzard's resize button to align with our bg (all chat frames).
@@ -4543,8 +4556,14 @@ local function SkinChatFrame(cf)
         local btn = _G[name .. suffix]
         if btn then btn:SetAlpha(0); btn:EnableMouse(false) end
     end
+    -- Same class as the button frame above: FCF_UpdateScrollbarAnchors
+    -- anchors Blizzard's own ScrollBar TO this button (:974), and
+    -- FCF_SetLocked reaches it via FCF_UpdateResizeButton (:993) during the
+    -- dock. Alpha, not SetParent -- matching the three scroll buttons
+    -- immediately above.
     if cf.ScrollToBottomButton then
-        cf.ScrollToBottomButton:SetParent(_hiddenParent)
+        cf.ScrollToBottomButton:SetAlpha(0)
+        cf.ScrollToBottomButton:EnableMouse(false)
     end
 
     -- Minimize button
@@ -4888,6 +4907,20 @@ initFrame:SetScript("OnEvent", function(self)
             if dirty then
                 UpdateTabColors()
                 ECHAT.ApplyTabLayout()
+            end
+            -- Blizzard fades the button frame and scroll-to-bottom button
+            -- back in on hover (UIFrameFadeIn/Out), so their zero has to be
+            -- re-asserted. They are hidden by ALPHA rather than reparenting
+            -- because reparenting them is what tainted ChatFrame.isLocked --
+            -- see the button-frame note in SkinChatFrame.
+            for i = 1, 20 do
+                local cf = _G["ChatFrame" .. i]
+                if cf and lastShown[i] then
+                    local bf = _G["ChatFrame" .. i .. "ButtonFrame"]
+                    if bf and bf:GetAlpha() ~= 0 then bf:SetAlpha(0) end
+                    local sb = cf.ScrollToBottomButton
+                    if sb and sb:GetAlpha() ~= 0 then sb:SetAlpha(0) end
+                end
             end
         end)
     end
@@ -5247,7 +5280,16 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             local _whisperThrottle = 0
+            -- Liveness counters. "whisper windows: none seen" has now
+            -- persisted through every round while whisper errors kept
+            -- firing, which should be impossible if this filter runs.
+            -- Blizzard SWALLOWS errors thrown inside a message filter
+            -- (ChatFrameFilters.lua treats a nil return and a thrown error
+            -- identically), so a filter that breaks on its first call fails
+            -- silently and forever. Count at the very top, before anything
+            -- that could throw, and count registration separately.
             local function WhisperSignalFilter(_, event)
+                ECHAT._whisperFilterCalls = (ECHAT._whisperFilterCalls or 0) + 1
                 -- Probe marker + idle reset ride here too: this is now the
                 -- only whisper touchpoint, and it is the isolated one.
                 if ECHAT.TaintMarkWhisper then ECHAT.TaintMarkWhisper(event) end
@@ -5269,6 +5311,7 @@ initFrame:SetScript("OnEvent", function(self)
             if AddFilter then
                 AddFilter("CHAT_MSG_WHISPER", WhisperSignalFilter)
                 AddFilter("CHAT_MSG_BN_WHISPER", WhisperSignalFilter)
+                ECHAT._whisperFilterRegistered = true
             end
         end
 
