@@ -249,7 +249,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C8, FCF hooks REMOVED) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C9, eb hooks OFF) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -291,6 +291,17 @@ end
 -- error attributes to the single flag flipped that cycle. The clip-homed
 -- tab hosts (GetTabHostClip) are the root-cause fix for gate 7A and are
 -- ACTIVE; this build's only new variable vs the clean state.
+-- C9 (diagnostic only, never ship true): drop ALL nine HookScripts on
+-- Blizzard chat edit boxes. C8 removed the three FCF_* hooksecurefunc hooks
+-- and ChatFrame11.isLocked STILL came back tainted, with the breadcrumb
+-- moving from hook-FCF_Close to eb-enter-pressed-history -- i.e. the hooks
+-- were one entry point into the same field, not the only one. These are the
+-- remaining insecure callbacks that run inside Blizzard's own chat dispatch,
+-- so this build answers whether they are the second entry point.
+-- Costs while true: chat history recall (Up/Down), edit-box header font on
+-- focus, idle-fade reset on typing, and hover tracking.
+local BISECT_EB_HOOKS_OFF = true
+
 local BISECT_TAB_GEOMETRY_OFF = false   -- 1: CLEARED (this cycle)
 local BISECT_TAB_PADDING_OFF = false    -- 3: CLEARED (this cycle)
 local BISECT_TAB_BORDERS_OFF = false    -- 4: EXONERATED 2026-07-25 (field-
@@ -3843,7 +3854,7 @@ local function SkinEditBox(cf)
     -- docked frames (1-10) are safe to hook; temp windows (11+) get visual
     -- skinning only. (This matches the function header's stated intent and the
     -- 1-10 header-font gate in ECHAT.ApplyFonts.)
-    if idx <= 10 then
+    if idx <= 10 and not BISECT_EB_HOOKS_OFF then
         eb:HookScript("OnEditFocusGained", function(self)
             ECHAT.TaintMark("eb-focus-gained-headerfont")
             ApplyEditBoxHeaderFont(self)
@@ -5126,7 +5137,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- (11+) taints its execution context and poisons HistoryKeeper on
         -- BN_WHISPER. Temp windows do not exist at login, but a /reload with a
         -- conversation window open could expose them here, so gate it.
-        for i = 1, 10 do
+        for i = 1, (BISECT_EB_HOOKS_OFF and 0 or 10) do
             local eb = _G["ChatFrame" .. i .. "EditBox"]
             if eb then
                 eb:HookScript("OnEditFocusGained", function(...)
@@ -5330,7 +5341,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Edit box focus tracking -- only ChatFrame1 (permanent, no secret
         -- values). Hooking temp whisper edit boxes (11+) taints their
         -- execution context, causing secret value errors on BN_WHISPER tellTarget.
-        local eb1 = _G["ChatFrame1EditBox"]
+        local eb1 = not BISECT_EB_HOOKS_OFF and _G["ChatFrame1EditBox"]
         if eb1 then
             eb1:HookScript("OnEditFocusGained", function()
                 ECHAT.TaintMark("eb-focus-gained-hover")
