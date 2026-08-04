@@ -54,9 +54,15 @@ local _taintLog = {}
 -- privateMessageList) and the dock table's interior. A field written once
 -- under taint re-taints every later open that reads it -- the seed theory.
 local FIELD_WATCH_DOCK = { "DOCKED_CHAT_FRAMES", "primary", "selected" }
+-- Fields the temp-window OPEN reads, plus the ones FCF_Tab_SetupMenu reads
+-- while building the tab context menu (isLocked / isDocked /
+-- isUninteractable, FloatingChatFrame.lua:395-417). The menu class needs the
+-- latter: its "Close Whisper Window" closure is created at :446, BEFORE the
+-- CHAT_FONT_HEIGHTS read at :474, so whatever taints that closure must be
+-- read EARLIER in the generator than the global we already fixed.
 local FIELD_WATCH_POOL = {
     "inUse", "chatType", "chatTarget", "isTemporary", "isRegistered",
-    "privateMessageList",
+    "privateMessageList", "isLocked", "isDocked", "isUninteractable",
 }
 
 -- pcall: a field may hold a secret value; never let the probe throw.
@@ -73,7 +79,11 @@ local function EachWatchedField(fn)
             fn(dock, FIELD_WATCH_DOCK[i], "GENERAL_CHAT_DOCK." .. FIELD_WATCH_DOCK[i])
         end
     end
-    for idx = 11, 20 do
+    -- From 1, not 11: the tab menu reads DEFAULT_CHAT_FRAME and
+    -- GENERAL_CHAT_DOCK.primary (both ChatFrame1), which is also the frame
+    -- this module touches most (bg child, sidebar anchors, fonts). Watching
+    -- only the temp pool left the likeliest frame unmeasured.
+    for idx = 1, 20 do
         local cf = _G["ChatFrame" .. idx]
         if cf then
             for i = 1, #FIELD_WATCH_POOL do
@@ -233,7 +243,13 @@ do
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
-        Say("|cffff5555EUI-TAINT|r status (probe C6, whisper-event dereg):")
+        -- Client uptime stamp. BugSack keeps errors across sessions, and a
+        -- stale entry has already been mistaken for a live failure twice.
+        -- Every error's locals carry frame timestamps in this same GetTime()
+        -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
+        -- this number dates the error without having to trust recollection:
+        -- close to it = this session, far below = an older one.
+        Say(("|cffff5555EUI-TAINT|r status (probe C7, CF1 fields + uptime) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
