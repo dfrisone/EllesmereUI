@@ -398,7 +398,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C25, on-demand trigger) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C25b, trigger + frame census) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r"):format(FlagState()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
@@ -424,6 +424,28 @@ do
         end)
         if dirty == 0 then
             Say("  pool/dock fields: |cff00ff00all clean|r")
+        end
+        -- CENSUS. Only tainted fields print, so "all clean" is ambiguous
+        -- between "nothing got poisoned" and "there was nothing here to
+        -- poison" -- and after a reload the temp frames exist with no
+        -- visible tab, so neither the tester nor the dump could tell which.
+        -- A round with no temp frame present measures nothing and must be
+        -- discarded, not read as a clean result.
+        do
+            local present = {}
+            for i = 11, 20 do
+                local cf = _G["ChatFrame" .. i]
+                if cf then
+                    present[#present + 1] = ("%d%s%s"):format(i,
+                        cf.isTemporary and "T" or "", cf.inUse and "*" or "")
+                end
+            end
+            if #present == 0 then
+                Say("  temp frames: |cffff5555NONE -- this round measures nothing|r")
+            else
+                Say(("  temp frames present: |cff00ff00%s|r  (T=temporary, *=inUse)")
+                    :format(table.concat(present, " ")))
+            end
         end
         if #_taintLog > 0 then
             Say("|cffff5555EUI-TAINT|r first-flip log (recorded, not printed live):")
