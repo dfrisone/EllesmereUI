@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -332,6 +332,14 @@ local BX = {
     cfFont        = false,
     cfStrip       = false,
     cfReparent    = false,
+    -- C29. cfFont/cfStrip/cfReparent were all off and it still tainted, so I
+    -- had under-inventoried what SkinChatFrame does to Blizzard's frame.
+    -- These cover the rest of it: the edit-box skin, the two hyperlink
+    -- HookScripts plus SetFading/SetHyperlinksEnabled, and the alpha +
+    -- EnableMouse writes on Blizzard's own child widgets.
+    cfEdit        = false,
+    cfMisc        = false,
+    cfHide        = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -415,12 +423,13 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
     local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true,
-        cfFont = true, cfStrip = true, cfReparent = true }
+        cfFont = true, cfStrip = true, cfReparent = true,
+        cfEdit = true, cfMisc = true, cfHide = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -502,7 +511,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C28, splits the chat-frame reskin) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C29, the rest of the reskin) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -5035,11 +5044,11 @@ local function SkinChatFrame(cf)
         if cf.SetShadowOffset then cf:SetShadowOffset(1, -1) end
         if cf.SetShadowColor then cf:SetShadowColor(0, 0, 0, 0.8) end
     end
-    cf:SetFading(false)
+    if not BX.cfMisc then cf:SetFading(false) end
 
     -- 3. Hyperlink handlers (per-frame, on our bg frame -- not on Blizzard's cf)
     --    OnHyperlinkEnter/Leave for tooltip, OnHyperlinkClick for item toggle
-    if not CFD(cf).hyperlinkHooked then
+    if not CFD(cf).hyperlinkHooked and not BX.cfMisc then
         CFD(cf).hyperlinkHooked = true
         cf:HookScript("OnHyperlinkEnter", function(...)
             ECHAT.TaintMark("cf-hyperlink-enter")
@@ -5053,7 +5062,7 @@ local function SkinChatFrame(cf)
     end
 
     -- 4. Edit box
-    SkinEditBox(cf)
+    if not BX.cfEdit then SkinEditBox(cf) end
 
 
     -- 5. Tab (consolidated in SkinTab -- strips textures and creates our
@@ -5081,7 +5090,7 @@ local function SkinChatFrame(cf)
     -- the zero is re-asserted by the state watcher rather than set once.
     -- Same idiom the scroll buttons and minimize button already use here.
     local btnFrame = _G[name .. "ButtonFrame"]
-    if btnFrame then
+    if btnFrame and not BX.cfHide then
         btnFrame:SetAlpha(0)
         btnFrame:EnableMouse(false)
     end
@@ -5120,21 +5129,21 @@ local function SkinChatFrame(cf)
     -- Hide scroll buttons + scroll-to-bottom
     for _, suffix in ipairs({"BottomButton", "DownButton", "UpButton"}) do
         local btn = _G[name .. suffix]
-        if btn then btn:SetAlpha(0); btn:EnableMouse(false) end
+        if btn and not BX.cfHide then btn:SetAlpha(0); btn:EnableMouse(false) end
     end
     -- Same class as the button frame above: FCF_UpdateScrollbarAnchors
     -- anchors Blizzard's own ScrollBar TO this button (:974), and
     -- FCF_SetLocked reaches it via FCF_UpdateResizeButton (:993) during the
     -- dock. Alpha, not SetParent -- matching the three scroll buttons
     -- immediately above.
-    if cf.ScrollToBottomButton then
+    if cf.ScrollToBottomButton and not BX.cfHide then
         cf.ScrollToBottomButton:SetAlpha(0)
         cf.ScrollToBottomButton:EnableMouse(false)
     end
 
     -- Minimize button
     local minBtn = _G[name .. "MinimizeButton"]
-    if minBtn then minBtn:SetAlpha(0); minBtn:EnableMouse(false) end
+    if minBtn and not BX.cfHide then minBtn:SetAlpha(0); minBtn:EnableMouse(false) end
 
     -- Strip ALL Blizzard textures from the chat frame by walking every
     -- region. Only targets Texture objects and skips anything we created
@@ -5163,7 +5172,7 @@ local function SkinChatFrame(cf)
     end
 
     -- Let clicks pass through to the game world
-    cf:SetHyperlinksEnabled(true)
+    if not BX.cfMisc then cf:SetHyperlinksEnabled(true) end
 
     -- Combat Log: replace Blizzard's filter tab bar with our own dark bar
     -- that matches the chat panel's width and style.
