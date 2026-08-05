@@ -203,10 +203,44 @@ end
 -- in the same call stack; seconds or minutes means NO code of ours was
 -- anywhere near it, and the taint comes from state Blizzard reads off
 -- objects we modified -- a different class of bug needing a different fix.
+-- Every flip line stamps the CONFIGURATION and the whisper that preceded it.
+-- Rounds have been lost to error reports that could not be matched to a flag
+-- state, or to a dump whose config had changed since the flip: an error text
+-- alone never says which rung of the ladder produced it. Reading ns._BX at
+-- call time rather than upvaluing BX keeps this above the table's
+-- declaration without repeating the nil-global mistake.
+local FLAG_ORDER = { "geometry", "padding", "borders", "extbg", "padGdm",
+    "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
+local function FlagState()
+    local bx = ns._BX
+    if not bx then return "flags unavailable" end
+    local off = {}
+    for i = 1, #FLAG_ORDER do
+        local k = FLAG_ORDER[i]
+        if bx[k] then off[#off + 1] = k end
+    end
+    if #off == 0 then return "all features ON" end
+    return "OFF: " .. table.concat(off, ",")
+end
+ECHAT.FlagState = FlagState
+
+local function LastWhisper()
+    local w = _wOpen or _wKept[#_wKept]
+    if not w then return "no whisper yet this session" end
+    return ("after %s, %.1fs"):format(tostring(w.event), GetTime() - w.t0)
+end
+
 local function RuntimeAt(prev)
     local gap = GetTime() - (_taintCrumbAt or 0)
     return ("runtime, last breadcrumb: %s (%.3fs before flip)")
         :format(tostring(prev), gap)
+end
+
+-- One flip line, self-describing: what flipped, who did it, when relative to
+-- our last callback, under which flags, and after which whisper.
+local function FlipLine(name, who, at)
+    return ("%s tainted by %s -- at %s [%s] [%s]")
+        :format(name, tostring(who), at, FlagState(), LastWhisper())
 end
 
 function ECHAT.TaintCheck(step)
@@ -220,7 +254,7 @@ function ECHAT.TaintCheck(step)
                 -- A checkpoint names the code directly; the ticker can only
                 -- report the last breadcrumb the hot paths left behind.
                 local at = step or RuntimeAt(prev)
-                _taintSeen[name] = at
+                _taintSeen[name] = at .. " [" .. FlagState() .. "]"
                 -- RECORDED, NEVER PRINTED. The global print() routes through
                 -- Blizzard's C-side handler and taints the chat frame execution
                 -- context (see EllesmereUI.Print) -- the exact thing this probe
@@ -228,8 +262,7 @@ function ECHAT.TaintCheck(step)
                 -- it is hunting, attributed to this very addon, inside the
                 -- window being measured. Findings go to a buffer that
                 -- /euichattaint dumps on demand.
-                _taintLog[#_taintLog + 1] = ("%s tainted by %s -- at %s")
-                    :format(name, tostring(who), at)
+                _taintLog[#_taintLog + 1] = FlipLine(name, who, at)
             end
         end
     end
@@ -239,9 +272,8 @@ function ECHAT.TaintCheck(step)
             local secure, who = FieldSecure(tbl, field)
             if not secure then
                 local at = step or RuntimeAt(prev)
-                _taintSeen[label] = at
-                _taintLog[#_taintLog + 1] = ("%s tainted by %s -- at %s")
-                    :format(label, tostring(who), at)
+                _taintSeen[label] = at .. " [" .. FlagState() .. "]"
+                _taintLog[#_taintLog + 1] = FlipLine(label, who, at)
             end
         end
     end)
@@ -342,7 +374,8 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C24b, dock numeric + bisect flag fix) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C24c, self-describing flips) uptime=%.1f"):format(GetTime()))
+        Say(("  config now: |cffffff00%s|r"):format(FlagState()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
