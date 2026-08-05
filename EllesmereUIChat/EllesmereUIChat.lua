@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -322,6 +322,16 @@ local BX = {
     -- positioner added in C22/C24, which did not exist when C13 last read
     -- clean and writes layout continuously.
     cfSkin        = false,
+    -- C28 splits SkinChatFrame, now the convicted block. These are the three
+    -- things it does to BLIZZARD'S OWN chat frame; everything else it does is
+    -- to frames we created. Ordered by prior: the font is read back by
+    -- FCF_GetChatWindowInfo and measured by PanelTemplates_TabResize inside
+    -- the dock pass, and hasOwnFontObject=true appears in the locals of every
+    -- captured error; the reparent is the pattern this file's own C4 rule
+    -- condemns and it was left in place deliberately.
+    cfFont        = false,
+    cfStrip       = false,
+    cfReparent    = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -405,11 +415,12 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
-    local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true }
+    local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true,
+        cfFont = true, cfStrip = true, cfReparent = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -491,7 +502,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C27, gates the reskin and the positioner) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C28, splits the chat-frame reskin) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -5019,9 +5030,11 @@ local function SkinChatFrame(cf)
 
     -- Chat frame font/shadow/fade (one-time, at login)
     local cfId = cf:GetID()
-    cf:SetFont(GetFont(), GetFrameFontSize(cfId), GetOutlineFlag())
-    if cf.SetShadowOffset then cf:SetShadowOffset(1, -1) end
-    if cf.SetShadowColor then cf:SetShadowColor(0, 0, 0, 0.8) end
+    if not BX.cfFont then
+        cf:SetFont(GetFont(), GetFrameFontSize(cfId), GetOutlineFlag())
+        if cf.SetShadowOffset then cf:SetShadowOffset(1, -1) end
+        if cf.SetShadowColor then cf:SetShadowColor(0, 0, 0, 0.8) end
+    end
     cf:SetFading(false)
 
     -- 3. Hyperlink handlers (per-frame, on our bg frame -- not on Blizzard's cf)
@@ -5126,7 +5139,7 @@ local function SkinChatFrame(cf)
     -- Strip ALL Blizzard textures from the chat frame by walking every
     -- region. Only targets Texture objects and skips anything we created
     -- (our textures have _eui prefix fields).
-    if cf.GetRegions then
+    if cf.GetRegions and not BX.cfStrip then
         for i = 1, select("#", cf:GetRegions()) do
             local region = select(i, cf:GetRegions())
             if region and region:IsObjectType("Texture") and not region._euiOwned then
@@ -5137,7 +5150,7 @@ local function SkinChatFrame(cf)
         end
     end
     -- Also strip the Background child frame and its regions
-    if cf.Background then
+    if cf.Background and not BX.cfStrip then
         cf.Background:SetAlpha(0)
         if cf.Background.GetRegions then
             for i = 1, select("#", cf.Background:GetRegions()) do
@@ -5261,7 +5274,7 @@ local function SkinChatFrame(cf)
     -- Hide scrollbar arrow buttons by reparenting to hidden container.
     -- The scrollbar itself stays untouched in the frame hierarchy to
     -- avoid both trackExtent errors and HistoryKeeper taint.
-    if cf.ScrollBar and not CFD(cf).scrollBarSkinned then
+    if cf.ScrollBar and not CFD(cf).scrollBarSkinned and not BX.cfReparent then
         local bar = cf.ScrollBar
         if bar.Back then bar.Back:SetParent(_hiddenParent) end
         if bar.Forward then bar.Forward:SetParent(_hiddenParent) end
