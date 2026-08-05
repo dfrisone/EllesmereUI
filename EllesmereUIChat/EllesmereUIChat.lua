@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -375,6 +375,20 @@ local BX = {
     -- which early-returns unless CFD(cf1).bg exists. dockSize covered only its
     -- SetHeight calls; the whole function has never been disabled.
     dockStyle     = false,
+    -- C37. The tracer + the cfBgReg pair (published = DIRTY, unpublished =
+    -- CLEAN, C36 rounds 1/2) proved publication is the mechanism: bg's
+    -- existence switches on bg-CONDITIONAL writes to Blizzard objects. The
+    -- trace names exactly two that ran at the open (t = the window's open
+    -- tick): the resize-button restyle -- ChatFrameNResizeButton, a BLIZZARD
+    -- frame, anchored TO OUR PANEL, no flag, `if resizeBtn and CFD(cf).bg` --
+    -- and ApplyInputPosition's edit-box/ScrollBar/FontStringContainer
+    -- anchors, whose gate only ever covered frames 11-20. Verified in source:
+    -- FCF_SetLocked writes isLocked then calls FCF_UpdateResizeButton ->
+    -- SetShown + FCF_UpdateScrollbarAnchors, which anchors Blizzard's
+    -- ScrollBar to the ResizeButton -- the frame carrying our insecure
+    -- anchor -- and FCF_SetLocked runs more than once per temp-window open.
+    cfResize      = false,
+    ebWrites      = false,
     -- C35/C36: not a feature gate, and no longer reachable from
     -- /euichatbisect. Every flag in that command means "feature off when
     -- true", and a diagnostic switch borrowed that polarity and cost a round
@@ -471,7 +485,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -479,7 +493,8 @@ do
         cfFont = true, cfStrip = true, cfReparent = true,
         cfEdit = true, cfMisc = true, cfHide = true,
         cfSidebar = true, cfSbEvents = true, cfBg = true,
-        cfBgLevel = true, cfBgReg = true, dockSize = true,
+        cfBgLevel = true, cfBgReg = true, cfResize = true,
+        ebWrites = true, dockSize = true,
         dockStyle = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
@@ -591,7 +606,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C36, tracer gets its own switch) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C37, resize anchor + eb writes split) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -2770,7 +2785,12 @@ function ECHAT.ApplyInputPosition()
             local fsc = cf.FontStringContainer
             local bar = cf.ScrollBar
 
-            if eb and (i <= 10 or not BX.ebAnchors) then
+            -- ebWrites (C37): every write in this function onto BLIZZARD'S
+            -- objects (edit box, ScrollBar, FontStringContainer) is inside
+            -- the `CFD(cf).bg` gate above, so none of it ran in the clean
+            -- bg-off rounds -- unexonerated. ebAnchors only ever covered
+            -- frames 11-20; this covers all of them.
+            if eb and not BX.ebWrites and (i <= 10 or not BX.ebAnchors) then
                 eb:ClearAllPoints()
                 if onTop then
                     -- Grow the shared panel upward instead of placing the
@@ -2813,7 +2833,7 @@ function ECHAT.ApplyInputPosition()
                 if ECHAT.PositionChatPanel then ECHAT.PositionChatPanel(cf) end
             end
 
-            if fsc then
+            if fsc and not BX.ebWrites then
                 fsc:ClearAllPoints()
                 -- The chat text keeps the full ChatFrame height regardless of
                 -- input placement or input height.
@@ -2821,7 +2841,7 @@ function ECHAT.ApplyInputPosition()
                 fsc:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", 0, 0)
             end
 
-            if bar and (i <= 10 or not BX.ebAnchors) then
+            if bar and not BX.ebWrites and (i <= 10 or not BX.ebAnchors) then
                 bar:ClearAllPoints()
                 bar:SetPoint("TOPRIGHT", cf, "TOPRIGHT", 5, -2)
                 bar:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", 5, 2)
@@ -5236,7 +5256,13 @@ local function SkinChatFrame(cf)
 
     -- Restyle Blizzard's resize button to align with our bg (all chat frames).
     local resizeBtn = _G[name .. "ResizeButton"]
-    if resizeBtn and CFD(cf).bg then
+    -- cfResize (C37): this block anchors a BLIZZARD frame to OUR panel, is
+    -- conditional on bg being published, and has never had a gate. Verified
+    -- in source that the button sits inside FCF_SetLocked's own call chain
+    -- (isLocked write -> FCF_UpdateResizeButton -> SetShown +
+    -- FCF_UpdateScrollbarAnchors anchoring Blizzard's ScrollBar to it), and
+    -- FCF_SetLocked runs more than once per temp-window open.
+    if resizeBtn and CFD(cf).bg and not BX.cfResize then
         resizeBtn:SetSize(18, 18)
         resizeBtn:ClearAllPoints()
         -- While gate 7 leaves the temp (11+) edit box Blizzard-anchored, its
