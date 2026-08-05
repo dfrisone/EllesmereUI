@@ -323,7 +323,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C23, C22 fixed + runtime flags) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C24, dock manager placed numerically) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -1454,6 +1454,10 @@ function ECHAT.PositionChatPanels()
         -- which is what tripped Blizzard's "too many errors" cutoff).
         if cf and CFD(cf).bg then ECHAT.PositionChatPanel(cf) end
     end
+    -- The dock manager is placed from the panel's rect, so it follows in the
+    -- same tick. Defined further down the file; call through the table so
+    -- this never depends on definition order (the C22 _skinned lesson).
+    if ECHAT.PositionDockManager then ECHAT.PositionDockManager() end
 end
 
 -- Visibility ONLY: the SetShown half of ApplySidebarIcons, without its
@@ -4040,37 +4044,74 @@ function ECHAT.ApplyTabLayout()
     if ECHAT.PositionTabHosts then ECHAT.PositionTabHosts() end
 end
 
-function ECHAT.ApplyTabPadding()
-    if BX.padding then return end
+-- Numeric placement of Blizzard's GeneralDockManager.
+--
+-- THE OTHER HALF OF THE C22 FIX. C22 stopped OUR panel from anchoring to
+-- Blizzard's chat frame, but the dock manager was still anchored to our bg
+-- (and to our sidebar in alignFull), and that is the direction that actually
+-- matters: a BLIZZARD frame whose rect resolves THROUGH an insecure one.
+-- Blizzard's own default is gdm -> ChatFrame1 (FCFDock_SetPrimary,
+-- FloatingChatFrame.lua:1895-96); we replaced that secure tie with an
+-- insecure one. FCFDock_UpdateTabs is the FIRST thing FCF_DockFrame does
+-- (:1426), before the FCF_SetLocked write at :1458, so every temp-window
+-- open resolved dock geometry through our frame.
+--
+-- Swept the whole module: gdm was the ONLY Blizzard-owned frame anchored to
+-- an EUI frame. Placing it numerically from the same rect reads leaves
+-- nothing of Blizzard's resolving through anything of ours.
+function ECHAT.PositionDockManager()
     local gdm = _G.GeneralDockManager
     local cf1 = _G.ChatFrame1
-    local bg = cf1 and CFD(cf1).bg
-    -- C17: gate ONLY the gdm re-anchor, keeping the two passes below. This
-    -- is the one part of ApplyTabPadding that writes a BLIZZARD frame, and
-    -- unlike StyleDockManager's identical one-shot version at init, this one
-    -- re-runs on every tab pass -- i.e. it can land inside a dock pass. Same
-    -- content, different timing, which is exactly the distinction that
-    -- convicted ApplyBorders in the earlier ladder.
-    if BX.padGdm then gdm = nil end
-    if gdm and bg then
-        local padding = GetTabPadding()
-        local cfg = ECHAT.DB()
-        local sidebar = cf1 and CFD(cf1).sidebar
-        local sidebarActive = sidebar and SidebarParticipatesInLayout(cfg)
-        local alignFull = cfg.alignTabsToPanel and not cfg.extendBgBehindTabs and sidebarActive
-        local offX = cfg.tabOffsetX or 0
-        gdm:ClearAllPoints()
-        if alignFull and not cfg.sidebarRight then
-            gdm:SetPoint("BOTTOMLEFT", sidebar, "TOPLEFT", offX, padding)
-            gdm:SetPoint("BOTTOMRIGHT", bg, "TOPRIGHT", offX, padding)
-        elseif alignFull and cfg.sidebarRight then
-            gdm:SetPoint("BOTTOMLEFT", bg, "TOPLEFT", offX, padding)
-            gdm:SetPoint("BOTTOMRIGHT", sidebar, "TOPRIGHT", offX, padding)
-        else
-            gdm:SetPoint("BOTTOMLEFT", bg, "TOPLEFT", offX, padding)
-            gdm:SetPoint("BOTTOMRIGHT", bg, "TOPRIGHT", offX, padding)
+    local d = cf1 and CFD(cf1)
+    local bg = d and d.bg
+    -- No panel yet: leave Blizzard's own gdm -> ChatFrame1 anchor alone.
+    if not (gdm and bg) then return end
+    if BX.padGdm then return end
+    local cfg = ECHAT.DB()
+    if not cfg then return end
+    local sidebar = d.sidebar
+    local sidebarActive = sidebar and SidebarParticipatesInLayout(cfg)
+    local alignFull = cfg.alignTabsToPanel and not cfg.extendBgBehindTabs and sidebarActive
+    -- Which frame supplies each bottom corner, matching the anchors this
+    -- replaced. Both frames share a top edge, so bg supplies the y.
+    local leftFrame, rightFrame = bg, bg
+    if alignFull then
+        if cfg.sidebarRight then rightFrame = sidebar else leftFrame = sidebar end
+    end
+    local ui = UIParent:GetEffectiveScale()
+    if not ui or ui == 0 then return end
+    local l = leftFrame:GetLeft()
+    local r = rightFrame:GetRight()
+    local t = bg:GetTop()
+    if not (l and r and t) then return end
+    local offX = cfg.tabOffsetX or 0
+    local padding = GetTabPadding()
+    local left = (l * (leftFrame:GetEffectiveScale() / ui)) + offX
+    local right = (r * (rightFrame:GetEffectiveScale() / ui)) + offX
+    local bottom = (t * (bg:GetEffectiveScale() / ui)) + padding
+    if right - left < 1 then return end
+    -- Offsets are in the placed frame's own space.
+    local gs = gdm:GetEffectiveScale() / ui
+    if not gs or gs == 0 then return end
+    -- This runs every frame; a redundant SetPoint is still a layout write.
+    -- Compare against where the dock ACTUALLY is, not against our last
+    -- intent: Blizzard re-anchors it to ChatFrame1 in FCFDock_SetPrimary, so
+    -- a cache of what we last asked for would let that win permanently.
+    local cl, cr, cb = gdm:GetLeft(), gdm:GetRight(), gdm:GetBottom()
+    if cl and cr and cb then
+        if abs((cl * gs) - left) < 0.05 and abs((cr * gs) - right) < 0.05
+           and abs((cb * gs) - bottom) < 0.05 then
+            return
         end
     end
+    gdm:ClearAllPoints()
+    gdm:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left / gs, bottom / gs)
+    gdm:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", right / gs, bottom / gs)
+end
+
+function ECHAT.ApplyTabPadding()
+    if BX.padding then return end
+    ECHAT.PositionDockManager()
     -- C21: skip the CALL, not just its body. BX.extbg only makes
     -- ApplyExtendedBackground return early, and its early-return path still
     -- Hide()s three of our frames on every pass -- so C18/C20 never actually
@@ -4092,11 +4133,9 @@ local function StyleDockManager()
     if not cf1 or not CFD(cf1).bg then return end
     _euiDockStyled = true
 
-    -- Position above our chat bg (matches old EUI_ChatTabBar position)
-    gdm:ClearAllPoints()
-    local tabPadding = GetTabPadding()
-    gdm:SetPoint("BOTTOMLEFT", CFD(cf1).bg, "TOPLEFT", 0, tabPadding)
-    gdm:SetPoint("BOTTOMRIGHT", CFD(cf1).bg, "TOPRIGHT", 0, tabPadding)
+    -- Position above our chat bg (matches old EUI_ChatTabBar position).
+    -- Numeric, not anchored: see PositionDockManager.
+    ECHAT.PositionDockManager()
     local dockH = GetTabHeight()
     gdm:SetHeight(dockH)
     if _G.GeneralDockManagerScrollFrame then
