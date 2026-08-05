@@ -259,8 +259,16 @@ do
         -- terms and is why two rounds got blamed on unrelated breadcrumbs.
         -- Polling in OnUpdate pins the flip to a single frame, so the gap
         -- recorded by RuntimeAt is meaningful.
+        --
+        -- The same driver re-places the chat panel each frame now that it is
+        -- positioned numerically instead of anchored (see PositionChatPanel).
+        -- Writes only when the rect actually moved, and only ever to OUR
+        -- frame, so it can never dirty Blizzard's chain.
         local watcher = CreateFrame("Frame")
-        watcher:SetScript("OnUpdate", function() ECHAT.TaintCheck(nil) end)
+        watcher:SetScript("OnUpdate", function()
+            ECHAT.TaintCheck(nil)
+            if ECHAT.PositionChatPanels then ECHAT.PositionChatPanels() end
+        end)
     end)
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
@@ -271,7 +279,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C21, extbg CALL skipped too) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C22, panel NUMERIC, all features ON) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -420,13 +428,13 @@ local BISECT_TAB_SKIN_OFF = false
 -- C21 separates exactly those two, one variable:
 --   clean -> the ApplyExtendedBackground call is the injector
 --   dirty -> the sidebar visibility update is
-local BISECT_PAD_EXTBG_CALL_OFF = true
+local BISECT_PAD_EXTBG_CALL_OFF = false  -- C22: RESTORED (full features)
 
-local BISECT_PAD_GDM_OFF = true         -- C20: back to C18 state
+local BISECT_PAD_GDM_OFF = false        -- C22: RESTORED (full features)
 
-local BISECT_TAB_GEOMETRY_OFF = true    -- C20: back to C18 state
+local BISECT_TAB_GEOMETRY_OFF = false   -- C22: RESTORED (full features)
 local BISECT_TAB_PADDING_OFF = false    -- ON (convicted; now being split)
-local BISECT_TAB_BORDERS_OFF = true     -- C20: back to C18 state
+local BISECT_TAB_BORDERS_OFF = false    -- C22: RESTORED (full features)
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
@@ -441,7 +449,7 @@ local BISECT_TAB_BORDERS_OFF = true     -- C20: back to C18 state
 -- en route: gate-4 border engine, gdm anchor ties, sfc pin, BNToast block,
 -- FCFDock_SelectWindow hook, frame HookScripts, temp Skin*, eb anchors,
 -- whisper URL filter.
-local BISECT_EXT_BG_OFF = true          -- C20: back to C18 state
+local BISECT_EXT_BG_OFF = false         -- C22: RESTORED (full features)
 local BISECT_DEFERRED_PASSES_OFF = false -- 6: CLEARED (this cycle)
 local BISECT_EB_ANCHORS_OFF = false     -- 7: CLEARED (this cycle)
 local BISECT_TEX_SHIFT_OFF = false      -- 8: CLEARED (this cycle) -- textures
@@ -1308,6 +1316,63 @@ local function HideSidebarIconTooltip(owner)
         owner._euiSidebarUsesGameTooltip = false
     elseif EUI.HideWidgetTooltip then
         EUI.HideWidgetTooltip()
+    end
+end
+
+-- Numeric placement of the chat panel background.
+--
+-- THE POINT OF THIS FUNCTION. The panel used to be anchored to the chat
+-- frame and its edit box. That single anchor put an insecure frame inside
+-- ChatFrame1's rect chain, and from there any layout touch of ours -- a
+-- SetPoint, a SetShown, even a Hide -- dirtied the chain, so the next time
+-- Blizzard docked a temp window it resolved geometry THROUGH our anchors,
+-- ran tainted, and its FCF_SetLocked write poisoned ChatFrame.isLocked.
+-- Nine bisect rounds kept finding different "sufficient" culprits because
+-- the anchor was the constant and the culprit was only ever the trigger.
+--
+-- Reading the chat frame's rect is safe; anchoring to it is not. So the
+-- panel is positioned from those reads against UIParent instead, which is
+-- the same treatment the tab hosts were given for the same class of bug
+-- (see the host design note above PositionTabHosts).
+function ECHAT.PositionChatPanel(cf)
+    local d = CFD(cf)
+    local bg = d and d.bg
+    if not (bg and cf:IsShown()) then return end
+    local l, t, r, cb = cf:GetLeft(), cf:GetTop(), cf:GetRight(), cf:GetBottom()
+    if not (l and t and r and cb) then return end
+    -- Rects come back in each frame's own space; convert to UIParent's.
+    local ui = UIParent:GetEffectiveScale()
+    if not ui or ui == 0 then return end
+    local cs = cf:GetEffectiveScale() / ui
+    -- Insets recorded by ApplyInputPosition (input above/below, its height).
+    -- Falls back to the creation-time geometry before that has ever run.
+    local ins = d._bgIns
+    local il, ir, it, ib
+    if ins then
+        il, ir, it, ib = ins.l, ins.r, ins.t, ins.b
+    else
+        il, ir, it, ib = -10, 5, 3, -6
+    end
+    local left, top = (l * cs) + il, (t * cs) + it
+    local right, bottom = (r * cs) + ir, (cb * cs) + ib
+    if right - left < 1 or top - bottom < 1 then return end
+    local pl, pt, pr, pb = d._bgL, d._bgT, d._bgR, d._bgB
+    -- Only write when it actually moved: this runs every frame, and a
+    -- redundant SetPoint is still a layout write.
+    if pl and math.abs(pl - left) < 0.05 and math.abs(pt - top) < 0.05
+       and math.abs(pr - right) < 0.05 and math.abs(pb - bottom) < 0.05 then
+        return
+    end
+    d._bgL, d._bgT, d._bgR, d._bgB = left, top, right, bottom
+    bg:ClearAllPoints()
+    bg:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+    bg:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", right, bottom)
+end
+
+function ECHAT.PositionChatPanels()
+    for i = 1, 20 do
+        local cf = _G["ChatFrame" .. i]
+        if cf and _skinned[cf] then ECHAT.PositionChatPanel(cf) end
     end
 end
 
@@ -2324,18 +2389,21 @@ function ECHAT.ApplyInputPosition()
             end
 
             if bg then
-                bg:ClearAllPoints()
-                -- Keep the horizontal panel geometry independent from the
-                -- input position/height. Only the vertical edge may expand.
-                bg:SetPoint("LEFT", cf, "LEFT", -10, 0)
-                bg:SetPoint("RIGHT", cf, "RIGHT", 10, 0)
-                if onTop then
-                    bg:SetPoint("TOP", cf, "TOP", 0, 3 + inputHeight)
-                    bg:SetPoint("BOTTOM", cf, "BOTTOM", 0, -6)
-                else
-                    bg:SetPoint("TOP", cf, "TOP", 0, 3)
-                    bg:SetPoint("BOTTOM", cf, "BOTTOM", 0, eb and -(12 + inputHeight) or -6)
-                end
+                -- The panel is placed NUMERICALLY, not anchored to cf (see
+                -- PositionChatPanel). Record the insets this input layout
+                -- wants and let the positioner apply them against the chat
+                -- frame's rect; anchoring here would put our frame back into
+                -- Blizzard's rect chain, which is the whole bug.
+                -- Horizontal geometry stays independent of input
+                -- position/height; only the vertical edge may expand.
+                local d = CFD(cf)
+                d._bgIns = {
+                    l = -10,
+                    r = 10,
+                    t = onTop and (3 + inputHeight) or 3,
+                    b = onTop and -6 or (eb and -(12 + inputHeight) or -6),
+                }
+                if ECHAT.PositionChatPanel then ECHAT.PositionChatPanel(cf) end
             end
 
             if fsc then
@@ -3930,10 +3998,10 @@ function ECHAT.ApplyTabPadding()
     if not BISECT_PAD_EXTBG_CALL_OFF then
         if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
     end
-    -- Visibility only -- NOT the full ApplySidebarIcons layout chain. See
-    -- ApplySidebarIconVisibility: the chain is taint-risky from a tab pass,
-    -- and this call site only ever needed the fade's shown state.
-    if ECHAT.ApplySidebarIconVisibility then ECHAT.ApplySidebarIconVisibility() end
+    -- Restored to the shipping call for C22: the visibility-only variant was
+    -- tested (C19-C21) and did NOT fix anything, so keeping it here would
+    -- make this build differ from shipping by two changes instead of one.
+    if ECHAT.ApplySidebarIcons then ECHAT.ApplySidebarIcons() end
 end
 
 -- Position and style GeneralDockManager as our tab bar (one-time)
@@ -4191,9 +4259,9 @@ local function SkinChatFrame(cf)
     -- what C5 had to remove.
     if not CFD(cf).bg then
         local bg = CreateFrame("Frame", nil, UIParent)
-        local eb = _G[name .. "EditBox"]
-        bg:SetPoint("TOPLEFT", cf, "TOPLEFT", -10, 3)
-        bg:SetPoint("BOTTOMRIGHT", eb or cf, "BOTTOMRIGHT", 5, eb and -4 or -6)
+        -- NO SetPoint to cf/eb. See PositionChatPanel: the panel is placed
+        -- NUMERICALLY from the chat frame's rect, exactly as the tab hosts
+        -- already are, so nothing of ours sits in Blizzard's rect chain.
         bg:SetFrameStrata(cf:GetFrameStrata())
         bg:SetFrameLevel(max(0, cf:GetFrameLevel() - 1))
         bg:SetShown(cf:IsShown())
