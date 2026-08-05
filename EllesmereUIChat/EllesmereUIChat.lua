@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -350,6 +350,12 @@ local BX = {
     -- carries secrets taints Blizzard's handling of that event.
     cfSidebar     = false,
     cfSbEvents    = false,
+    -- C31. With every other piece of SkinChatFrame gated off it is still
+    -- dirty, and the background frame is the last thing it builds. Note the
+    -- confound found at the same time: SkinChatFrame also CALLS SkinTab, so
+    -- cfSkin was never a clean single variable -- test tabSkin off in this
+    -- configuration before trusting anything cfSkin produced.
+    cfBg          = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -434,14 +440,14 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
     local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true,
         cfFont = true, cfStrip = true, cfReparent = true,
         cfEdit = true, cfMisc = true, cfHide = true,
-        cfSidebar = true, cfSbEvents = true }
+        cfSidebar = true, cfSbEvents = true, cfBg = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -523,7 +529,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C30, the sidebar and its event frames) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C31, the background frame) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -4593,7 +4599,7 @@ local function SkinChatFrame(cf)
     -- anchors still resolve against a hidden chat frame). The watcher owns
     -- both -- deliberately NOT an OnShow hook on the chat frame, which is
     -- what C5 had to remove.
-    if not CFD(cf).bg then
+    if not CFD(cf).bg and not BX.cfBg then
         local bg = CreateFrame("Frame", nil, UIParent)
         -- NO SetPoint to cf/eb. See PositionChatPanel: the panel is placed
         -- NUMERICALLY from the chat frame's rect, exactly as the tab hosts
