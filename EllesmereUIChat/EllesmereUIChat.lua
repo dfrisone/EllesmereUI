@@ -271,6 +271,50 @@ do
         end)
     end)
 
+    -- Flip a bisect flag without a rebuild or a logout.
+    local BX_ORDER = {
+        "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
+        "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
+    }
+    local BX_INITONLY = { tabSkin = true, ebHooks = true }
+    SLASH_EUICHATBISECT1 = "/euichatbisect"
+    SlashCmdList["EUICHATBISECT"] = function(msg)
+        local name, state = msg:match("^%s*(%S+)%s+(%S+)%s*$")
+        if name then
+            local key
+            for _, k in ipairs(BX_ORDER) do
+                if k:lower() == name:lower() then key = k break end
+            end
+            if not key then
+                Say("|cffff5555EUI-BISECT|r unknown flag: " .. tostring(name))
+                return
+            end
+            local on = (state:lower() == "on" or state == "1" or state:lower() == "true")
+            -- "on" means the FEATURE on, i.e. the OFF-flag false. Saying it
+            -- the other way round is how the earlier rounds got miscounted.
+            BX[key] = not on
+            Say(("|cffff5555EUI-BISECT|r %s feature = %s%s"):format(
+                key, on and "|cff00ff00ON|r" or "|cffff5555OFF|r",
+                BX_INITONLY[key] and "  |cffffff00(init-only: needs a full logout)|r" or ""))
+            if not BX_INITONLY[key] then
+                if ECHAT.ApplyTabLayout then ECHAT.ApplyTabLayout() end
+                if ECHAT.ApplyTabPadding then ECHAT.ApplyTabPadding() end
+                if ECHAT.ApplyTabBorders then ECHAT.ApplyTabBorders() end
+                if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
+                Say("  passes re-run.")
+            end
+            return
+        end
+        Say("|cffff5555EUI-BISECT|r  usage: /euichatbisect <flag> on|off")
+        for _, k in ipairs(BX_ORDER) do
+            Say(("  %-13s %s%s"):format(k,
+                BX[k] and "|cffff5555OFF|r" or "|cff00ff00ON|r",
+                BX_INITONLY[k] and "  (init-only)" or ""))
+        end
+        Say("  (ON = the feature is active. Taint is sticky per pool frame --")
+        Say("   whisper a DIFFERENT person to get a fresh ChatFrameN per test.)")
+    end
+
     SLASH_EUICHATTAINT1 = "/euichattaint"
     SlashCmdList["EUICHATTAINT"] = function()
         -- Client uptime stamp. BugSack keeps errors across sessions, and a
@@ -279,7 +323,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C22, panel NUMERIC, all features ON) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C23, C22 fixed + runtime flags) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -324,6 +368,38 @@ end
 -- error attributes to the single flag flipped that cycle. The clip-homed
 -- tab hosts (GetTabHostClip) are the root-cause fix for gate 7A and are
 -- ACTIVE; this build's only new variable vs the clean state.
+
+-------------------------------------------------------------------------------
+-- RUNTIME BISECT FLAGS (diagnostic build only).
+--
+-- Previously these were file-locals, so testing one configuration cost a
+-- build, a full logout and a fresh whisper. As a table they can be flipped
+-- live with /euichatbisect, because every consumer reads the flag at CALL
+-- time rather than capturing it at load. Two exceptions are init-only and
+-- are marked as such in the listing: tabSkin and ebHooks decide what gets
+-- created/hooked once at login, so flipping them mid-session does nothing.
+--
+-- Testing note that matters more than the flags: the taint is STICKY per
+-- pool frame. Once ChatFrame11.isLocked flips, that frame is burned for the
+-- session. A whisper from a DIFFERENT person opens ChatFrame12, which starts
+-- clean, so several configurations can be tested in one session by using a
+-- different conversation partner for each.
+-------------------------------------------------------------------------------
+local BX = {
+    ebHooks       = false,
+    tabSkin       = false,
+    padExtbgCall  = false,
+    padGdm        = false,
+    geometry      = false,
+    padding       = false,
+    borders       = false,
+    extbg         = false,
+    deferred      = false,
+    ebAnchors     = false,
+    texShift      = false,
+}
+ns._BX = BX
+
 -- C9 ran this true and ChatFrame11.isLocked was STILL tainted, with the
 -- breadcrumb falling back to "init-done" -- i.e. with every edit-box hook
 -- absent, nothing of ours ran before the flip at all. **The edit-box hooks
@@ -331,7 +407,7 @@ end
 -- recall, the focus header font, idle reset and hover tracking, and there
 -- is no longer a reason to pay that). Attribution no longer depends on
 -- which breadcrumb is last anyway -- see RuntimeAt's gap measurement.
-local BISECT_EB_HOOKS_OFF = false
+-- (runtime flag: BX.ebHooks, default false)
 
 -- C13 DIAGNOSTIC ONLY, NEVER SHIP TRUE. Disables EVERYTHING this module does
 -- to Blizzard chat tabs, as one halving bisect rather than another
@@ -364,7 +440,7 @@ local BISECT_EB_HOOKS_OFF = false
 --   clean -> it is the tab GEOMETRY writes, which is the tighter story:
 --            PanelTemplates_TabResize sizes the tab itself, so our insecure
 --            width/height/anchor writes are re-measured by Blizzard mid-dock
-local BISECT_TAB_SKIN_OFF = false
+-- (runtime flag: BX.tabSkin, default false)
 
 -- C14 RESULT: CLEAN. SkinTab's visual work (texture stripping, bg/hover
 -- textures on the tab, tab font, conversationIcon) is EXONERATED. The
@@ -412,7 +488,7 @@ local BISECT_TAB_SKIN_OFF = false
 -- C17 RESULT: DIRTY. The gdm re-anchor is NOT the injector either (it stays
 -- gated only to keep the variable count down; restore it after).
 -- Remaining: ApplyTabPadding's two callees. C18 gates ApplyExtendedBackground
--- (BISECT_EXT_BG_OFF below) and keeps ApplySidebarIcons.
+-- (BX.extbg below) and keeps ApplySidebarIcons.
 --   clean -> ApplyExtendedBackground, whose payload includes ns._chatPanelBorder
 --            -- the SAME component the earlier B-ladder convicted at init time
 --            (fixed then by deferring it). A second conviction at a different
@@ -428,13 +504,13 @@ local BISECT_TAB_SKIN_OFF = false
 -- C21 separates exactly those two, one variable:
 --   clean -> the ApplyExtendedBackground call is the injector
 --   dirty -> the sidebar visibility update is
-local BISECT_PAD_EXTBG_CALL_OFF = false  -- C22: RESTORED (full features)
+-- (runtime flag: BX.padExtbgCall, default false)  -- C22: RESTORED (full features)
 
-local BISECT_PAD_GDM_OFF = false        -- C22: RESTORED (full features)
+-- (runtime flag: BX.padGdm, default false)        -- C22: RESTORED (full features)
 
-local BISECT_TAB_GEOMETRY_OFF = false   -- C22: RESTORED (full features)
-local BISECT_TAB_PADDING_OFF = false    -- ON (convicted; now being split)
-local BISECT_TAB_BORDERS_OFF = false    -- C22: RESTORED (full features)
+-- (runtime flag: BX.geometry, default false)   -- C22: RESTORED (full features)
+-- (runtime flag: BX.padding, default false)    -- ON (convicted; now being split)
+-- (runtime flag: BX.borders, default false)    -- C22: RESTORED (full features)
                                         --    dirty with the engine off, so
                                         --    the border engine is not the
                                         --    injector; see ladder below)
@@ -449,10 +525,10 @@ local BISECT_TAB_BORDERS_OFF = false    -- C22: RESTORED (full features)
 -- en route: gate-4 border engine, gdm anchor ties, sfc pin, BNToast block,
 -- FCFDock_SelectWindow hook, frame HookScripts, temp Skin*, eb anchors,
 -- whisper URL filter.
-local BISECT_EXT_BG_OFF = false         -- C22: RESTORED (full features)
-local BISECT_DEFERRED_PASSES_OFF = false -- 6: CLEARED (this cycle)
-local BISECT_EB_ANCHORS_OFF = false     -- 7: CLEARED (this cycle)
-local BISECT_TEX_SHIFT_OFF = false      -- 8: CLEARED (this cycle) -- textures
+-- (runtime flag: BX.extbg, default false)         -- C22: RESTORED (full features)
+-- (runtime flag: BX.deferred, default false) -- 6: CLEARED (this cycle)
+-- (runtime flag: BX.ebAnchors, default false)     -- 7: CLEARED (this cycle)
+-- (runtime flag: BX.texShift, default false)      -- 8: CLEARED (this cycle) -- textures
                                         --    re-anchored to their OWN parent
                                         --    add no dependency edge; anchor +
                                         --    unsnap both have clean alibis
@@ -962,7 +1038,7 @@ end
 -- a BACKGROUND strata keeps it BEHIND the tabs. Because it does not inherit a
 -- chat frame's alpha, _ApplyAlpha fades it directly.
 function ECHAT.ApplyExtendedBackground()
-    if BISECT_EXT_BG_OFF then
+    if BX.extbg then
         if ns._chatBgExt then ns._chatBgExt:Hide() end
         if ns._chatPanelBorder then ns._chatPanelBorder:Hide() end
         if ns._tabPanelBottomSeparatorTex then ns._tabPanelBottomSeparatorTex:Hide() end
@@ -1372,7 +1448,11 @@ end
 function ECHAT.PositionChatPanels()
     for i = 1, 20 do
         local cf = _G["ChatFrame" .. i]
-        if cf and _skinned[cf] then ECHAT.PositionChatPanel(cf) end
+        -- Gate on the panel existing, NOT on _skinned: this function is
+        -- defined above that local, so referencing it here reads a nil
+        -- GLOBAL and throws every frame (3347 errors in one C22 session,
+        -- which is what tripped Blizzard's "too many errors" cutoff).
+        if cf and CFD(cf).bg then ECHAT.PositionChatPanel(cf) end
     end
 end
 
@@ -2363,7 +2443,7 @@ function ECHAT.ApplyInputPosition()
             local fsc = cf.FontStringContainer
             local bar = cf.ScrollBar
 
-            if eb and (i <= 10 or not BISECT_EB_ANCHORS_OFF) then
+            if eb and (i <= 10 or not BX.ebAnchors) then
                 eb:ClearAllPoints()
                 if onTop then
                     -- Grow the shared panel upward instead of placing the
@@ -2414,7 +2494,7 @@ function ECHAT.ApplyInputPosition()
                 fsc:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", 0, 0)
             end
 
-            if bar and (i <= 10 or not BISECT_EB_ANCHORS_OFF) then
+            if bar and (i <= 10 or not BX.ebAnchors) then
                 bar:ClearAllPoints()
                 bar:SetPoint("TOPRIGHT", cf, "TOPRIGHT", 5, -2)
                 bar:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", 5, 2)
@@ -3362,7 +3442,7 @@ local function UpdateTabStyle(tab)
     local visShiftX = isDyn and 0 or 0
     local visShiftY = isDyn and (2 * onePhysPx) or 0
     local visShift = visShiftX + visShiftY * 1000  -- change-detection key
-    if not BISECT_TEX_SHIFT_OFF and d.visShift ~= visShift then
+    if not BX.texShift and d.visShift ~= visShift then
         d.visShift = visShift
         -- Pixel-snap defeats a sub-unit offset: the tab sits at fractional
         -- physical coords, so a snapped texture rounds the shift
@@ -3568,7 +3648,7 @@ end
 -- visual island. Give those tabs the same configurable border as the chat
 -- panel; the unified layout uses only the single outer panel border instead.
 function ECHAT.ApplyTabBorders()
-    if BISECT_TAB_BORDERS_OFF then return end
+    if BX.borders then return end
     local cfg = ECHAT.DB()
     local sync = cfg.syncTabBorder ~= false
     local prefix = sync and "panelBorder" or "tabBorder"
@@ -3648,7 +3728,7 @@ function ECHAT.ApplyTabBorders()
 end
 
 function ECHAT.ApplyTabSeparators()
-    if BISECT_TAB_BORDERS_OFF then return end
+    if BX.borders then return end
     local cfg = ECHAT.DB()
     local showPanelSeparator = cfg.extendBgBehindTabs == true and not cfg.hideBorders
     local showTabDividers = cfg.extendBgBehindTabs == true and not cfg.hideBorders
@@ -3740,7 +3820,7 @@ end
 
 -- One-time reskin of a Blizzard chat tab (strip textures, add our visuals)
 local function SkinTab(cf)
-    if BISECT_TAB_SKIN_OFF then return end   -- C13 bisect, diagnostic only
+    if BX.tabSkin then return end   -- C13 bisect, diagnostic only
     local name = cf:GetName()
     if not name then return end
     local tab = _G[name .. "Tab"]
@@ -3773,7 +3853,7 @@ local function SkinTab(cf)
     -- Some tab implementations use _G[name.."TabText"] instead of tab.Text.
     CFD(tab).tabText = tab.Text or _G[name .. "TabText"]
     tab:SetPushedTextOffset(0, 0)
-    if not BISECT_TAB_GEOMETRY_OFF then
+    if not BX.geometry then
         tab:SetHeight(GetTabHeight())
     end
 
@@ -3846,7 +3926,7 @@ local function SkinTab(cf)
 end
 
 function ECHAT.ApplyTabSpacing()
-    if BISECT_TAB_GEOMETRY_OFF then return end
+    if BX.geometry then return end
     if not GENERAL_CHAT_DOCK or not GENERAL_CHAT_DOCK.DOCKED_CHAT_FRAMES then return end
     local cfg = ECHAT.DB()
     local configured = cfg.tabSpacing == nil and 1 or cfg.tabSpacing
@@ -3890,7 +3970,7 @@ end
 -- drawn elements (bg/hover/text/hosts) on dynamic tabs; the Blizzard tab
 -- frame itself is never moved.
 function ECHAT.ApplyTabLayout()
-    if BISECT_TAB_GEOMETRY_OFF then
+    if BX.geometry then
         if ECHAT.ApplyTabBorders then ECHAT.ApplyTabBorders() end
         if ECHAT.ApplyTabPadding then ECHAT.ApplyTabPadding() end
         if ECHAT.PositionTabHosts then ECHAT.PositionTabHosts() end
@@ -3961,7 +4041,7 @@ function ECHAT.ApplyTabLayout()
 end
 
 function ECHAT.ApplyTabPadding()
-    if BISECT_TAB_PADDING_OFF then return end
+    if BX.padding then return end
     local gdm = _G.GeneralDockManager
     local cf1 = _G.ChatFrame1
     local bg = cf1 and CFD(cf1).bg
@@ -3971,7 +4051,7 @@ function ECHAT.ApplyTabPadding()
     -- re-runs on every tab pass -- i.e. it can land inside a dock pass. Same
     -- content, different timing, which is exactly the distinction that
     -- convicted ApplyBorders in the earlier ladder.
-    if BISECT_PAD_GDM_OFF then gdm = nil end
+    if BX.padGdm then gdm = nil end
     if gdm and bg then
         local padding = GetTabPadding()
         local cfg = ECHAT.DB()
@@ -3991,11 +4071,11 @@ function ECHAT.ApplyTabPadding()
             gdm:SetPoint("BOTTOMRIGHT", bg, "TOPRIGHT", offX, padding)
         end
     end
-    -- C21: skip the CALL, not just its body. BISECT_EXT_BG_OFF only makes
+    -- C21: skip the CALL, not just its body. BX.extbg only makes
     -- ApplyExtendedBackground return early, and its early-return path still
     -- Hide()s three of our frames on every pass -- so C18/C20 never actually
     -- removed this call's side effects.
-    if not BISECT_PAD_EXTBG_CALL_OFF then
+    if not BX.padExtbgCall then
         if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
     end
     -- Restored to the shipping call for C22: the visibility-only variant was
@@ -4065,7 +4145,7 @@ local function SkinEditBox(cf)
     -- Position flush below chat frame (8.5.2 did this for ALL frames
     -- incl. temp 11+; gate 7 of the bisect ladder holds 11+ untouched
     -- until its clearing cycle).
-    if idx <= 10 or not BISECT_EB_ANCHORS_OFF then
+    if idx <= 10 or not BX.ebAnchors then
         eb:ClearAllPoints()
         eb:SetPoint("TOPLEFT", cf, "BOTTOMLEFT", -10, -8)
         eb:SetPoint("TOPRIGHT", cf, "BOTTOMRIGHT", 5, -8)
@@ -4094,7 +4174,7 @@ local function SkinEditBox(cf)
             editBox.headerSuffix:SetFont(GetEditBoxFont(), sz, ol)
         end
     end
-    if idx <= 10 or not BISECT_EB_ANCHORS_OFF then
+    if idx <= 10 or not BX.ebAnchors then
         ApplyEditBoxHeaderFont(eb)
     end
 
@@ -4106,7 +4186,7 @@ local function SkinEditBox(cf)
     -- docked frames (1-10) are safe to hook; temp windows (11+) get visual
     -- skinning only. (This matches the function header's stated intent and the
     -- 1-10 header-font gate in ECHAT.ApplyFonts.)
-    if idx <= 10 and not BISECT_EB_HOOKS_OFF then
+    if idx <= 10 and not BX.ebHooks then
         eb:HookScript("OnEditFocusGained", function(self)
             ECHAT.TaintMark("eb-focus-gained-headerfont")
             ApplyEditBoxHeaderFont(self)
@@ -4778,7 +4858,7 @@ local function SkinChatFrame(cf)
         -- native chain includes this button; anchoring to our bg (which
         -- wraps the eb) would be an anchor cycle there.
         local rbIdx = tonumber(name:match("ChatFrame(%d+)"))
-        local rbAnchor = (BISECT_EB_ANCHORS_OFF and rbIdx and rbIdx > 10) and cf or CFD(cf).bg
+        local rbAnchor = (BX.ebAnchors and rbIdx and rbIdx > 10) and cf or CFD(cf).bg
         resizeBtn:SetPoint("BOTTOMRIGHT", rbAnchor, "BOTTOMRIGHT", -2, 2)
         resizeBtn:SetFrameStrata("HIGH")
         if resizeBtn.GetRegions then
@@ -5080,7 +5160,7 @@ initFrame:SetScript("OnEvent", function(self)
                 SkinTab(cf)
                 -- Re-enforce height (Blizzard resets it on temp window creation)
                 local tab = _G["ChatFrame" .. i .. "Tab"]
-                if tab and CFD(tab).skinned and not BISECT_TAB_GEOMETRY_OFF then
+                if tab and CFD(tab).skinned and not BX.geometry then
                     tab:SetHeight(GetTabHeight())
                 end
             end
@@ -5209,7 +5289,7 @@ initFrame:SetScript("OnEvent", function(self)
     -- flash on dock passes, accepted over the taint.
     local _tabPassQueued = false
     local function QueueTabPass()
-        if BISECT_DEFERRED_PASSES_OFF then return end
+        if BX.deferred then return end
         if _tabPassQueued then return end
         _tabPassQueued = true
         C_Timer.After(0, function()
@@ -5219,7 +5299,7 @@ initFrame:SetScript("OnEvent", function(self)
         end)
     end
     ECHAT.QueueTabPass = QueueTabPass
-    if not BISECT_DEFERRED_PASSES_OFF then
+    if not BX.deferred then
         -- The yellow-reset moments (login passes, zone transitions, dock
         -- config loads) all coincide with these events on our own frame --
         -- outside Blizzard's dispatch, deferred one tick.
@@ -5463,7 +5543,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- (11+) taints its execution context and poisons HistoryKeeper on
         -- BN_WHISPER. Temp windows do not exist at login, but a /reload with a
         -- conversation window open could expose them here, so gate it.
-        for i = 1, (BISECT_EB_HOOKS_OFF and 0 or 10) do
+        for i = 1, (BX.ebHooks and 0 or 10) do
             local eb = _G["ChatFrame" .. i .. "EditBox"]
             if eb then
                 eb:HookScript("OnEditFocusGained", function(...)
@@ -5681,7 +5761,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Edit box focus tracking -- only ChatFrame1 (permanent, no secret
         -- values). Hooking temp whisper edit boxes (11+) taints their
         -- execution context, causing secret value errors on BN_WHISPER tellTarget.
-        local eb1 = not BISECT_EB_HOOKS_OFF and _G["ChatFrame1EditBox"]
+        local eb1 = not BX.ebHooks and _G["ChatFrame1EditBox"]
         if eb1 then
             eb1:HookScript("OnEditFocusGained", function()
                 ECHAT.TaintMark("eb-focus-gained-hover")
