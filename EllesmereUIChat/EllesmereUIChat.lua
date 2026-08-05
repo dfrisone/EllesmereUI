@@ -238,7 +238,8 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "geometry", "padding", "borders", "extbg", "padGdm",
+local FLAG_ORDER = { "cfSkin", "panelPos",
+    "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
     local bx = ns._BX
@@ -313,6 +314,15 @@ end
 -- in the next block writes to it, and a file-local declared after the block
 -- that uses it is a nil GLOBAL there (the C22 crash, repeated on C23).
 local BX = {
+    -- C27. Everything the previous eleven flags cover was switched off from
+    -- login and the whisper still tainted, with the breadcrumb falling back
+    -- to init-done -- i.e. no callback of ours ran anywhere near it. So the
+    -- injector is in code no gate reached. These two are the large ungated
+    -- blocks: the chat-frame reskin itself, and the per-frame numeric
+    -- positioner added in C22/C24, which did not exist when C13 last read
+    -- clean and writes layout continuously.
+    cfSkin        = false,
+    panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
     padExtbgCall  = false,
@@ -395,10 +405,11 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
+        "cfSkin", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
-    local BX_INITONLY = { tabSkin = true, ebHooks = true }
+    local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -480,7 +491,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C26, flags persist across reloads) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C27, gates the reskin and the positioner) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -1617,6 +1628,7 @@ function ECHAT.PositionChatPanel(cf)
 end
 
 function ECHAT.PositionChatPanels()
+    if BX.panelPos then return end
     for i = 1, 20 do
         local cf = _G["ChatFrame" .. i]
         -- Gate on the panel existing, NOT on _skinned: this function is
@@ -4231,6 +4243,7 @@ end
 -- an EUI frame. Placing it numerically from the same rect reads leaves
 -- nothing of Blizzard's resolving through anything of ours.
 function ECHAT.PositionDockManager()
+    if BX.panelPos then return end
     local gdm = _G.GeneralDockManager
     local cf1 = _G.ChatFrame1
     local d = cf1 and CFD(cf1)
@@ -4514,6 +4527,7 @@ local function SkinEditBox(cf)
 end
 
 local function SkinChatFrame(cf)
+    if BX.cfSkin then return end
     if not cf or _skinned[cf] then return end
     _skinned[cf] = true
     _alphaFrames = nil
