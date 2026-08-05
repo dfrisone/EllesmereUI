@@ -172,6 +172,35 @@ function ECHAT.TaintMarkWhisper(event)
     _wOpen = w
 end
 
+-- Watch the temp-window POOL directly instead of trusting the whisper filter.
+--
+-- The filter route is blind by design: Blizzard wraps every message filter in
+-- a canaccessvalue guard, so a whisper carrying a secret name -- i.e. every
+-- whisper that matters here -- never reaches the callback. That is why dumps
+-- kept reading "whisper windows: none seen" during sessions that were plainly
+-- full of whispers, and it is what made me announce that the whisper was not
+-- the trigger. It was; the instrument could not see it.
+--
+-- Polling costs nothing and cannot be lied to: a temp window appearing or
+-- being shown IS the event we care about, whatever the message carried.
+-- Existence and IsShown() only -- inUse/chatTarget can be SECRET, and a
+-- boolean test on a secret from our tainted context throws.
+local _poolLive = {}
+function ECHAT.PoolWatch()
+    for i = 11, 20 do
+        local cf = _G["ChatFrame" .. i]
+        local live = (cf ~= nil) and cf:IsShown()
+        if live and not _poolLive[i] then
+            _poolLive[i] = true
+            if ECHAT.TaintMarkWhisper then
+                ECHAT.TaintMarkWhisper("ChatFrame" .. i .. " opened")
+            end
+        elseif not live and _poolLive[i] then
+            _poolLive[i] = nil
+        end
+    end
+end
+
 local function DumpCrumbs(Say)
     if _wOpen and GetTime() - _wOpen.t0 > WHISPER_WINDOW then SealWhisperWindow() end
     if _wCount == 0 then
@@ -318,6 +347,7 @@ do
         local watcher = CreateFrame("Frame")
         watcher:SetScript("OnUpdate", function()
             ECHAT.TaintCheck(nil)
+            if ECHAT.PoolWatch then ECHAT.PoolWatch() end
             if ECHAT.PositionChatPanels then ECHAT.PositionChatPanels() end
         end)
     end)
@@ -398,7 +428,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C25b, trigger + frame census) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C25c, pool watch replaces the blind filter) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r"):format(FlagState()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
