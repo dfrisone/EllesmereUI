@@ -327,6 +327,45 @@ local BX = {
 }
 ns._BX = BX
 
+-- Flags PERSIST across reloads.
+--
+-- Without this the two init-only flags (tabSkin, ebHooks) are untestable:
+-- they decide what gets created at login, but a reload -- the only way to
+-- re-run init -- resets every flag to its default first. Persisting the
+-- configuration lets it survive the reload that init needs.
+--
+-- Restored on ADDON_LOADED, which fires before PLAYER_LOGIN and therefore
+-- before any init pass reads a flag. Stored on the SavedVariable root rather
+-- than in the profile, so it can never ride along in a profile export.
+local function SaveFlags()
+    local db = _G.EllesmereUIChatDB
+    if type(db) ~= "table" then return end
+    local t = {}
+    for k, v in pairs(BX) do t[k] = v end
+    db._bisect = t
+end
+
+do
+    local loader = CreateFrame("Frame")
+    loader:RegisterEvent("ADDON_LOADED")
+    loader:SetScript("OnEvent", function(self, _, name)
+        if name ~= addonName then return end
+        self:UnregisterAllEvents()
+        local db = _G.EllesmereUIChatDB
+        local saved = type(db) == "table" and db._bisect
+        if type(saved) == "table" then
+            local restored = false
+            for k, v in pairs(saved) do
+                if BX[k] ~= nil then
+                    BX[k] = v and true or false
+                    if BX[k] then restored = true end
+                end
+            end
+            ns._bxRestored = restored
+        end
+    end)
+end
+
 do
     local probe = CreateFrame("Frame")
     probe:RegisterEvent("PLAYER_LOGIN")
@@ -346,8 +385,10 @@ do
         -- frame, so it can never dirty Blizzard's chain.
         local watcher = CreateFrame("Frame")
         watcher:SetScript("OnUpdate", function()
-            ECHAT.TaintCheck(nil)
+            -- PoolWatch FIRST: a flip detected on the same tick the window
+            -- appears was being stamped "no whisper yet this session".
             if ECHAT.PoolWatch then ECHAT.PoolWatch() end
+            ECHAT.TaintCheck(nil)
             if ECHAT.PositionChatPanels then ECHAT.PositionChatPanels() end
         end)
     end)
@@ -360,6 +401,16 @@ do
     local BX_INITONLY = { tabSkin = true, ebHooks = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
+        -- Persisted flags are a foot-gun without a one-word way out: a
+        -- configuration left on disk would silently shape every later
+        -- session, including ones nobody thinks are a test.
+        if msg:match("^%s*reset%s*$") then
+            for _, k in ipairs(BX_ORDER) do BX[k] = false end
+            SaveFlags()
+            Say("|cffff5555EUI-BISECT|r all features ON, persisted state cleared."
+                .. " |cffffff00/reload|r for the init-only ones.")
+            return
+        end
         local name, state = msg:match("^%s*(%S+)%s+(%S+)%s*$")
         if name then
             local key
@@ -374,9 +425,10 @@ do
             -- "on" means the FEATURE on, i.e. the OFF-flag false. Saying it
             -- the other way round is how the earlier rounds got miscounted.
             BX[key] = not on
+            SaveFlags()
             Say(("|cffff5555EUI-BISECT|r %s feature = %s%s"):format(
                 key, on and "|cff00ff00ON|r" or "|cffff5555OFF|r",
-                BX_INITONLY[key] and "  |cffffff00(init-only: needs a full logout)|r" or ""))
+                BX_INITONLY[key] and "  |cffffff00(init-only: /reload to apply -- the flag now survives it)|r" or ""))
             -- DELIBERATELY DOES NOT RUN THE PASSES ANY MORE. It used to, and
             -- that made the first command of a session run every pass with
             -- the OTHER flags still at their defaults -- so the trigger fired
@@ -394,8 +446,8 @@ do
                 BX[k] and "|cffff5555OFF|r" or "|cff00ff00ON|r",
                 BX_INITONLY[k] and "  (init-only)" or ""))
         end
-        Say("  (ON = the feature is active. Taint is sticky per pool frame --")
-        Say("   whisper a DIFFERENT person to get a fresh ChatFrameN per test.)")
+        Say("  (ON = the feature is active. Flags PERSIST across reloads --")
+        Say("   /euichatbisect reset to clear. Round: /reload, dump, whisper, dump.)")
     end
 
     -- THE TRIGGER, on demand.
@@ -428,8 +480,9 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C25c, pool watch replaces the blind filter) uptime=%.1f"):format(GetTime()))
-        Say(("  config now: |cffffff00%s|r"):format(FlagState()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C26, flags persist across reloads) uptime=%.1f"):format(GetTime()))
+        Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
+            ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
