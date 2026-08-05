@@ -161,7 +161,14 @@ function ECHAT.TaintMarkWhisper(event)
     SealWhisperWindow()
     _wCount = _wCount + 1
     local t0 = GetTime()
-    local w = { t0 = t0, event = tostring(event), n = _wCount, crumbs = {} }
+    -- C43: stamp the fade/passthrough state AT the mark. Round E (full sweep
+    -- on, clean) contradicted round 4 (same config, dirty) because the sweep
+    -- only ACTS while the chat is idle-faded to zero -- and reading the dump
+    -- wakes the chat, so every rapid-fire round ran with the sweep dormant
+    -- and measured nothing. A round without this stamp cannot claim anything
+    -- about fade-conditional code.
+    local w = { t0 = t0, event = tostring(event), n = _wCount, crumbs = {},
+        pt = ns._chatPassthrough and true or false, alpha = ns._chatAlphaCur }
     local n = math.min(_preAt, PRE_MAX)
     for i = n, 1, -1 do
         local c = _pre[(_preAt - i) % PRE_MAX + 1]
@@ -211,8 +218,10 @@ local function DumpCrumbs(Say)
         :format(_wCount, #_wKept))
     for i = 1, #_wKept do
         local w = _wKept[i]
-        Say(("  #%d %s -- %d callback(s) within %.2fs")
-            :format(w.n, w.event, #w.crumbs, WHISPER_WINDOW))
+        Say(("  #%d %s -- %d callback(s) within %.2fs  [%s]")
+            :format(w.n, w.event, #w.crumbs, WHISPER_WINDOW,
+                w.pt and ("|cffff5555FADED, passthrough ON, alpha=" .. tostring(w.alpha or "?") .. "|r")
+                     or "chat awake -- sweep dormant, fade-conditional code did not run"))
         if #w.crumbs == 0 then
             Say("     |cff00ff00(nothing of ours ran)|r")
         end
@@ -238,7 +247,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "ptEngage", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -430,6 +439,14 @@ local BX = {
     swTab         = false,
     swSmf         = false,
     swCfEb        = false,
+    -- C43. Round E (full sweep, clean) vs round 4 (same config, dirty):
+    -- the uncontrolled variable was FADE STATE -- the sweep and the engage
+    -- path act only while the chat is idle-faded to zero, and reading the
+    -- dump wakes the chat, so the B-E sweep rounds all ran dormant and are
+    -- VOID. ptEngage gates the engage-path PassthroughFrames call
+    -- (SetChatMousePassthrough), which passSweep never covered; the
+    -- restore direction always runs.
+    ptEngage      = false,
     -- C40. alphaDrv off alone stayed dirty. Re-diffing the control pair
     -- surfaced a consumer created at LOGIN, not at the open, which is why
     -- the open-tick trace never spotlighted it: the hover overlay -- an
@@ -537,7 +554,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "ptEngage", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -658,7 +675,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C42, splits the sweep by target) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C43, fade-state stamps) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -717,6 +734,9 @@ do
         Say(("  whisper filter: registered=%s calls=%d")
             :format(tostring(ECHAT._whisperFilterRegistered or false),
                     ECHAT._whisperFilterCalls or 0))
+        Say(("  passthrough now: %s (alpha %s)")
+            :format(ns._chatPassthrough and "|cffff5555ENGAGED|r" or "off",
+                    tostring(ns._chatAlphaCur or "?")))
         DumpCrumbs(Say)
         if ECHAT.DumpBgReads then ECHAT.DumpBgReads(Say) end
     end
@@ -3189,7 +3209,12 @@ local function SetChatMousePassthrough(on)
     if _chatPassthrough == on then return end
     _chatPassthrough = on
     ns._chatPassthrough = on
-    PassthroughFrames(on)
+    -- ptEngage (C43): this call is the ENGAGE path -- it PMOffs every
+    -- Blizzard chat widget the moment the fade reaches zero, and passSweep
+    -- never gated it (that flag only covers the RE-sweep). Restore
+    -- (on=false) always runs so a disabled feature cannot strand widgets
+    -- mouse-dead.
+    if not on or not BX.ptEngage then PassthroughFrames(on) end
     if on then
         if not _visChatVisible then SetChatStackShown(false) end
         local cf1 = _G.ChatFrame1
@@ -3242,6 +3267,7 @@ end
 
 local function _ApplyAlpha(alpha)
     _chatAlphaCurrent = alpha
+    ns._chatAlphaCur = alpha
     -- alphaDrv (C39): everything below writes alpha onto BLIZZARD's chat
     -- frame and edit box for every frame that has a panel -- bg-conditional,
     -- so it never ran in the clean rounds. The gate sits after the current-
