@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -389,6 +389,17 @@ local BX = {
     -- anchor -- and FCF_SetLocked runs more than once per temp-window open.
     cfResize      = false,
     ebWrites      = false,
+    -- C38. cfResize off (eb writes live) was DIRTY and ebWrites off (resize
+    -- block live) was DIRTY -- each single removal left the other suspect
+    -- running, so nothing is exonerated yet: two independently-sufficient
+    -- injectors fit every result. The interaction round (both off) decides
+    -- that. This third gate covers the remaining bg-conditional anchor
+    -- neither flag touches: the input divider -- OUR texture, created on the
+    -- panel but SetPoint'd onto Blizzard's chat frame, in SkinChatFrame and
+    -- again in ApplyInputPosition. The panel's own comment calls anchoring
+    -- ours into cf's rect chain "the whole bug", and the divider still does
+    -- exactly that; the trace shows its creation ran at the open tick.
+    divWrites     = false,
     -- C35/C36: not a feature gate, and no longer reachable from
     -- /euichatbisect. Every flag in that command means "feature off when
     -- true", and a diagnostic switch borrowed that polarity and cost a round
@@ -485,7 +496,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -494,7 +505,7 @@ do
         cfEdit = true, cfMisc = true, cfHide = true,
         cfSidebar = true, cfSbEvents = true, cfBg = true,
         cfBgLevel = true, cfBgReg = true, cfResize = true,
-        ebWrites = true, dockSize = true,
+        ebWrites = true, divWrites = true, dockSize = true,
         dockStyle = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
@@ -606,7 +617,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C37, resize anchor + eb writes split) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C38, the input divider) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -2804,7 +2815,7 @@ function ECHAT.ApplyInputPosition()
                 eb:SetHeight(inputHeight)
             end
 
-            if div then
+            if div and not BX.divWrites then
                 div:ClearAllPoints()
                 if onTop then
                     div:SetPoint("TOPLEFT", cf, "TOPLEFT", -10, 3)
@@ -5184,7 +5195,7 @@ local function SkinChatFrame(cf)
     -- Guarded because cfBgReg leaves the panel unpublished: an unguarded
     -- index here threw and ABORTED the rest of SkinChatFrame, which would
     -- have made that round read clean for the wrong reason.
-    if not CFD(cf).inputDiv and CFD(cf).bg then
+    if not CFD(cf).inputDiv and CFD(cf).bg and not BX.divWrites then
         local onePx = (PP and PP.mult) or 1
         local div = CFD(cf).bg:CreateTexture(nil, "OVERLAY", nil, 7)
         div._euiOwned = true
