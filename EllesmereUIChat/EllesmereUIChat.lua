@@ -363,14 +363,16 @@ ns._BX = BX
 -- configuration lets it survive the reload that init needs.
 --
 -- Restored on ADDON_LOADED, which fires before PLAYER_LOGIN and therefore
--- before any init pass reads a flag. Stored on the SavedVariable root rather
--- than in the profile, so it can never ride along in a profile export.
+-- before any init pass reads a flag.
+--
+-- Its OWN SavedVariable, not a key on EllesmereUIChatDB. That table is
+-- managed by EUI.Lite.NewDB, which rebuilds it, so a foreign key on it
+-- survives a /reload but is dropped on a real save cycle -- which silently
+-- turned a full-logout round into "all features ON" and cost a round.
 local function SaveFlags()
-    local db = _G.EllesmereUIChatDB
-    if type(db) ~= "table" then return end
     local t = {}
     for k, v in pairs(BX) do t[k] = v end
-    db._bisect = t
+    _G.EllesmereUIChatBisectDB = t
 end
 
 do
@@ -379,8 +381,7 @@ do
     loader:SetScript("OnEvent", function(self, _, name)
         if name ~= addonName then return end
         self:UnregisterAllEvents()
-        local db = _G.EllesmereUIChatDB
-        local saved = type(db) == "table" and db._bisect
+        local saved = _G.EllesmereUIChatBisectDB
         if type(saved) == "table" then
             local restored = false
             for k, v in pairs(saved) do
@@ -511,7 +512,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C29, the rest of the reskin) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C29b, flags in their own saved variable) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do

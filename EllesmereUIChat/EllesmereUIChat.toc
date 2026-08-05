@@ -6,7 +6,7 @@
 ## Author: Ellesmere
 ## Version: 8.7.4
 ## Dependencies: EllesmereUI
-## SavedVariables: EllesmereUIChatDB
+## SavedVariables: EllesmereUIChatDB, EllesmereUIChatBisectDB
 ## SavedVariablesPerCharacter: EllesmereUIChatScrollDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 
