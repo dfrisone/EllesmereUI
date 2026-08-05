@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -413,6 +413,17 @@ local BX = {
     alphaDrv      = false,
     tickerBg      = false,
     posCall       = false,
+    -- C40. alphaDrv off alone stayed dirty. Re-diffing the control pair
+    -- surfaced a consumer created at LOGIN, not at the open, which is why
+    -- the open-tick trace never spotlighted it: the hover overlay -- an
+    -- insecure frame SetPoint'd to GeneralDockManager, created only
+    -- `if bg1 and gdm`, so it existed in every dirty round and never in a
+    -- clean one, and it sits tied into gdm's rect web while the dock pass
+    -- resizes gdm during every temp-window open. The original ladder
+    -- verdict was "anchor TIES poison the secure dock pass" -- direction
+    -- unspecified; the later "ours->theirs is safe" refinement never
+    -- tested THIS frame.
+    hoverOv       = false,
     -- C35/C36: not a feature gate, and no longer reachable from
     -- /euichatbisect. Every flag in that command means "feature off when
     -- true", and a diagnostic switch borrowed that polarity and cost a round
@@ -509,7 +520,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -518,8 +529,8 @@ do
         cfEdit = true, cfMisc = true, cfHide = true,
         cfSidebar = true, cfSbEvents = true, cfBg = true,
         cfBgLevel = true, cfBgReg = true, cfResize = true,
-        ebWrites = true, divWrites = true, dockSize = true,
-        dockStyle = true }
+        ebWrites = true, divWrites = true, hoverOv = true,
+        dockSize = true, dockStyle = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -630,7 +641,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C39, the panel's consumers) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C40, the hover overlay) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -6136,7 +6147,7 @@ initFrame:SetScript("OnEvent", function(self)
             local gdm = _G.GeneralDockManager
             local bg1 = CFD(cf1).bg
             local sb = CFD(cf1).sidebar
-            if bg1 and gdm then
+            if bg1 and gdm and not BX.hoverOv then
                 local overlay = CreateFrame("Frame", nil, UIParent)
                 ns._chatHoverOverlay = overlay
                 overlay:SetPoint("TOPLEFT", gdm, "TOPLEFT", sb and -40 or 0, 0)
