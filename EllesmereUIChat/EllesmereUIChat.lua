@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -400,6 +400,19 @@ local BX = {
     -- ours into cf's rect chain "the whole bug", and the divider still does
     -- exactly that; the trace shows its creation ran at the open tick.
     divWrites     = false,
+    -- C39. All three anchor classes off TOGETHER (resize, eb/bar/fsc, div)
+    -- and still dirty at the open, while unpublished stays clean -- so the
+    -- injector is a CONSUMER that finds the panel via CFD(cf).bg and does
+    -- something other than anchor into Blizzard's rect chain. Mechanical
+    -- enumeration of the remaining bg-conditional consumers with Blizzard
+    -- writes: the fade driver (_ApplyAlpha writes cf/eb alpha; the fade
+    -- alpha 0.157 has sat in EVERY captured error's locals as oldAlpha),
+    -- the passthrough sweep (EnableMouse on cf/eb/ScrollBar/tab; passSweep
+    -- gate exists, never tested), the ticker's strata/level/SetShown
+    -- re-asserts, and the ungated singular PositionChatPanel call.
+    alphaDrv      = false,
+    tickerBg      = false,
+    posCall       = false,
     -- C35/C36: not a feature gate, and no longer reachable from
     -- /euichatbisect. Every flag in that command means "feature off when
     -- true", and a diagnostic switch borrowed that polarity and cost a round
@@ -496,7 +509,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -617,7 +630,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C38, the input divider) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C39, the panel's consumers) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -1759,6 +1772,9 @@ end
 -- the same treatment the tab hosts were given for the same class of bug
 -- (see the host design note above PositionTabHosts).
 function ECHAT.PositionChatPanel(cf)
+    -- posCall (C39): panelPos only ever gated the PLURAL driver; the direct
+    -- call from ApplyInputPosition reaches this singular ungated.
+    if BX.posCall then return end
     local d = CFD(cf)
     local bg = d and d.bg
     if not (bg and cf:IsShown()) then return end
@@ -3167,6 +3183,11 @@ end
 
 local function _ApplyAlpha(alpha)
     _chatAlphaCurrent = alpha
+    -- alphaDrv (C39): everything below writes alpha onto BLIZZARD's chat
+    -- frame and edit box for every frame that has a panel -- bg-conditional,
+    -- so it never ran in the clean rounds. The gate sits after the current-
+    -- alpha bookkeeping so the fade state machine stays consistent.
+    if BX.alphaDrv then return end
     SetChatMousePassthrough(alpha <= 0)
     if not _alphaFrames then _BuildAlphaCache() end
     -- Dock manager: once, outside the loop. The tabs are its children and
@@ -5679,7 +5700,7 @@ initFrame:SetScript("OnEvent", function(self)
                 -- hidden frame, which would leave the panel floating.
                 local d = cf and CFD(cf)
                 local bg = d and d.bg
-                if bg then
+                if bg and not BX.tickerBg then
                     local want = cf:IsShown()
                     if bg:IsShown() ~= want then bg:SetShown(want) end
                     if want then
