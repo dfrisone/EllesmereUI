@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "bgTrace", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -375,6 +375,11 @@ local BX = {
     -- which early-returns unless CFD(cf1).bg exists. dockSize covered only its
     -- SetHeight calls; the whole function has never been disabled.
     dockStyle     = false,
+    -- C35: not a feature gate. Turning this ON makes every read of
+    -- CFD(cf).bg record a traceback, so the dump NAMES the consumers instead
+    -- of me listing candidates from memory -- which has now missed three
+    -- times running (sidebar events, dock resize, dock styler).
+    bgTrace       = false,
     -- The other consumers bg unlocks that write nothing to Blizzard but do
     -- run: the mouse-passthrough sweep and the idle-fade alpha driver.
     passSweep     = false,
@@ -462,7 +467,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "bgTrace", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -553,7 +558,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C34, the whole dock styler) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C35, traces who reads the panel) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -613,6 +618,7 @@ do
             :format(tostring(ECHAT._whisperFilterRegistered or false),
                     ECHAT._whisperFilterCalls or 0))
         DumpCrumbs(Say)
+        if ECHAT.DumpBgReads then ECHAT.DumpBgReads(Say) end
     end
 end
 
@@ -849,9 +855,48 @@ local min, max, floor, ceil, abs = min, max, floor, ceil, math.abs
 -- properties onto Blizzard's chat frame tables (which taints them and causes
 -- HistoryKeeper errors in protected instances).
 local _cfd = {}
+-- Who reads the chat panel?
+--
+-- bg is convicted (absent = clean, present = dirty) but every attempt to name
+-- the CONSUMER that its existence unlocks has been a guess, and the guesses
+-- keep missing. With bgTrace on, the panel is stored under a private key and
+-- exposed through __index, so each distinct read site is recorded with a
+-- traceback the moment it happens. Unique call sites only, so a per-frame
+-- reader costs one entry, not thousands.
+local _bgReads, _bgReadN = {}, 0
+local _bgMeta = {
+    __index = function(t, k)
+        if k ~= "bg" then return nil end
+        local where = debugstack(2, 1, 0)
+        if where and not _bgReads[where] then
+            _bgReads[where] = (_bgReadN < 40) and GetTime() or nil
+            _bgReadN = _bgReadN + 1
+        end
+        return rawget(t, "__bg")
+    end,
+    __newindex = function(t, k, v)
+        if k == "bg" then rawset(t, "__bg", v) else rawset(t, k, v) end
+    end,
+}
+function ECHAT.DumpBgReads(Say)
+    if not ns._BX or not ns._BX.bgTrace then
+        Say("  bg reads: |cff888888tracing off (/euichatbisect bgTrace on)|r")
+        return
+    end
+    Say(("|cffff5555EUI-TAINT|r bg read sites (%d unique):"):format(_bgReadN))
+    for where, t in pairs(_bgReads) do
+        Say(("  |cffffff00t=%.1f|r %s"):format(t or 0,
+            (where:gsub("%s+", " <- "):gsub("Interface/AddOns/", ""))))
+    end
+end
+
 local function CFD(cf)
     local d = _cfd[cf]
-    if not d then d = {}; _cfd[cf] = d end
+    if not d then
+        d = {}
+        if ns._BX and ns._BX.bgTrace then setmetatable(d, _bgMeta) end
+        _cfd[cf] = d
+    end
     return d
 end
 EllesmereUI._chatCFD = CFD
