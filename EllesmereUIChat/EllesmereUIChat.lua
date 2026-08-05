@@ -544,7 +544,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C33, the dock resize) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C33b, dock resize + bg guard) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -5072,7 +5072,10 @@ local function SkinChatFrame(cf)
     end
 
     -- Horizontal divider above input field
-    if not CFD(cf).inputDiv then
+    -- Guarded because cfBgReg leaves the panel unpublished: an unguarded
+    -- index here threw and ABORTED the rest of SkinChatFrame, which would
+    -- have made that round read clean for the wrong reason.
+    if not CFD(cf).inputDiv and CFD(cf).bg then
         local onePx = (PP and PP.mult) or 1
         local div = CFD(cf).bg:CreateTexture(nil, "OVERLAY", nil, 7)
         div._euiOwned = true
