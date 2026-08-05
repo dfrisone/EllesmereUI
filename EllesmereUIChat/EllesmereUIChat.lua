@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -418,6 +418,18 @@ local BX = {
     -- memo + ClearAllPoints/SetPoint are skipped (mechanism probe).
     posSync       = false,
     posWrite      = false,
+    -- C42. Walk-back round 4: passSweep back on from the measured-clean
+    -- base -> DIRTY. The passthrough sweep is a SECOND independent
+    -- injector (the multi-injector rule pays off again). It is already
+    -- C_Timer.After(0)-deferred, so the defer-one-frame shape is not
+    -- automatically the fix here. These split the sweep BY TARGET:
+    -- swTab = don't sweep the tab; swSmf = don't sweep FontStringContainer
+    -- + its SMF line-pool children (the frames Blizzard re-arms during the
+    -- message re-fire); swCfEb = don't sweep cf/editbox/ScrollBar. The
+    -- resize grip is ours and stays swept always.
+    swTab         = false,
+    swSmf         = false,
+    swCfEb        = false,
     -- C40. alphaDrv off alone stayed dirty. Re-diffing the control pair
     -- surfaced a consumer created at LOGIN, not at the open, which is why
     -- the open-tick trace never spotlighted it: the hover overlay -- an
@@ -525,7 +537,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -646,7 +658,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C41, splits the convicted positioner) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C42, splits the sweep by target) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -3065,16 +3077,20 @@ local function PassthroughFrames(on)
             local eb = _G["ChatFrame" .. i .. "EditBox"]
             local tab = _G["ChatFrame" .. i .. "Tab"]
             if on then
-                PMOff(d, "pmCf", cf)
+                if not BX.swCfEb then PMOff(d, "pmCf", cf) end
                 -- The message frame's FontStringContainer is a separate
                 -- mouse surface (hyperlink hit-testing); the parent chat
                 -- frame's mouse state does not cover it, and its line-pool
                 -- children each carry their own.
-                PMOff(d, "pmFsc", cf.FontStringContainer)
-                PMOffChildren(d, "pmFscKids", cf.FontStringContainer)
-                PMOff(d, "pmEb", eb)
-                PMOff(d, "pmScroll", cf.ScrollBar)
-                PMOff(d, "pmTab", tab)
+                if not BX.swSmf then
+                    PMOff(d, "pmFsc", cf.FontStringContainer)
+                    PMOffChildren(d, "pmFscKids", cf.FontStringContainer)
+                end
+                if not BX.swCfEb then
+                    PMOff(d, "pmEb", eb)
+                    PMOff(d, "pmScroll", cf.ScrollBar)
+                end
+                if not BX.swTab then PMOff(d, "pmTab", tab) end
                 PMOff(d, "pmGrip", d.resizeGrip)
             else
                 PMOn(d, "pmCf", cf)
