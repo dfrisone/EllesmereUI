@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -413,6 +413,11 @@ local BX = {
     alphaDrv      = false,
     tickerBg      = false,
     posCall       = false,
+    -- C41 splits the CONVICTED PositionChatPanel. posSync off = placement
+    -- defers one frame (the fix candidate); posWrite off = reads run, the
+    -- memo + ClearAllPoints/SetPoint are skipped (mechanism probe).
+    posSync       = false,
+    posWrite      = false,
     -- C40. alphaDrv off alone stayed dirty. Re-diffing the control pair
     -- surfaced a consumer created at LOGIN, not at the open, which is why
     -- the open-tick trace never spotlighted it: the hover overlay -- an
@@ -520,7 +525,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -641,7 +646,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C40, the hover overlay) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C41, splits the convicted positioner) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -1786,6 +1791,29 @@ function ECHAT.PositionChatPanel(cf)
     -- posCall (C39): panelPos only ever gated the PLURAL driver; the direct
     -- call from ApplyInputPosition reaches this singular ungated.
     if BX.posCall then return end
+    -- posSync (C41): CONVICTED by the walk-back pair (posCall off = clean,
+    -- on = dirty, one flag apart). Hypothesis: not WHERE the anchor points
+    -- but WHEN the write lands -- the fresh CF11 panel gets its first
+    -- ClearAllPoints/SetPoint in the same frame Blizzard's dock is dirty,
+    -- and the pending insecure layout write resolves inside the dock's
+    -- deferred pass (the ApplyBorders disease at a new site). With the
+    -- posSync feature OFF, the placement defers one frame instead --
+    -- the fix candidate: same writes, one tick later.
+    if BX.posSync then
+        local dq = CFD(cf)
+        if not dq._posQueued then
+            dq._posQueued = true
+            C_Timer.After(0, function()
+                dq._posQueued = nil
+                if not BX.posCall then ECHAT._PositionChatPanelNow(cf) end
+            end)
+        end
+        return
+    end
+    ECHAT._PositionChatPanelNow(cf)
+end
+
+function ECHAT._PositionChatPanelNow(cf)
     local d = CFD(cf)
     local bg = d and d.bg
     if not (bg and cf:IsShown()) then return end
@@ -1814,6 +1842,10 @@ function ECHAT.PositionChatPanel(cf)
        and math.abs(pr - right) < 0.05 and math.abs(pb - bottom) < 0.05 then
         return
     end
+    -- posWrite (C41): mechanism probe. Feature OFF = the rect reads and
+    -- math above still run, but the memo and the ClearAllPoints/SetPoint
+    -- pair are skipped -- isolates WHICH operation in this function taints.
+    if BX.posWrite then return end
     d._bgL, d._bgT, d._bgR, d._bgB = left, top, right, bottom
     bg:ClearAllPoints()
     bg:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
