@@ -247,6 +247,25 @@ function ECHAT.TaintCheck(step)
     end)
 end
 
+-- RUNTIME BISECT FLAGS (diagnostic build only). Full notes at their first
+-- consumer below; the table lives up here because the /euichatbisect handler
+-- in the next block writes to it, and a file-local declared after the block
+-- that uses it is a nil GLOBAL there (the C22 crash, repeated on C23).
+local BX = {
+    ebHooks       = false,
+    tabSkin       = false,
+    padExtbgCall  = false,
+    padGdm        = false,
+    geometry      = false,
+    padding       = false,
+    borders       = false,
+    extbg         = false,
+    deferred      = false,
+    ebAnchors     = false,
+    texShift      = false,
+}
+ns._BX = BX
+
 do
     local probe = CreateFrame("Frame")
     probe:RegisterEvent("PLAYER_LOGIN")
@@ -323,7 +342,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C24, dock manager placed numerically) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C24b, dock numeric + bisect flag fix) uptime=%.1f"):format(GetTime()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
             local secure, who = issecurevariable(name)
@@ -385,20 +404,10 @@ end
 -- clean, so several configurations can be tested in one session by using a
 -- different conversation partner for each.
 -------------------------------------------------------------------------------
-local BX = {
-    ebHooks       = false,
-    tabSkin       = false,
-    padExtbgCall  = false,
-    padGdm        = false,
-    geometry      = false,
-    padding       = false,
-    borders       = false,
-    extbg         = false,
-    deferred      = false,
-    ebAnchors     = false,
-    texShift      = false,
-}
-ns._BX = BX
+-- The table itself is declared ABOVE the slash-command block, because
+-- /euichatbisect assigns into it. Declared here it was a nil GLOBAL to that
+-- handler and every flip threw -- the same forward-referenced-file-local
+-- mistake that made C22 unusable, and luac cannot catch either one.
 
 -- C9 ran this true and ChatFrame11.isLocked was STILL tainted, with the
 -- breadcrumb falling back to "init-done" -- i.e. with every edit-box hook
