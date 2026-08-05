@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -356,6 +356,13 @@ local BX = {
     -- cfSkin was never a clean single variable -- test tabSkin off in this
     -- configuration before trusting anything cfSkin produced.
     cfBg          = false,
+    -- C32 splits the background frame, now convicted as both necessary and
+    -- sufficient. Two very different bugs hide in nine lines: putting an
+    -- insecure frame into the chat frame's strata/level ordering, or
+    -- publishing it to CFD, which is what makes it visible to every other
+    -- pass in the module -- including the ones that have no gate.
+    cfBgLevel     = false,
+    cfBgReg       = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -440,14 +447,15 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
     local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true,
         cfFont = true, cfStrip = true, cfReparent = true,
         cfEdit = true, cfMisc = true, cfHide = true,
-        cfSidebar = true, cfSbEvents = true, cfBg = true }
+        cfSidebar = true, cfSbEvents = true, cfBg = true,
+        cfBgLevel = true, cfBgReg = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -529,7 +537,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C31, the background frame) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C32, splits the background frame) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -4604,9 +4612,11 @@ local function SkinChatFrame(cf)
         -- NO SetPoint to cf/eb. See PositionChatPanel: the panel is placed
         -- NUMERICALLY from the chat frame's rect, exactly as the tab hosts
         -- already are, so nothing of ours sits in Blizzard's rect chain.
-        bg:SetFrameStrata(cf:GetFrameStrata())
-        bg:SetFrameLevel(max(0, cf:GetFrameLevel() - 1))
-        bg:SetShown(cf:IsShown())
+        if not BX.cfBgLevel then
+            bg:SetFrameStrata(cf:GetFrameStrata())
+            bg:SetFrameLevel(max(0, cf:GetFrameLevel() - 1))
+            bg:SetShown(cf:IsShown())
+        end
 
         local bgTex = bg:CreateTexture(nil, "BACKGROUND")
         bgTex._euiOwned = true
@@ -4624,7 +4634,15 @@ local function SkinChatFrame(cf)
         -- of it and the re-fire on :2531 that follows. B4 gated the
         -- hyperlink and section-3 OnShow hooks but never this one; it is
         -- created inside the bg block, so it was invisible to that round.
-        CFD(cf).bg = bg
+        -- cfBgReg: build it but do not publish it. Every other pass finds
+        -- the panel through CFD, so an unpublished frame exists and draws
+        -- nothing touches it. Separates "this frame exists" from "the rest
+        -- of the module can see it".
+        if BX.cfBgReg then
+            CFD(cf).bgUnpublished = bg
+        else
+            CFD(cf).bg = bg
+        end
     end
 
     -- Sidebar: 40px panel to the left of the main chat frame for icons.
