@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -340,6 +340,16 @@ local BX = {
     cfEdit        = false,
     cfMisc        = false,
     cfHide        = false,
+    -- C30. All six gates above were off and it still tainted, so nothing
+    -- SkinChatFrame does TO Blizzard's frame is responsible. What is left is
+    -- the frames it builds for us -- and the sidebar's friend counter puts an
+    -- insecure frame on BN_FRIEND_INFO_CHANGED / BN_FRIEND_LIST_SIZE_CHANGED,
+    -- which a Battle.net whisper fires. That is the MONSTER_SAY/YELL
+    -- mechanism this module already documents and fixed once by dropping the
+    -- registration: an insecure frame registered for an event whose payload
+    -- carries secrets taints Blizzard's handling of that event.
+    cfSidebar     = false,
+    cfSbEvents    = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -424,13 +434,14 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
     local BX_INITONLY = { tabSkin = true, ebHooks = true, cfSkin = true,
         cfFont = true, cfStrip = true, cfReparent = true,
-        cfEdit = true, cfMisc = true, cfHide = true }
+        cfEdit = true, cfMisc = true, cfHide = true,
+        cfSidebar = true, cfSbEvents = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -512,7 +523,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C29b, flags in their own saved variable) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C30, the sidebar and its event frames) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -4612,7 +4623,7 @@ local function SkinChatFrame(cf)
 
     -- Sidebar: 40px panel to the left of the main chat frame for icons.
     -- Parented to UIParent so it stays visible regardless of active tab.
-    if name == "ChatFrame1" and not CFD(cf).sidebar then
+    if name == "ChatFrame1" and not CFD(cf).sidebar and not BX.cfSidebar then
         local sidebar = CreateFrame("Frame", nil, UIParent)
         sidebar:SetWidth(min(100, max(30, ECHAT.DB().sidebarWidth or 40)))
         sidebar:SetPoint("TOPRIGHT", CFD(cf).bg, "TOPLEFT", 0, 0)
@@ -4751,10 +4762,10 @@ local function SkinChatFrame(cf)
             end
 
             local fcEvents = CreateFrame("Frame")
-            fcEvents:RegisterEvent("BN_FRIEND_LIST_SIZE_CHANGED")
-            fcEvents:RegisterEvent("BN_FRIEND_INFO_CHANGED")
-            fcEvents:RegisterEvent("FRIENDLIST_UPDATE")
-            fcEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+            if not BX.cfSbEvents then fcEvents:RegisterEvent("BN_FRIEND_LIST_SIZE_CHANGED") end
+            if not BX.cfSbEvents then fcEvents:RegisterEvent("BN_FRIEND_INFO_CHANGED") end
+            if not BX.cfSbEvents then fcEvents:RegisterEvent("FRIENDLIST_UPDATE") end
+            if not BX.cfSbEvents then fcEvents:RegisterEvent("PLAYER_ENTERING_WORLD") end
             -- BN_FRIEND_INFO_CHANGED storms with big friend lists (presence
             -- spam), and each recount walks both friend APIs. Coalesce the
             -- storm into one trailing recount per second; the count still
@@ -4805,9 +4816,9 @@ local function SkinChatFrame(cf)
             end
 
             local gcEvents = CreateFrame("Frame")
-            gcEvents:RegisterEvent("GUILD_ROSTER_UPDATE")
-            gcEvents:RegisterEvent("PLAYER_GUILD_UPDATE")
-            gcEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+            if not BX.cfSbEvents then gcEvents:RegisterEvent("GUILD_ROSTER_UPDATE") end
+            if not BX.cfSbEvents then gcEvents:RegisterEvent("PLAYER_GUILD_UPDATE") end
+            if not BX.cfSbEvents then gcEvents:RegisterEvent("PLAYER_ENTERING_WORLD") end
             gcEvents:SetScript("OnEvent", UpdateGuildCount)
 
             CFD(cf).guildCount = guildCount
@@ -4848,8 +4859,8 @@ local function SkinChatFrame(cf)
             end
 
             local durEvents = CreateFrame("Frame")
-            durEvents:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
-            durEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+            if not BX.cfSbEvents then durEvents:RegisterEvent("UPDATE_INVENTORY_DURABILITY") end
+            if not BX.cfSbEvents then durEvents:RegisterEvent("PLAYER_ENTERING_WORLD") end
             durEvents:SetScript("OnEvent", UpdateDurability)
 
             CFD(cf).durabilityPct = durabilityPct
