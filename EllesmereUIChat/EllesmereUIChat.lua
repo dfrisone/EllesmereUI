@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -370,6 +370,14 @@ local BX = {
     -- does during a temp-window open. padGdm only ever gated the dock
     -- manager's ANCHOR; these size writes have never been gated at all.
     dockSize      = false,
+    -- C34. bg absent is clean and bg present is dirty, and with fifteen gates
+    -- off the only thing bg's existence still switches on is StyleDockManager,
+    -- which early-returns unless CFD(cf1).bg exists. dockSize covered only its
+    -- SetHeight calls; the whole function has never been disabled.
+    dockStyle     = false,
+    -- The other consumers bg unlocks that write nothing to Blizzard but do
+    -- run: the mouse-passthrough sweep and the idle-fade alpha driver.
+    passSweep     = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -454,7 +462,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -462,7 +470,8 @@ do
         cfFont = true, cfStrip = true, cfReparent = true,
         cfEdit = true, cfMisc = true, cfHide = true,
         cfSidebar = true, cfSbEvents = true, cfBg = true,
-        cfBgLevel = true, cfBgReg = true, dockSize = true }
+        cfBgLevel = true, cfBgReg = true, dockSize = true,
+        dockStyle = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -544,7 +553,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C33b, dock resize + bg guard) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C34, the whole dock styler) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -3041,6 +3050,7 @@ local function PTSweep()
     if not _visChatVisible then SetChatStackShown(false) end
 end
 local function RequestPassthroughSweep()
+    if BX.passSweep then return end
     if not _chatPassthrough or _ptSweepQueued then return end
     _ptSweepQueued = true
     C_Timer.After(0, PTSweep)
@@ -4366,6 +4376,7 @@ end
 
 -- Position and style GeneralDockManager as our tab bar (one-time)
 local function StyleDockManager()
+    if BX.dockStyle then return end
     local gdm = _G.GeneralDockManager
     if not gdm or _euiDockStyled then return end
     local cf1 = _G.ChatFrame1
