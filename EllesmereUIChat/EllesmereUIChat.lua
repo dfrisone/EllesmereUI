@@ -347,16 +347,18 @@ do
             Say(("|cffff5555EUI-BISECT|r %s feature = %s%s"):format(
                 key, on and "|cff00ff00ON|r" or "|cffff5555OFF|r",
                 BX_INITONLY[key] and "  |cffffff00(init-only: needs a full logout)|r" or ""))
+            -- DELIBERATELY DOES NOT RUN THE PASSES ANY MORE. It used to, and
+            -- that made the first command of a session run every pass with
+            -- the OTHER flags still at their defaults -- so the trigger fired
+            -- in a configuration nobody chose, and the flip got stamped with
+            -- the config that existed by the time it was read. Set the whole
+            -- configuration first, then fire it with /euichatpass.
             if not BX_INITONLY[key] then
-                if ECHAT.ApplyTabLayout then ECHAT.ApplyTabLayout() end
-                if ECHAT.ApplyTabPadding then ECHAT.ApplyTabPadding() end
-                if ECHAT.ApplyTabBorders then ECHAT.ApplyTabBorders() end
-                if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
-                Say("  passes re-run.")
+                Say("  set. |cffffff00/euichatpass|r to run the passes.")
             end
             return
         end
-        Say("|cffff5555EUI-BISECT|r  usage: /euichatbisect <flag> on|off")
+        Say("|cffff5555EUI-BISECT|r  usage: /euichatbisect <flag> on|off, then /euichatpass")
         for _, k in ipairs(BX_ORDER) do
             Say(("  %-13s %s%s"):format(k,
                 BX[k] and "|cffff5555OFF|r" or "|cff00ff00ON|r",
@@ -364,6 +366,28 @@ do
         end
         Say("  (ON = the feature is active. Taint is sticky per pool frame --")
         Say("   whisper a DIFFERENT person to get a fresh ChatFrameN per test.)")
+    end
+
+    -- THE TRIGGER, on demand.
+    --
+    -- C24c proved the taint does not need a whisper: ChatFrame11/12.isLocked
+    -- and GENERAL_CHAT_DOCK.selected all flipped in a session with
+    -- `whisper windows: none seen`, right after a slash command re-ran the
+    -- tab passes on the temp windows Blizzard had restored at login. So the
+    -- whisper was never the trigger, only the place it detonated -- and a
+    -- round no longer needs a second person, an instance, or a conversation.
+    --
+    -- Round shape now: full logout (restores the temp windows and resets the
+    -- flags), /euichattaint to confirm a clean start, set the whole
+    -- configuration, /euichatpass, /euichattaint. About a minute.
+    SLASH_EUICHATPASS1 = "/euichatpass"
+    SlashCmdList["EUICHATPASS"] = function()
+        Say(("|cffff5555EUI-PASS|r running with |cffffff00%s|r"):format(FlagState()))
+        if ECHAT.ApplyTabLayout then ECHAT.ApplyTabLayout() end
+        if ECHAT.ApplyTabPadding then ECHAT.ApplyTabPadding() end
+        if ECHAT.ApplyTabBorders then ECHAT.ApplyTabBorders() end
+        if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
+        Say("  done. |cffffff00/euichattaint|r to read the result.")
     end
 
     SLASH_EUICHATTAINT1 = "/euichattaint"
@@ -374,7 +398,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C24c, self-describing flips) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C25, on-demand trigger) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r"):format(FlagState()))
         for i = 1, #TAINT_WATCH do
             local name = TAINT_WATCH[i]
