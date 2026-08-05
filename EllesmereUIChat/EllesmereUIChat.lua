@@ -675,7 +675,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C44, the fix is unconditional) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C45, reads deferred too) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -1819,34 +1819,7 @@ end
 -- panel is positioned from those reads against UIParent instead, which is
 -- the same treatment the tab hosts were given for the same class of bug
 -- (see the host design note above PositionTabHosts).
--- Would placing the panel write anything? Pure reads: the same geometry
--- and inset maths the write path uses, compared against the last written
--- rect. Returns false when the panel is absent, the chat frame is hidden,
--- the rect is unreadable or nothing moved -- so the caller can skip the
--- deferral entirely on the overwhelming majority of frames.
-local function PanelRectChanged(cf, d)
-    local bg = d and d.bg
-    if not (bg and cf:IsShown()) then return false end
-    local l, t, r, cb = cf:GetLeft(), cf:GetTop(), cf:GetRight(), cf:GetBottom()
-    if not (l and t and r and cb) then return false end
-    local ui = UIParent:GetEffectiveScale()
-    if not ui or ui == 0 then return false end
-    local cs = cf:GetEffectiveScale() / ui
-    local ins = d._bgIns
-    local il, ir, it, ib = -10, 5, 3, -6
-    if ins then il, ir, it, ib = ins.l, ins.r, ins.t, ins.b end
-    local left, top = (l * cs) + il, (t * cs) + it
-    local right, bottom = (r * cs) + ir, (cb * cs) + ib
-    if right - left < 1 or top - bottom < 1 then return false end
-    local pl, pt, pr, pb = d._bgL, d._bgT, d._bgR, d._bgB
-    if pl and abs(pl - left) < 0.05 and abs(pt - top) < 0.05
-       and abs(pr - right) < 0.05 and abs(pb - bottom) < 0.05 then
-        return false
-    end
-    return true
-end
-
--- THE FIX (C41, field-proven; C44 gives it its production shape).
+-- THE FIX (C41, field-proven over 11 whispers in both fade states).
 --
 -- Placing this panel is what taints a whisper window's open. Not WHERE it
 -- is anchored -- it hangs off UIParent and touches nothing of Blizzard's --
@@ -1858,22 +1831,36 @@ end
 -- frame puts it outside that pass. Same writes, one tick later, no feature
 -- loss. (Same disease as the ApplyBorders conviction, at a new site.)
 --
--- READS ARE SAFE, only the WRITE has to be deferred -- so decide
--- synchronously and queue nothing when the rect has not moved. This runs
--- every frame for up to twenty chat frames; deferring unconditionally
--- would allocate thousands of closures a second.
+-- THE READS COUNT TOO -- do not "optimise" this by testing the rect first.
+--
+-- C44 tried exactly that: decide synchronously whether anything moved
+-- (pure reads: GetLeft/GetTop/GetRight/GetBottom, GetEffectiveScale,
+-- IsShown) and defer only when a write was needed. It went DIRTY on three
+-- temp windows, against C43's eleven clean whispers, with that as the only
+-- difference. Reading a chat frame's rect forces the layout engine to
+-- RESOLVE that frame, and forcing a resolve inside the open window taints
+-- exactly like writing does. So the whole pass -- reads included -- has to
+-- land on the next frame.
+--
+-- The dedupe keeps this to one queued placement per chat frame per frame,
+-- and the closure is built once per frame and reused, so the repeat cost
+-- is the timer itself rather than a fresh closure every tick.
 function ECHAT.PositionChatPanel(cf)
     -- posCall (C39): panelPos only ever gated the PLURAL driver; the direct
     -- call from ApplyInputPosition reaches this singular ungated.
     if BX.posCall then return end
     local d = CFD(cf)
-    if not PanelRectChanged(cf, d) then return end
     if d._posQueued then return end
     d._posQueued = true
-    C_Timer.After(0, function()
-        d._posQueued = nil
-        if not BX.posCall then ECHAT._PositionChatPanelNow(cf) end
-    end)
+    local fn = d._posDefer
+    if not fn then
+        fn = function()
+            d._posQueued = nil
+            if not BX.posCall then ECHAT._PositionChatPanelNow(cf) end
+        end
+        d._posDefer = fn
+    end
+    C_Timer.After(0, fn)
 end
 
 function ECHAT._PositionChatPanelNow(cf)
