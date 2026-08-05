@@ -247,7 +247,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "ptEngage", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "swTab", "swSmf", "swCfEb", "ptEngage", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -422,11 +422,11 @@ local BX = {
     alphaDrv      = false,
     tickerBg      = false,
     posCall       = false,
-    -- C41 splits the CONVICTED PositionChatPanel. posSync off = placement
-    -- defers one frame (the fix candidate); posWrite off = reads run, the
-    -- memo + ClearAllPoints/SetPoint are skipped (mechanism probe).
-    posSync       = false,
-    posWrite      = false,
+    -- C44: posSync/posWrite are GONE. The deferral they were testing is now
+    -- unconditional and production-shaped, so `reset` (all features ON) is
+    -- the fixed build -- there is no configuration left that reproduces the
+    -- bug. A stale posSync entry in the saved flags is ignored on restore
+    -- (unknown keys are skipped).
     -- C42. Walk-back round 4: passSweep back on from the measured-clean
     -- base -> DIRTY. The passthrough sweep is a SECOND independent
     -- injector (the multi-injector rule pays off again). It is already
@@ -554,7 +554,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "posSync", "posWrite", "swTab", "swSmf", "swCfEb", "ptEngage", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "cfResize", "ebWrites", "divWrites", "alphaDrv", "tickerBg", "posCall", "swTab", "swSmf", "swCfEb", "ptEngage", "hoverOv", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -675,7 +675,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C43, fade-state stamps) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C44, the fix is unconditional) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -1819,30 +1819,61 @@ end
 -- panel is positioned from those reads against UIParent instead, which is
 -- the same treatment the tab hosts were given for the same class of bug
 -- (see the host design note above PositionTabHosts).
+-- Would placing the panel write anything? Pure reads: the same geometry
+-- and inset maths the write path uses, compared against the last written
+-- rect. Returns false when the panel is absent, the chat frame is hidden,
+-- the rect is unreadable or nothing moved -- so the caller can skip the
+-- deferral entirely on the overwhelming majority of frames.
+local function PanelRectChanged(cf, d)
+    local bg = d and d.bg
+    if not (bg and cf:IsShown()) then return false end
+    local l, t, r, cb = cf:GetLeft(), cf:GetTop(), cf:GetRight(), cf:GetBottom()
+    if not (l and t and r and cb) then return false end
+    local ui = UIParent:GetEffectiveScale()
+    if not ui or ui == 0 then return false end
+    local cs = cf:GetEffectiveScale() / ui
+    local ins = d._bgIns
+    local il, ir, it, ib = -10, 5, 3, -6
+    if ins then il, ir, it, ib = ins.l, ins.r, ins.t, ins.b end
+    local left, top = (l * cs) + il, (t * cs) + it
+    local right, bottom = (r * cs) + ir, (cb * cs) + ib
+    if right - left < 1 or top - bottom < 1 then return false end
+    local pl, pt, pr, pb = d._bgL, d._bgT, d._bgR, d._bgB
+    if pl and abs(pl - left) < 0.05 and abs(pt - top) < 0.05
+       and abs(pr - right) < 0.05 and abs(pb - bottom) < 0.05 then
+        return false
+    end
+    return true
+end
+
+-- THE FIX (C41, field-proven; C44 gives it its production shape).
+--
+-- Placing this panel is what taints a whisper window's open. Not WHERE it
+-- is anchored -- it hangs off UIParent and touches nothing of Blizzard's --
+-- but WHEN the write lands: a fresh temp window is skinned mid-open, the
+-- panel takes its first ClearAllPoints/SetPoint in the same frame the dock
+-- is dirty, and that pending insecure layout write is resolved inside
+-- Blizzard's own deferred dock pass, which then runs tainted and poisons
+-- the isLocked / dock-selected writes that follow. Deferring the write one
+-- frame puts it outside that pass. Same writes, one tick later, no feature
+-- loss. (Same disease as the ApplyBorders conviction, at a new site.)
+--
+-- READS ARE SAFE, only the WRITE has to be deferred -- so decide
+-- synchronously and queue nothing when the rect has not moved. This runs
+-- every frame for up to twenty chat frames; deferring unconditionally
+-- would allocate thousands of closures a second.
 function ECHAT.PositionChatPanel(cf)
     -- posCall (C39): panelPos only ever gated the PLURAL driver; the direct
     -- call from ApplyInputPosition reaches this singular ungated.
     if BX.posCall then return end
-    -- posSync (C41): CONVICTED by the walk-back pair (posCall off = clean,
-    -- on = dirty, one flag apart). Hypothesis: not WHERE the anchor points
-    -- but WHEN the write lands -- the fresh CF11 panel gets its first
-    -- ClearAllPoints/SetPoint in the same frame Blizzard's dock is dirty,
-    -- and the pending insecure layout write resolves inside the dock's
-    -- deferred pass (the ApplyBorders disease at a new site). With the
-    -- posSync feature OFF, the placement defers one frame instead --
-    -- the fix candidate: same writes, one tick later.
-    if BX.posSync then
-        local dq = CFD(cf)
-        if not dq._posQueued then
-            dq._posQueued = true
-            C_Timer.After(0, function()
-                dq._posQueued = nil
-                if not BX.posCall then ECHAT._PositionChatPanelNow(cf) end
-            end)
-        end
-        return
-    end
-    ECHAT._PositionChatPanelNow(cf)
+    local d = CFD(cf)
+    if not PanelRectChanged(cf, d) then return end
+    if d._posQueued then return end
+    d._posQueued = true
+    C_Timer.After(0, function()
+        d._posQueued = nil
+        if not BX.posCall then ECHAT._PositionChatPanelNow(cf) end
+    end)
 end
 
 function ECHAT._PositionChatPanelNow(cf)
@@ -1874,10 +1905,6 @@ function ECHAT._PositionChatPanelNow(cf)
        and math.abs(pr - right) < 0.05 and math.abs(pb - bottom) < 0.05 then
         return
     end
-    -- posWrite (C41): mechanism probe. Feature OFF = the rect reads and
-    -- math above still run, but the memo and the ClearAllPoints/SetPoint
-    -- pair are skipped -- isolates WHICH operation in this function taints.
-    if BX.posWrite then return end
     d._bgL, d._bgT, d._bgR, d._bgB = left, top, right, bottom
     bg:ClearAllPoints()
     bg:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
