@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "bgTrace", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -375,10 +375,14 @@ local BX = {
     -- which early-returns unless CFD(cf1).bg exists. dockSize covered only its
     -- SetHeight calls; the whole function has never been disabled.
     dockStyle     = false,
-    -- C35: not a feature gate. Turning this ON makes every read of
-    -- CFD(cf).bg record a traceback, so the dump NAMES the consumers instead
-    -- of me listing candidates from memory -- which has now missed three
-    -- times running (sidebar events, dock resize, dock styler).
+    -- C35/C36: not a feature gate, and no longer reachable from
+    -- /euichatbisect. Every flag in that command means "feature off when
+    -- true", and a diagnostic switch borrowed that polarity and cost a round
+    -- ("/euichatbisect bgTrace on" DISABLED the tracer). It now has its own
+    -- /euichattrace command with plain semantics: true = tracing ON. TRUE
+    -- makes every read of CFD(cf).bg record a traceback, so the dump NAMES
+    -- the consumers instead of me listing candidates from memory -- which
+    -- missed three times running (sidebar events, dock resize, dock styler).
     bgTrace       = false,
     -- The other consumers bg unlocks that write nothing to Blizzard but do
     -- run: the mouse-passthrough sweep and the idle-fade alpha driver.
@@ -467,7 +471,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "bgTrace", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "dockStyle", "passSweep", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -528,6 +532,35 @@ do
         Say("   /euichatbisect reset to clear. Round: /reload, dump, whisper, dump.)")
     end
 
+    -- The tracer gets its OWN command with PLAIN polarity: "on" means tracing
+    -- ON. It lived in /euichatbisect for one round, where every flag means
+    -- "feature off when true", and the inherited inversion meant the command I
+    -- sent ("bgTrace on") DISABLED it. A diagnostic switch mixed into a set of
+    -- feature-disable flags inherits their polarity whether intended or not.
+    -- Persists with the other flags; NOT touched by /euichatbisect reset.
+    SLASH_EUICHATTRACE1 = "/euichattrace"
+    SlashCmdList["EUICHATTRACE"] = function(msg)
+        local state = msg:match("^%s*(%S+)%s*$")
+        if state then
+            local on = (state:lower() == "on" or state == "1" or state:lower() == "true")
+            local off = (state:lower() == "off" or state == "0" or state:lower() == "false")
+            if on or off then
+                BX.bgTrace = on
+                SaveFlags()
+                Say(("|cffff5555EUI-TRACE|r bg read tracing %s (persists; not cleared by bisect reset)")
+                    :format(on and "|cff00ff00ON|r" or "|cffff5555OFF|r"))
+                if on then
+                    Say("  |cffffff00/reload|r to attach -- the tracer hooks CFD tables when they are CREATED,")
+                    Say("  so it only sees frames skinned after the flag was set.")
+                end
+                return
+            end
+        end
+        Say(("|cffff5555EUI-TRACE|r bg read tracing is %s. Usage: /euichattrace on|off, then /reload.")
+            :format(BX.bgTrace and "|cff00ff00ON|r" or "|cffff5555OFF|r"))
+        Say("  Read sites appear in the /euichattaint dump under 'bg read sites'.")
+    end
+
     -- THE TRIGGER, on demand.
     --
     -- C24c proved the taint does not need a whisper: ChatFrame11/12.isLocked
@@ -558,7 +591,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C35, traces who reads the panel) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C36, tracer gets its own switch) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -880,7 +913,7 @@ local _bgMeta = {
 }
 function ECHAT.DumpBgReads(Say)
     if not ns._BX or not ns._BX.bgTrace then
-        Say("  bg reads: |cff888888tracing off (/euichatbisect bgTrace on)|r")
+        Say("  bg reads: |cff888888tracing off (/euichattrace on, then /reload)|r")
         return
     end
     Say(("|cffff5555EUI-TAINT|r bg read sites (%d unique):"):format(_bgReadN))
