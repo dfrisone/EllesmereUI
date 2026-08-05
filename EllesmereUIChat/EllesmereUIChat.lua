@@ -238,7 +238,7 @@ end
 -- alone never says which rung of the ladder produced it. Reading ns._BX at
 -- call time rather than upvaluing BX keeps this above the table's
 -- declaration without repeating the nil-global mistake.
-local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "panelPos",
+local FLAG_ORDER = { "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "panelPos",
     "geometry", "padding", "borders", "extbg", "padGdm",
     "padExtbgCall", "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks" }
 local function FlagState()
@@ -363,6 +363,13 @@ local BX = {
     -- pass in the module -- including the ones that have no gate.
     cfBgLevel     = false,
     cfBgReg       = false,
+    -- C33. Unpublishing the panel read CLEAN, and StyleDockManager is gated
+    -- on CFD(cf1).bg existing -- so unpublishing silently switched it off.
+    -- It writes HEIGHTS onto GeneralDockManager, its scroll frame and its
+    -- scroll child, and FCFDock_UpdateTabs is the first thing FCF_DockFrame
+    -- does during a temp-window open. padGdm only ever gated the dock
+    -- manager's ANCHOR; these size writes have never been gated at all.
+    dockSize      = false,
     panelPos      = false,
     ebHooks       = false,
     tabSkin       = false,
@@ -447,7 +454,7 @@ do
 
     -- Flip a bisect flag without a rebuild or a logout.
     local BX_ORDER = {
-        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "panelPos",
+        "cfSkin", "cfFont", "cfStrip", "cfReparent", "cfEdit", "cfMisc", "cfHide", "cfSidebar", "cfSbEvents", "cfBg", "cfBgLevel", "cfBgReg", "dockSize", "panelPos",
         "geometry", "padding", "borders", "extbg", "padGdm", "padExtbgCall",
         "deferred", "ebAnchors", "texShift", "tabSkin", "ebHooks",
     }
@@ -455,7 +462,7 @@ do
         cfFont = true, cfStrip = true, cfReparent = true,
         cfEdit = true, cfMisc = true, cfHide = true,
         cfSidebar = true, cfSbEvents = true, cfBg = true,
-        cfBgLevel = true, cfBgReg = true }
+        cfBgLevel = true, cfBgReg = true, dockSize = true }
     SLASH_EUICHATBISECT1 = "/euichatbisect"
     SlashCmdList["EUICHATBISECT"] = function(msg)
         -- Persisted flags are a foot-gun without a one-word way out: a
@@ -537,7 +544,7 @@ do
         -- clock (overrideFadeTimestamp, mouseOutTime), so comparing them to
         -- this number dates the error without having to trust recollection:
         -- close to it = this session, far below = an older one.
-        Say(("|cffff5555EUI-TAINT|r status (probe C32, splits the background frame) uptime=%.1f"):format(GetTime()))
+        Say(("|cffff5555EUI-TAINT|r status (probe C33, the dock resize) uptime=%.1f"):format(GetTime()))
         Say(("  config now: |cffffff00%s|r%s"):format(FlagState(),
             ns._bxRestored and "  |cffff5555(restored from disk)|r" or ""))
         for i = 1, #TAINT_WATCH do
@@ -4264,9 +4271,11 @@ function ECHAT.ApplyTabLayout()
     local gdm = _G.GeneralDockManager
     local sf = _G.GeneralDockManagerScrollFrame
     local sfc = _G.GeneralDockManagerScrollFrameChild
-    if gdm then gdm:SetHeight(height) end
-    if sf then sf:SetHeight(height) end
-    if sfc then sfc:SetHeight(height) end
+    if not BX.dockSize then
+        if gdm then gdm:SetHeight(height) end
+        if sf then sf:SetHeight(height) end
+        if sfc then sfc:SetHeight(height) end
+    end
     if ECHAT.ApplyTabBorders then ECHAT.ApplyTabBorders() end
     if ECHAT.ApplyTabPadding then ECHAT.ApplyTabPadding() end
     if ECHAT.ApplyTabSpacing then ECHAT.ApplyTabSpacing() end
@@ -4366,13 +4375,15 @@ local function StyleDockManager()
     -- Position above our chat bg (matches old EUI_ChatTabBar position).
     -- Numeric, not anchored: see PositionDockManager.
     ECHAT.PositionDockManager()
-    local dockH = GetTabHeight()
-    gdm:SetHeight(dockH)
-    if _G.GeneralDockManagerScrollFrame then
-        _G.GeneralDockManagerScrollFrame:SetHeight(dockH)
-    end
-    if _G.GeneralDockManagerScrollFrameChild then
-        _G.GeneralDockManagerScrollFrameChild:SetHeight(dockH)
+    if not BX.dockSize then
+        local dockH = GetTabHeight()
+        gdm:SetHeight(dockH)
+        if _G.GeneralDockManagerScrollFrame then
+            _G.GeneralDockManagerScrollFrame:SetHeight(dockH)
+        end
+        if _G.GeneralDockManagerScrollFrameChild then
+            _G.GeneralDockManagerScrollFrameChild:SetHeight(dockH)
+        end
     end
 
 
