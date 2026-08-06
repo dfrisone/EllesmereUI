@@ -13577,6 +13577,11 @@ function SetupOptionsPanel()
     -- Reuses the throttle's own handler rather than duplicating the body, so
     -- the two paths can never drift apart. No-op when nothing is pending.
     ns.FlushReload = function()
+        -- Recorded for /ufwhy: "was a reload still pending when the spec
+        -- switch went to measure geometry" is the single fact this whole fix
+        -- rests on, and it is not observable from the outside otherwise.
+        ns._lastFlushHadPending = reloadPending and true or false
+        ns._lastFlushAt = GetTime()
         if not reloadPending then return end
         local run = reloadThrottle:GetScript("OnUpdate")
         if run then run(reloadThrottle) end
@@ -15284,4 +15289,42 @@ do
         EnsureReloadHook()
         Update()
     end)
+end
+
+-------------------------------------------------------------------------------
+--  /ufwhy -- unit frame size vs profile diagnostic
+--
+--  "The frames are the wrong size" is not directly checkable by eye: you have
+--  to know what size the ACTIVE profile actually asks for. This prints both,
+--  plus whether a frame reload was still pending the last time a spec switch
+--  went to measure geometry (the ordering this branch fixes).
+--  Read-only; zero cost until typed.
+-------------------------------------------------------------------------------
+SLASH_UFWHY1 = "/ufwhy"
+SlashCmdList.UFWHY = function()
+    local function say(fmt, ...)
+        print("|cff0cd29fUF|r " .. string.format(fmt, ...))
+    end
+    say("profile=%s  specProfiles=%s",
+        tostring(EllesmereUIDB and EllesmereUIDB.activeProfile),
+        tostring(EllesmereUIDB and EllesmereUIDB.specProfiles
+                 and next(EllesmereUIDB.specProfiles) ~= nil))
+    say("reload was pending at last spec-switch measure: %s (%.1fs ago)",
+        tostring(ns._lastFlushHadPending),
+        ns._lastFlushAt and (GetTime() - ns._lastFlushAt) or -1)
+
+    local fr = ns.frames
+    local getDim = ns.GetFrameDimensions
+    if not fr or not getDim then say("frames not ready"); return end
+    for _, unit in ipairs({ "player", "target", "focus", "pet" }) do
+        local f = fr[unit]
+        if f then
+            local wantW, wantH = getDim(unit)
+            local haveW, haveH = f:GetWidth(), f:GetHeight()
+            local bad = (math.abs(haveW - wantW) > 1) or (math.abs(haveH - wantH) > 1)
+            say("%-7s want %dx%d  have %dx%d  %s", unit,
+                wantW or 0, wantH or 0, haveW or 0, haveH or 0,
+                bad and "|cffff4040MISMATCH|r" or "ok")
+        end
+    end
 end
