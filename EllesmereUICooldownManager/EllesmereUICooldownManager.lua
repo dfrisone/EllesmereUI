@@ -3630,8 +3630,65 @@ function ns.AnchorCoordToCenter(pt, sx, sy, fw, fh)
     return x, y
 end
 
+-- Would SetPoint on this bar's container be blocked by combat lockdown?
+-- The container is an ordinary addon frame, so its own IsProtected() normally
+-- answers false and vouches for nothing. The real question is what is anchored
+-- TO it: the viewer sync hook pins Blizzard's PROTECTED cooldown viewer over
+-- the default bars' containers, so moving one moves a protected frame and the
+-- engine blocks the call. Read live (only the default bar keys can ever match),
+-- so a bar stops being blocked the moment the viewer is anchored elsewhere.
+-- ns.* (not a file local): this chunk is at Lua 5.1's 200-local cap.
+function ns.BarMoveBlocked(barKey)
+    if not InCombatLockdown() then return false end
+    local frame = barKey and cdmBarFrames[barKey]
+    if not frame then return false end
+    if frame:IsProtected() then return true end
+    local viewerName = BLIZZ_CDM_FRAMES[barKey]
+    local viewer = viewerName and _G[viewerName]
+    if not viewer then return false end
+    for i = 1, viewer:GetNumPoints() do
+        local _, relativeTo = viewer:GetPoint(i)
+        if relativeTo == frame then return true end
+    end
+    return false
+end
+
+-- Bars whose reposition was skipped for the reason above, flushed by the
+-- PLAYER_REGEN_ENABLED handler. Skipping alone would leave the bar misplaced
+-- for the rest of the fight.
+function ns.QueueBarPositionApply(barKey)
+    if not barKey then return end
+    local pending = ns._pendingBarPositions
+    if not pending then pending = {}; ns._pendingBarPositions = pending end
+    pending[barKey] = true
+end
+
+function ns.FlushPendingBarPositions()
+    local pending = ns._pendingBarPositions
+    if not pending then return end
+    -- Lockdown outlasting PLAYER_REGEN_ENABLED: keep the queue intact so the
+    -- next combat exit flushes it, rather than dropping the positions.
+    if InCombatLockdown() then return end
+    ns._pendingBarPositions = nil
+    local prof = ECME.db and ECME.db.profile
+    local bars = prof and prof.cdmBars and prof.cdmBars.bars
+    if not bars then return end
+    for i, barData in ipairs(bars) do
+        if barData.enabled and barData.key and pending[barData.key] then
+            BuildCDMBar(i)
+            if EllesmereUI.ReapplyOwnAnchor then
+                EllesmereUI.ReapplyOwnAnchor("CDM_" .. barData.key)
+            end
+        end
+    end
+end
+
 local function ApplyBarPositionCentered(frame, pos, barKey)
     if not pos or not pos.point then return end
+    if ns.BarMoveBlocked(barKey) then
+        ns.QueueBarPositionApply(barKey)
+        return
+    end
     local fw = frame:GetWidth() or 0
     local fh = frame:GetHeight() or 0
     local px, py = pos.x or 0, pos.y or 0
@@ -4068,6 +4125,10 @@ BuildCDMBar = function(barIndex)
         end
         Mouse.SubscribeTick(glueKey .. ":watch", 0.15, CursorWatch)
         CursorWatch()
+    elseif ns.BarMoveBlocked(key) then
+        -- Every branch below SetPoints the container, which drags the
+        -- protected viewer anchored to it. Queue for PLAYER_REGEN_ENABLED.
+        ns.QueueBarPositionApply(key)
     elseif anchorKey == "partyframe" then
         -- Anchor to the player's party frame
         local partyFrame = EllesmereUI.FindPlayerPartyFrame()
@@ -8569,6 +8630,11 @@ RegisterCDMUnlockElements = function()
                     return not barDataByKey[key]
                 end,
                 getFrame = function() return cdmBarFrames[key] end,
+                -- The container is an ordinary addon frame, but a protected
+                -- Blizzard viewer is anchored to it on the default bars, so
+                -- moving it in combat is blocked. IsProtected() on the frame
+                -- cannot see that; this is how the unlock side finds out.
+                isCombatUnsafe = function() return ns.BarMoveBlocked(key) end,
                 getSize = function()
                     local f = cdmBarFrames[key]
                     local bd2 = barDataByKey[key]
@@ -9614,6 +9680,11 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
             local sv = _G[BLIZZ_CDM_FRAMES_SECONDARY.buffs]
             local svc = sv and _ecmeFC[sv]
             if svc and svc.hidden then ns.ParkSecondaryBuffViewer(sv) end
+        end
+        -- Flush bar positions skipped while a protected viewer was anchored
+        -- to the container (see ns.BarMoveBlocked)
+        if event == "PLAYER_REGEN_ENABLED" and ns._pendingBarPositions then
+            ns.FlushPendingBarPositions()
         end
         -- Flush deferred roster reanchor that was blocked during combat
         if event == "PLAYER_REGEN_ENABLED" and _rosterRebuildPending then

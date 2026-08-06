@@ -5865,6 +5865,11 @@ function EllesmereUI.MakeUnlockElement(opts)
         setHeight     = opts.setHeight,
         isHidden      = opts.isHidden,
         isAnchored    = opts.isAnchored,
+        -- isCombatUnsafe: function(key) -> true when SetPoint on this element's
+        -- frame is blocked in combat for a reason IsProtected() cannot report --
+        -- notably a protected frame anchored to it, which the move would drag
+        -- along (see EllesmereUI.IsCombatMoveBlocked in EUI_UnlockMode).
+        isCombatUnsafe = opts.isCombatUnsafe,
         onLiveMove    = opts.onLiveMove,
         linkedKeys    = opts.linkedKeys,
         noResize          = opts.noResize,

@@ -2296,7 +2296,7 @@ do
             inactive = not targetBar:IsShown()
         end
         if not inactive then return false end
-        if InCombatLockdown() and childBar:IsProtected() then
+        if EllesmereUI.IsCombatMoveBlocked(childKey, childBar) then
             EllesmereUI._AnchorPark.Park(childKey)
             return true
         end
@@ -2862,11 +2862,12 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
         return
     end
     if not targetBar then return end
-    -- Skip protected child frames during combat (action bars). Reading
-    -- target bounds is safe even if the target is protected (e.g. oUF
-    -- unit frames) -- we only call SetPoint on the child, not the target.
+    -- Skip child frames we cannot move during combat (action bars; CDM
+    -- containers carrying a protected viewer). Reading target bounds is safe
+    -- even if the target is protected (e.g. oUF unit frames) -- we only call
+    -- SetPoint on the child, not the target.
     -- Park the key so the anchor is reapplied when combat drops.
-    if InCombatLockdown() and childBar:IsProtected() then
+    if EllesmereUI.IsCombatMoveBlocked(childKey, childBar) then
         EllesmereUI._AnchorPark.Park(childKey)
         return
     end
@@ -4290,7 +4291,11 @@ local function ApplySavedPositions()
                 -- elem.applyPosition for noInitHook elements.
             elseif true then
             -- Let addon initialize/build (e.g. CDM's BuildAllCDMBars)
-            -- Skip protected frames during combat to avoid ADDON_ACTION_BLOCKED
+            -- Skip protected frames during combat to avoid ADDON_ACTION_BLOCKED.
+            -- Only the frame's OWN protection is tested here: applyPosition
+            -- builds as well as positions, so an element that merely cannot be
+            -- MOVED in combat (isCombatUnsafe) still runs and is expected to
+            -- defer its own SetPoints.
             if elem.applyPosition then
                 local apFrame = elem.getFrame and elem.getFrame(key)
                 if not inCombat or not apFrame or not apFrame:IsProtected() then
@@ -4312,7 +4317,10 @@ local function ApplySavedPositions()
                 local pos = elem.loadPosition and elem.loadPosition(key)
                 if pos then
                     local frame = GetBarFrame(key)
-                    if not inCombat or not frame or not frame:IsProtected() then
+                    -- A move blocked by lockdown is not lost: the whole pass
+                    -- re-runs on PLAYER_REGEN_ENABLED (see the end of this
+                    -- function).
+                    if not EllesmereUI.IsCombatMoveBlocked(key, frame) then
                         MigrateAndApplyPosition(key, pos, frame)
                     end
                 end
@@ -4432,6 +4440,21 @@ EllesmereUI._UnlockClearSavedPosition = ClearBarPosition
 -- Expose so child addons (CDM, resource bars) can re-apply matches after
 -- their bars finish populating and have correct dimensions.
 EllesmereUI.ApplyAllWidthHeightMatches = ApplyAllWidthHeightMatches
+
+-- Would SetPoint on this element's frame be blocked by combat lockdown?
+-- IsProtected() answers only for the frame itself, and a frame can be
+-- unmovable without being protected: if a protected frame is anchored to it,
+-- moving it moves the protected frame and the engine blocks the call (CDM's
+-- bar containers carry Blizzard's cooldown viewers this way). An element that
+-- owns such a frame reports the condition through isCombatUnsafe, since only
+-- it knows what is attached. Callers must park/queue what they skip.
+function EllesmereUI.IsCombatMoveBlocked(key, frame)
+    if not InCombatLockdown() then return false end
+    if frame and frame:IsProtected() then return true end
+    local elem = key and registeredElements[key]
+    if elem and elem.isCombatUnsafe and elem.isCombatUnsafe(key) then return true end
+    return false
+end
 
 -- Global check: is this unlock key anchored to another element?
 -- Any addon can call this to decide whether to skip positioning in BuildBars.
