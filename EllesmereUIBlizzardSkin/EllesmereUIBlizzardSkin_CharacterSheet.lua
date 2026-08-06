@@ -5039,40 +5039,30 @@ if EllesmereUI then
                 activeEquipmentSetID = nil
             end
 
-            -- Auto-equip equipment set when spec changes
+            -- Track which set the spec change equips, for the equipment panel
+            -- highlight. The equip itself is the game's job: UseEquipmentSet is
+            -- hardware-event gated, so calling it from an event handler only
+            -- produces ADDON_ACTION_BLOCKED, and the server already equips the
+            -- set assigned to the new spec.
+            -- RegisterUnitEvent: PLAYER_SPECIALIZATION_CHANGED carries a unit and
+            -- fires for every group member, so an unfiltered handler runs dozens
+            -- of times on a battleground/raid zone-in.
             local specChangeFrame = CreateFrame("Frame")
             local lastSpecIndex = GetSpecialization()
-            specChangeFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-            specChangeFrame:RegisterEvent("EQUIPMENT_SETS_CHANGED")
-            specChangeFrame:SetScript("OnEvent", function(self, event)
-                if event == "EQUIPMENT_SETS_CHANGED" then
-                    -- Update active set when equipment changes
-                    -- UpdateActiveEquipmentSet()  -- API no longer available in current WoW version
-                    -- RefreshEquipmentSets()  -- Function not in scope here
-                    if CharacterFrame and CharacterFrame:IsShown() and GetFFD(CharacterFrame).equipPanel and GetFFD(CharacterFrame).equipPanel:IsShown() then
-                        -- Equipment panel will be refreshed by the equipSetChangeFrame handler
-                    end
-                else
-                    -- Auto-equip when spec actually changes (not just event noise)
-                    local currentSpecIndex = GetSpecialization()
-                    if currentSpecIndex ~= lastSpecIndex then
-                        lastSpecIndex = currentSpecIndex
-                        local setIDs = C_EquipmentSet.GetEquipmentSetIDs()
-                        if setIDs then
-                            for _, setID in ipairs(setIDs) do
-                                local assignedSpec = C_EquipmentSet.GetEquipmentSetAssignedSpec(setID)
-                                if assignedSpec then
-                                    if assignedSpec == currentSpecIndex then
-                                        EUI_EquipSet(setID)
-                                        activeEquipmentSetID = setID
-                                        if EllesmereUIDB then
-                                            EllesmereUIDB.lastEquippedSet = setID
-                                        end
-                                        break
-                                    end
-                                end
-                            end
+            specChangeFrame:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
+            specChangeFrame:SetScript("OnEvent", function()
+                local currentSpecIndex = GetSpecialization()
+                if not currentSpecIndex or currentSpecIndex == lastSpecIndex then return end
+                lastSpecIndex = currentSpecIndex
+                local setIDs = C_EquipmentSet.GetEquipmentSetIDs()
+                if not setIDs then return end
+                for _, setID in ipairs(setIDs) do
+                    if C_EquipmentSet.GetEquipmentSetAssignedSpec(setID) == currentSpecIndex then
+                        activeEquipmentSetID = setID
+                        if EllesmereUIDB then
+                            EllesmereUIDB.lastEquippedSet = setID
                         end
+                        break
                     end
                 end
             end)
