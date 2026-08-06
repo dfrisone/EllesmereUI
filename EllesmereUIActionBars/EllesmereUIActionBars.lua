@@ -536,6 +536,9 @@ for _, info in ipairs(BAR_CONFIG) do
         visHideMounted = false,
         visHideNoTarget = false,
         visHideNoEnemy = false,
+        -- Mouseover reveal overrides (see EAB_VTABLE.Hover.IsRevealForced).
+        visRevealSkyriding = false,
+        visRevealVehicle = false,
         hideKeybind = false,
         keybindFontSize = 12,
         keybindFontColor = { r = 1, g = 1, b = 1 },
@@ -1442,6 +1445,11 @@ do
         vehicle = "[@vehicle,exists]1;0",
         vehicleui = "[vehicleui]1;0",
         petbattleui = "[petbattle]1;0",
+        -- Not a paging state: read by the mouseover reveal override. Driven
+        -- here so its truth is the SAME condition the visibility driver
+        -- compiles ([advflyable,flying]) rather than IsAirborneSkyriding's
+        -- IsMounted() approximation, which misses Druid Flight Form.
+        skyriding = "[advflyable,flying]1;0",
     }) do
         RegisterAttributeDriver(OverrideController, attr, driver)
     end
@@ -8512,6 +8520,25 @@ function EAB_VTABLE.Hover.GetState(barKey, frame)
     return state
 end
 
+-- Mouseover reveal override: per-bar "always show while ..." conditions that
+-- beat the fade. Both the truth and the edges come from the OverrideController
+-- attribute drivers (see the reveal hook below RefreshMouseover), so this
+-- agrees with the compiled visibility driver exactly and costs nothing until a
+-- state actually flips. State lives on the vtable, not a chunk local -- this
+-- file sits at Lua 5.1's 200-local cap.
+EAB_VTABLE.Hover.reveal = { skyriding = false, vehicle = false }
+
+-- Two table reads on the hover path. Only meaningful for mouseover bars: a
+-- bar that is always visible has no fade to override, and one hidden by its
+-- visibility driver stays hidden (alpha cannot beat a secure hide).
+function EAB_VTABLE.Hover.IsRevealForced(s)
+    if not s or not s.mouseoverEnabled then return false end
+    local r = EAB_VTABLE.Hover.reveal
+    if s.visRevealSkyriding and r.skyriding then return true end
+    if s.visRevealVehicle and r.vehicle then return true end
+    return false
+end
+
 -- Fade ONE bar in, no broadcast. The fadeDir memo makes repeat calls while
 -- already fading/faded in O(1) table reads, so sweeping across a bar's 12
 -- buttons costs 12 memo hits and one real fade. (On the vtable, not a
@@ -8554,6 +8581,10 @@ end
 function EAB_VTABLE.Hover.FadeOut(barKey, state)
     if _gridState.shown then return end  -- keep bars visible during spell drag
     local s = EAB_VTABLE.Hover.GetSettings(barKey)
+    -- Reveal override: same shape as the spell-drag gate above. Every path
+    -- that fades a bar out funnels through here, so one check covers the
+    -- hover edge, the coalesced OnLeave timer, and the show-all broadcast.
+    if EAB_VTABLE.Hover.IsRevealForced(s) then return end
     if s and s.mouseoverEnabled and state and state.fadeDir ~= "out" then
         state.fadeDir = "out"
         StopFade(state.frame)
@@ -8756,10 +8787,19 @@ function EAB:RefreshMouseover()
                         AttachExtraBarHoverHooks(info)
                     end
                     StopFade(frame)
-                    frame:SetAlpha(0)
+                    -- Mouseover's baseline is transparent, except while a
+                    -- reveal override holds the bar open or the cursor is
+                    -- still on it (this runs on option changes and on the
+                    -- reveal edge, both of which can land mid-hover; without
+                    -- the hover term, landing while pointed at the bar would
+                    -- snap it away until the mouse moved).
                     local state = hoverStates[key]
-                    if state then state.fadeDir = "out" end
-                    if key == "MainBar" then SyncPagingAlpha(0) end
+                    local shown = EAB_VTABLE.Hover.IsRevealForced(s)
+                        or (state and state.isHovered) or false
+                    local a = shown and (s._savedBarAlpha or 1) or 0
+                    frame:SetAlpha(a)
+                    if state then state.fadeDir = shown and "in" or "out" end
+                    if key == "MainBar" then SyncPagingAlpha(a) end
                 else
                     StopFade(frame)
                     frame:SetAlpha(s.mouseoverAlpha or 1)
@@ -8770,6 +8810,41 @@ function EAB:RefreshMouseover()
             end
         end
     end
+end
+
+-------------------------------------------------------------------------------
+--  Mouseover Reveal Edge
+--  The reveal conditions ride the OverrideController's attribute drivers, so
+--  takeoff/landing and vehicle enter/exit arrive as real edges -- no poll, and
+--  no PLAYER_IS_GLIDING_CHANGED dependency (that event is only a hint about
+--  gliding; [advflyable,flying] is what the visibility driver actually
+--  compiles, so reading the same condition keeps the two from disagreeing).
+-------------------------------------------------------------------------------
+do
+    local function ReadRevealState()
+        local r = EAB_VTABLE.Hover.reveal
+        local sky = tonumber(OverrideController:GetAttribute("skyriding")) == 1
+        local veh = tonumber(OverrideController:GetAttribute("vehicleui")) == 1
+        if sky == r.skyriding and veh == r.vehicle then return false end
+        r.skyriding, r.vehicle = sky, veh
+        return true
+    end
+
+    OverrideController:HookScript("OnAttributeChanged", function(_, name)
+        -- The controller carries eight other paging attributes; only these two
+        -- feed the override, and the equality check above absorbs the repeats
+        -- a single takeoff produces.
+        if name ~= "skyriding" and name ~= "vehicleui" then return end
+        if not ReadRevealState() then return end
+        -- RefreshMouseover repaints the baseline for every bar type (action,
+        -- data, extra, Blizzard-owned) and is alpha-only, so it is safe in
+        -- combat -- which is where a vehicle edge usually lands.
+        if EAB.db then EAB:RefreshMouseover() end
+    end)
+
+    -- The drivers evaluate during OverrideController setup, well before this
+    -- hook exists, so seed from whatever they already wrote.
+    ReadRevealState()
 end
 
 -------------------------------------------------------------------------------
@@ -9066,9 +9141,11 @@ function EAB_VTABLE.ExtraBars.ApplyManagedNonSecureAlpha(info, frame, s)
 
     local hstate = hoverStates[info.key]
     if s.mouseoverEnabled then
-        if hstate and hstate.isHovered then
+        if (hstate and hstate.isHovered) or EAB_VTABLE.Hover.IsRevealForced(s) then
             frame:SetAlpha(1)
-            hstate.fadeDir = "in"
+            -- The reveal path can reach here before any hover state exists
+            -- (hooks attach lazily); the old hovered-only condition could not.
+            if hstate then hstate.fadeDir = "in" end
         else
             frame:SetAlpha(0)
             if hstate then hstate.fadeDir = "out" end

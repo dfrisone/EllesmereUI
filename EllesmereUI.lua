@@ -12923,6 +12923,23 @@ for _, item in ipairs(EllesmereUI.VIS_OPT_ITEMS) do
     end
 end
 
+-- Action Bars variant: same items plus the two mouseover reveal overrides.
+-- Kept out of the global list for the same reason as the Resource Bars
+-- variant -- only Action Bars evaluates these, and only its bars can page to
+-- the skyriding/vehicle abilities that make the override worth having.
+EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS = {}
+for _, item in ipairs(EllesmereUI.VIS_OPT_ITEMS) do
+    EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS[#EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS + 1] = item
+end
+EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS[#EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS + 1] = {
+    key = "visRevealSkyriding", label = "Always Show while Skyriding",
+    tooltip = "Overrides Mouseover: keeps this bar visible without hovering while you are airborne on a skyriding mount, where it pages to your skyriding abilities.",
+}
+EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS[#EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS + 1] = {
+    key = "visRevealVehicle", label = "Always Show in a Vehicle",
+    tooltip = "Overrides Mouseover: keeps this bar visible without hovering while you are in a vehicle, where it pages to the vehicle's abilities.",
+}
+
 -- Cache player class once at load time (never changes).
 local _, _playerClass = UnitClass("player")
 

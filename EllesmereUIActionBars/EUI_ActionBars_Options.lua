@@ -1306,12 +1306,15 @@ initFrame:SetScript("OnEvent", function(self)
             local PP = EllesmereUI.PanelPP
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
                 rightRgn, 210, rightRgn:GetFrameLevel() + 2,
-                EllesmereUI.VIS_OPT_ITEMS,
+                EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS,
                 function(k) return EAB.db.profile.bars[barKey][k] or false end,
                 function(k, v)
                     EAB.db.profile.bars[barKey][k] = v
                     EAB:UpdateHousingVisibility()
                     EAB:ApplyCombatVisibility()
+                    -- The reveal overrides change the mouseover baseline, and
+                    -- nothing else in this setter repaints alpha.
+                    EAB:RefreshMouseover()
                     EllesmereUI:RefreshPage()
                 end)
             PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
@@ -1747,12 +1750,13 @@ initFrame:SetScript("OnEvent", function(self)
                 if rightRgn._control then rightRgn._control:Hide() end
                 local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
                     rightRgn, 210, rightRgn:GetFrameLevel() + 2,
-                    EllesmereUI.VIS_OPT_ITEMS,
+                    EllesmereUI.VIS_OPT_ITEMS_ACTION_BARS,
                     function(k) return SB()[k] or false end,
                     function(k, v)
                         SB()[k] = v
                         EAB:UpdateHousingVisibility()
                         EAB:ApplyCombatVisibility()
+                        EAB:RefreshMouseover()
                         EllesmereUI:RefreshPage()
                     end)
                 PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
