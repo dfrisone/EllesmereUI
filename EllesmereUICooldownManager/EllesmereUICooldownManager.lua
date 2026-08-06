@@ -9699,3 +9699,71 @@ SlashCmdList.ECME = function(msg)
 end
 
 
+
+-------------------------------------------------------------------------------
+--  /cdmbuff -- why is a tracked buff not rendering?
+--
+--  "It shows in the settings but not on my bars" has a specific suspected
+--  cause that only exists IN COMBAT: frame:GetSpellID() can return a SECRET
+--  number on a live frame, and the fallback path collapses split-identity
+--  twins onto their shared base spell. Two frames then share one dedup key
+--  (frame.cooldownID) on the same bar and the second one is dropped -- the
+--  "a slot vanishes in combat" case the collect loop already warns about.
+--
+--  None of that is visible from outside, and it cannot be reproduced on
+--  demand, so this prints the identity of every buff frame as the game
+--  currently reports it. Run it WHILE the missing buff is active.
+--  Read-only; zero cost until typed.
+-------------------------------------------------------------------------------
+SLASH_CDMBUFF1 = "/cdmbuff"
+SlashCmdList.CDMBUFF = function()
+    local isSecret = _G.issecretvalue or function() return false end
+    local function say(fmt, ...)
+        print("|cff0cd29fCDMbuff|r " .. string.format(fmt, ...))
+    end
+    local function nameOf(sid)
+        if type(sid) ~= "number" or isSecret(sid) or sid <= 0 then return "?" end
+        return (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or "?"
+    end
+
+    say("combat=%s", tostring(InCombatLockdown and InCombatLockdown()))
+    local seen = {}
+    for _, vname in ipairs({ "BuffIconCooldownViewer", "BuffBarCooldownViewer" }) do
+        local vf = _G[vname]
+        if not (vf and vf.itemFramePool and vf.itemFramePool.EnumerateActive) then
+            say("%s: no pool", vname)
+        else
+            say("-- %s --", vname)
+            for ch in vf.itemFramePool:EnumerateActive() do
+                local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                local fc = ns._ecmeFC and ns._ecmeFC[ch]
+                -- The live read, reported honestly: a secret is a number to
+                -- type(), so it must be tested before any comparison.
+                local live = ch.GetSpellID and ch:GetSpellID()
+                local liveTxt
+                if type(live) ~= "number" then liveTxt = "nil"
+                elseif isSecret(live) then liveTxt = "SECRET"
+                else liveTxt = tostring(live) end
+                local clean = ns._cdmCleanSidByCDID and cdID and ns._cdmCleanSidByCDID[cdID]
+                local info = cdID and C_CooldownViewer
+                    and C_CooldownViewer.GetCooldownViewerCooldownInfo
+                    and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                -- Duplicate cooldownIDs on one bar are what the dedup drops.
+                local dupe = ""
+                if cdID then
+                    if seen[cdID] then dupe = "|cffff4040DUPLICATE cdID|r" end
+                    seen[cdID] = true
+                end
+                say("cd=%s shown=%s claimed=%s sid=%s(%s) live=%s clean=%s(%s) info=%s %s",
+                    tostring(cdID), tostring(ch:IsShown()),
+                    tostring(fc and fc.barKey or nil),
+                    tostring(fc and fc.spellID or nil), nameOf(fc and fc.spellID),
+                    liveTxt,
+                    tostring(clean), nameOf(clean),
+                    info and "yes" or "NO", dupe)
+            end
+        end
+    end
+    say("Run this again OUT of combat and compare: a row whose live= flips")
+    say("from a number to SECRET is the one this is about.")
+end
