@@ -13564,6 +13564,25 @@ function SetupOptionsPanel()
     end
     _G._EUF_ReloadFrames = ns.ReloadFrames
 
+    -- Run a pending reload NOW instead of on the next OnUpdate.
+    --
+    -- ReloadFrames only ARMS the throttle, and the frame's SIZE is applied
+    -- nowhere else: position has a second source (_applySavedPositions reads
+    -- db.profile.positions directly) but PP.Size(frame, ...) happens only
+    -- inside the reload body. So any caller that reads or re-imposes frame
+    -- geometry in the same frame it asks for a reload measures the OUTGOING
+    -- profile's size. The UI-scale path already knows this and waits 0.3s
+    -- before re-matching widths; the profile-switch path did not.
+    --
+    -- Reuses the throttle's own handler rather than duplicating the body, so
+    -- the two paths can never drift apart. No-op when nothing is pending.
+    ns.FlushReload = function()
+        if not reloadPending then return end
+        local run = reloadThrottle:GetScript("OnUpdate")
+        if run then run(reloadThrottle) end
+    end
+    _G._EUF_FlushReload = ns.FlushReload
+
     -- Fake debuff icons for the boss preview. Three square icons anchored
     -- where the real Debuffs frame would live, sized to match the Simple
     -- Debuff Display layout (frame bar height, growing right-to-left off

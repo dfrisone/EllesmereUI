@@ -1506,6 +1506,15 @@ function EllesmereUI.OnSpecSwitchComplete()
     if EllesmereUI.SpecOverrides_FlushUnlock then
         EllesmereUI.SpecOverrides_FlushUnlock()
     end
+    -- Land the unit-frame reload BEFORE anything measures or re-imposes
+    -- geometry. _EUF_ReloadFrames only arms a throttle that fires on the next
+    -- OnUpdate, and frame SIZE is applied nowhere but that reload body, so the
+    -- three passes below otherwise run against the OUTGOING profile's sizes:
+    -- widths get matched to a stale source, positions are snapped for a stale
+    -- width, and anchor offsets are resynced from both. Position still looked
+    -- right afterwards because it has a second source; size did not, which is
+    -- exactly the reported symptom (new profile, old frame size).
+    if _G._EUF_FlushReload then _G._EUF_FlushReload() end
     if EllesmereUI.ApplyAllWidthHeightMatches then
         EllesmereUI.ApplyAllWidthHeightMatches()
     end
