@@ -1421,7 +1421,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Inline color swatch on EUI Options Theme (right region)
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = themeRow._rightRegion
             local function isCustomColorOff()
                 return EllesmereUI.GetActiveTheme() ~= "Custom Color"
@@ -1537,7 +1537,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Cog with "Set UI Scale to 0.5333" toggle
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = uiScaleRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "UI Scale Options",
@@ -1616,7 +1616,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- EUI Buttons checkbox-dropdown (left region)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = euiBtnRow._leftRegion
             if rgn._control then rgn._control:Hide() end
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
@@ -1649,7 +1649,7 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
         end
         -- Cog with "Only Hide Fully Synced" toggle on Disable Sync Icons (right region)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = euiBtnRow._rightRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Sync Icon Options",
@@ -1885,7 +1885,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline cog on "Show Combat Damage Text" left region for pet damage sub-settings
-        do
+        if not EllesmereUI._prebuilding then
             local dmgOff = function() return not GetCVarBool("floatingCombatTextCombatDamage_v2") end
             local leftRgn = showDmgRow._leftRegion
 
@@ -2542,40 +2542,42 @@ initFrame:SetScript("OnEvent", function(self)
                       FontReload()
                   end }
             );  y = y - h
-            local rgn = oitRow._leftRegion
-            if rgn._control then rgn._control:Hide() end
-            local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
-                rgn, 220, rgn:GetFrameLevel() + 2,
-                oitItems,
-                function(k)
-                    local f = EllesmereUI.GetFontsDB()
-                    local t = (f and f.outlineIconText) or (EllesmereUIDB and EllesmereUIDB.outlineIconText)
-                    return not (t and t[k] == false)
-                end,
-                function(k, v)
-                    -- Per-profile now (rides profile export). Seed the per-profile
-                    -- table from the legacy account-global one on first write so
-                    -- other modules' choices carry over unchanged.
-                    local f = EllesmereUI.GetFontsDB()
-                    if type(f.outlineIconText) ~= "table" then
-                        local t = {}
-                        local seed = EllesmereUIDB and EllesmereUIDB.outlineIconText
-                        if type(seed) == "table" then
-                            for kk, vv in pairs(seed) do t[kk] = vv end
+            if not EllesmereUI._prebuilding then
+                local rgn = oitRow._leftRegion
+                if rgn._control then rgn._control:Hide() end
+                local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+                    rgn, 220, rgn:GetFrameLevel() + 2,
+                    oitItems,
+                    function(k)
+                        local f = EllesmereUI.GetFontsDB()
+                        local t = (f and f.outlineIconText) or (EllesmereUIDB and EllesmereUIDB.outlineIconText)
+                        return not (t and t[k] == false)
+                    end,
+                    function(k, v)
+                        -- Per-profile now (rides profile export). Seed the per-profile
+                        -- table from the legacy account-global one on first write so
+                        -- other modules' choices carry over unchanged.
+                        local f = EllesmereUI.GetFontsDB()
+                        if type(f.outlineIconText) ~= "table" then
+                            local t = {}
+                            local seed = EllesmereUIDB and EllesmereUIDB.outlineIconText
+                            if type(seed) == "table" then
+                                for kk, vv in pairs(seed) do t[kk] = vv end
+                            end
+                            f.outlineIconText = t
                         end
-                        f.outlineIconText = t
-                    end
-                    f.outlineIconText[k] = v and true or false
-                    -- Prompt the reload from setFn rather than passing an
-                    -- onChanged callback: a non-nil onChanged makes the CB
-                    -- dropdown re-anchor the open menu to an absolute position
-                    -- (meant for page rebuilds), which visibly shifts it here.
-                    FontReload()
-                end)
-            PP.Point(cbDD, "RIGHT", rgn, "RIGHT", -20, 0)
-            rgn._control = cbDD
-            rgn._lastInline = nil
-            EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+                        f.outlineIconText[k] = v and true or false
+                        -- Prompt the reload from setFn rather than passing an
+                        -- onChanged callback: a non-nil onChanged makes the CB
+                        -- dropdown re-anchor the open menu to an absolute position
+                        -- (meant for page rebuilds), which visibly shifts it here.
+                        FontReload()
+                    end)
+                PP.Point(cbDD, "RIGHT", rgn, "RIGHT", -20, 0)
+                rgn._control = cbDD
+                rgn._lastInline = nil
+                EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+            end
         end
 
         -- Name Font: the text floating above characters and NPCs. Deliberately
@@ -3138,42 +3140,44 @@ initFrame:SetScript("OnEvent", function(self)
                           end })
 
                     -- Add delete X button on the far left of the row
-                    local ICON_SIZE = 14
-                    local delBtn = CreateFrame("Button", nil, dualRow)
-                    delBtn:SetSize(ICON_SIZE + 6, ICON_SIZE + 6)
-                    PP.Point(delBtn, "LEFT", dualRow, "LEFT", 14, 0)
-                    delBtn:SetFrameLevel(dualRow:GetFrameLevel() + 5)
-                    local delIcon = delBtn:CreateTexture(nil, "OVERLAY")
-                    PP.Size(delIcon, ICON_SIZE, ICON_SIZE)
-                    PP.Point(delIcon, "CENTER", delBtn, "CENTER", 0, 0)
-                    if delIcon.SetSnapToPixelGrid then delIcon:SetSnapToPixelGrid(false); delIcon:SetTexelSnappingBias(0) end
-                    delIcon:SetTexture(EllesmereUI.MEDIA_PATH .. "icons\\eui-close.png")
-                    delBtn:SetAlpha(0.75)
-                    delBtn:SetScript("OnEnter", function(self) self:SetAlpha(1) end)
-                    delBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.75) end)
-                    delBtn:SetScript("OnClick", function()
-                        local fdb = EllesmereUI.GetFontsDB()
-                        local needsReload = false
-                        if fdb.moduleFonts then
-                            -- Only a reload is needed when the removed entry actually
-                            -- overrode the font/outline (reverting to global changes
-                            -- rendering). A still-global row is a no-op.
-                            local e = fdb.moduleFonts[capturedIdx]
-                            if e and ((e.font and e.font ~= "__global") or (e.outline and e.outline ~= "__global")) then
-                                needsReload = true
+                if not EllesmereUI._prebuilding then
+                        local ICON_SIZE = 14
+                        local delBtn = CreateFrame("Button", nil, dualRow)
+                        delBtn:SetSize(ICON_SIZE + 6, ICON_SIZE + 6)
+                        PP.Point(delBtn, "LEFT", dualRow, "LEFT", 14, 0)
+                        delBtn:SetFrameLevel(dualRow:GetFrameLevel() + 5)
+                        local delIcon = delBtn:CreateTexture(nil, "OVERLAY")
+                        PP.Size(delIcon, ICON_SIZE, ICON_SIZE)
+                        PP.Point(delIcon, "CENTER", delBtn, "CENTER", 0, 0)
+                        if delIcon.SetSnapToPixelGrid then delIcon:SetSnapToPixelGrid(false); delIcon:SetTexelSnappingBias(0) end
+                        delIcon:SetTexture(EllesmereUI.MEDIA_PATH .. "icons\\eui-close.png")
+                        delBtn:SetAlpha(0.75)
+                        delBtn:SetScript("OnEnter", function(self) self:SetAlpha(1) end)
+                        delBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.75) end)
+                        delBtn:SetScript("OnClick", function()
+                            local fdb = EllesmereUI.GetFontsDB()
+                            local needsReload = false
+                            if fdb.moduleFonts then
+                                -- Only a reload is needed when the removed entry actually
+                                -- overrode the font/outline (reverting to global changes
+                                -- rendering). A still-global row is a no-op.
+                                local e = fdb.moduleFonts[capturedIdx]
+                                if e and ((e.font and e.font ~= "__global") or (e.outline and e.outline ~= "__global")) then
+                                    needsReload = true
+                                end
+                                table.remove(fdb.moduleFonts, capturedIdx)
                             end
-                            table.remove(fdb.moduleFonts, capturedIdx)
-                        end
-                        EllesmereUI:RefreshPage(true)
-                        if needsReload then FontReload() end
-                    end)
+                            EllesmereUI:RefreshPage(true)
+                            if needsReload then FontReload() end
+                        end)
 
-                    -- Shift left-half label right so it clears the X button
-                    local leftLabel = dualRow._leftRegion and dualRow._leftRegion._label
-                    if leftLabel then
-                        leftLabel:ClearAllPoints()
-                        PP.Point(leftLabel, "LEFT", delBtn, "RIGHT", 4, 0)
-                    end
+                        -- Shift left-half label right so it clears the X button
+                        local leftLabel = dualRow._leftRegion and dualRow._leftRegion._label
+                        if leftLabel then
+                            leftLabel:ClearAllPoints()
+                            PP.Point(leftLabel, "LEFT", delBtn, "RIGHT", 4, 0)
+                        end
+                end
 
                     listRows[#listRows + 1] = dualRow
                     totalH = totalH + dualH
@@ -3232,10 +3236,12 @@ initFrame:SetScript("OnEvent", function(self)
             -- Resource Bar master is NOT a condition input (DarkModeMasterOn
             -- excludes it) and stays editable. (SetDarkModeAll's tail
             -- rechecks the condition live for both.)
-            if EllesmereUI.SpecOverrides_AttachEditLock then
-                EllesmereUI.SpecOverrides_AttachEditLock(dmMasterRow._leftRegion,
-                    "Dark Mode drives a Dark Mode override condition and can't be changed while editing an override",
-                    EllesmereUI.SpecOverrides_DarkCondEditActive)
+            if not EllesmereUI._prebuilding then
+                if EllesmereUI.SpecOverrides_AttachEditLock then
+                    EllesmereUI.SpecOverrides_AttachEditLock(dmMasterRow._leftRegion,
+                        "Dark Mode drives a Dark Mode override condition and can't be changed while editing an override",
+                        EllesmereUI.SpecOverrides_DarkCondEditActive)
+                end
             end
 
             -- Row 1: Dark Mode Fill Color | Dark Mode Fill Opacity

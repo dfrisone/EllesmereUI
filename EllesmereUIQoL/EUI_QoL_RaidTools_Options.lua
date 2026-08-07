@@ -109,7 +109,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- to capture, right-click to unbind, Escape cancels. The bound key is
         -- an override binding on the secure toggle button, so pressing it
         -- works in combat; only the (re)binding itself waits for combat end.
-        do
+        if not EllesmereUI._prebuilding then
             local PP  = EllesmereUI.PanelPP
             local rgn = kbRow._rightRegion
             local kbBtn = CreateFrame("Button", nil, rgn)

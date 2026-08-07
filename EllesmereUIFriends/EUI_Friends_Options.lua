@@ -192,7 +192,11 @@ initFrame:SetScript("OnEvent", function(self)
     -- Inline cog button. When disabledFn/disabledLabel are given, the cog dims
     -- and blocks (with a requirement tooltip) while disabledFn() is true --
     -- the standard inline-control disabled-state pattern.
+    -- Hidden search pre-build: rgn is an absorber table there, so CreateFrame
+    -- would throw and abort the page's index pass. Cogs register no search
+    -- entries and the caller discards the return value.
     local function MakeCogBtn(rgn, showFn, disabledFn, disabledLabel)
+        if EllesmereUI._prebuilding then return end
         local cogBtn = CreateFrame("Button", nil, rgn)
         cogBtn:SetSize(26, 26)
         cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)

@@ -177,7 +177,7 @@ initFrame:SetScript("OnEvent", function(self)
         y = y - h
 
         -- Inline RESIZE cog on Scale: Frame Width slider
-        do
+        if not EllesmereUI._prebuilding then
             local PP = EllesmereUI.PP
             local leftRgn = scaleRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -268,7 +268,13 @@ initFrame:SetScript("OnEvent", function(self)
             }
         end
 
+        -- Hidden search pre-build: rgn is an absorber table there, so the
+        -- CreateFrame below would throw and abort the page's index pass. The
+        -- attach helpers register no search entries (their host rows are
+        -- registered by the W:DualRow that owns them), so returning early
+        -- loses nothing. No caller uses the return value.
         local function _AttachPopupButton(rgn, icon, popupTitle, rows, isDisabled)
+            if EllesmereUI._prebuilding then return end
             local PP = EllesmereUI.PP
             local _, popupShow = EllesmereUI.BuildCogPopup({ title = popupTitle, rows = rows })
             local btn = CreateFrame("Button", nil, rgn)
@@ -299,6 +305,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- chaining off rgn._lastInline so it coexists with an inline cog). Blocked
         -- + dimmed via overlay when isDisabled() is true, mirroring the cog pattern.
         local function _AttachInlineSwatch(rgn, colorKey, defR, defG, defB, afterSet, isDisabled, disabledTip)
+            if EllesmereUI._prebuilding then return end
             local PP = EllesmereUI.PP
             local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(
                 rgn, rgn:GetFrameLevel() + 5,
@@ -343,6 +350,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- The inactive swatch dims to 0.3; both are blocked + dimmed with the
         -- requirement tooltip while isDisabled() is true (mirrors _AttachInlineSwatch).
         local function _AttachInlineAccentSwatches(rgn, useAccentKey, colorKey, defR, defG, defB, isDisabled, disabledTip)
+            if EllesmereUI._prebuilding then return end
             local PP = EllesmereUI.PP
 
             -- Accent swatch (nearest the control): live theme accent.
@@ -636,7 +644,7 @@ initFrame:SetScript("OnEvent", function(self)
                 setValue=function(v) Set("borderSize", v); ApplyBorder(); EllesmereUI:RefreshPage() end })
             y = y - h
             -- Inline cog for border offset (left region)
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = bsRow._leftRegion
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title = "Border Options",
@@ -703,7 +711,7 @@ initFrame:SetScript("OnEvent", function(self)
                     cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
                 end
                 -- Inline color swatch on Border Size (right region)
-                do
+                if not EllesmereUI._prebuilding then
                     local rgn = bsRow._rightRegion
                     local ctrl = rgn._control
                     local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(

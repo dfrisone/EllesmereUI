@@ -26,7 +26,11 @@ initFrame:SetScript("OnEvent", function(self)
     local function Cfg(k)    return DB()[k]  end
     local function Set(k, v) DB()[k] = v     end
 
+    -- Hidden search pre-build: rgn is an absorber table there, so CreateFrame
+    -- would throw and abort the page's index pass. Cogs register no search
+    -- entries and no caller uses the return value, so returning early is free.
     local function MakeCogBtn(rgn, showFn)
+        if EllesmereUI._prebuilding then return end
         local cogBtn = CreateFrame("Button", nil, rgn)
         cogBtn:SetSize(26, 26)
         cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
@@ -120,7 +124,7 @@ initFrame:SetScript("OnEvent", function(self)
               values={ __placeholder = "..." }, order={ "__placeholder" },
               getValue=function() return "__placeholder" end,
               setValue=function() end })
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = visRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
@@ -148,7 +152,7 @@ initFrame:SetScript("OnEvent", function(self)
               order  = { "always", "boss" },
               getValue=function() return Cfg("hideInRaidMode") or "boss" end,
               setValue=function(v) Set("hideInRaidMode", v); if EQT.UpdateVisibility then EQT.UpdateVisibility() end end })
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = bgRow._leftRegion
             local ctrl = rgn._control
             local bgSwatch, bgSwatchRefresh = EllesmereUI.BuildColorSwatch(
@@ -249,6 +253,9 @@ initFrame:SetScript("OnEvent", function(self)
                 { type="label", text = leftLabel },
                 { type="label", text = rightLabel })
             local function wire(rgn, keys, default)
+                -- Pre-build: rgn is an absorber, and the row's search entries
+                -- were already registered by the W:DualRow above.
+                if EllesmereUI._prebuilding then return end
                 local sw, swRefresh = EllesmereUI.BuildColorSwatch(
                     rgn, r:GetFrameLevel() + 3,
                     function()
@@ -346,13 +353,15 @@ initFrame:SetScript("OnEvent", function(self)
                 { type="label", text="Focused Color" },
                 { type="multiSwatch", text="Header Color",
                   swatches = { hClass, hCustom, hAccent } })
-            local sw, swRefresh = EllesmereUI.BuildColorSwatch(
-                r._leftRegion, r:GetFrameLevel() + 3,
-                function() return (Cfg("focusR") or 0.871), (Cfg("focusG") or 0.251), (Cfg("focusB") or 1.0) end,
-                function(cr, cg, cb) Set("focusR", cr); Set("focusG", cg); Set("focusB", cb); RefreshAll() end,
-                false, 20)
-            PP.Point(sw, "RIGHT", r._leftRegion, "RIGHT", -20, 0)
-            EllesmereUI.RegisterWidgetRefresh(function() swRefresh() end)
+            if not EllesmereUI._prebuilding then
+                local sw, swRefresh = EllesmereUI.BuildColorSwatch(
+                    r._leftRegion, r:GetFrameLevel() + 3,
+                    function() return (Cfg("focusR") or 0.871), (Cfg("focusG") or 0.251), (Cfg("focusB") or 1.0) end,
+                    function(cr, cg, cb) Set("focusR", cr); Set("focusG", cg); Set("focusB", cb); RefreshAll() end,
+                    false, 20)
+                PP.Point(sw, "RIGHT", r._leftRegion, "RIGHT", -20, 0)
+                EllesmereUI.RegisterWidgetRefresh(function() swRefresh() end)
+            end
             h = rowH
         end
         y = y - h
@@ -412,7 +421,7 @@ initFrame:SetScript("OnEvent", function(self)
         kbRow, h = W:DualRow(parent, y,
             { type="label", text="" },
             { type="label", text="" })
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = kbRow._leftRegion
             local SIDE_PAD = 20
             local KB_W, KB_H = 120, 26

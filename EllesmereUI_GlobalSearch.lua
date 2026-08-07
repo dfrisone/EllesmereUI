@@ -522,7 +522,6 @@ local function PrebuildOnce(config, folder, page, selectorSetter, selectorKey)
     end
     EllesmereUI._buildingModule = folder
     EllesmereUI._buildingPage = page
-    EllesmereUI._prebuilding = true
 
     -- Isolate the shared widget-refresh registry so this off-screen build's
     -- widgets can never leak their refresh closures into whatever page the
@@ -538,10 +537,18 @@ local function PrebuildOnce(config, folder, page, selectorSetter, selectorKey)
     -- this synchronous call (builders fetch `local W = EllesmereUI.Widgets`
     -- inside their bodies -- verified no file-scope captures 2026-08-03),
     -- and restored on EVERY exit before anything else can read it.
+    -- _prebuilding gates real per-module UI now (builders skip their region
+    -- chrome on it), so it is set/cleared TIGHT around the one pcall'd call
+    -- that needs it: if any of the surrounding bookkeeping (snapshot restore,
+    -- wrapper:Hide) ever errors, the flag must not latch true for the session
+    -- -- a latched flag would silently strip cogs/dropdowns from every later
+    -- LIVE build of a guarded page, and the crippled page would be cached.
     _absSection = nil
     local realWidgets = EllesmereUI.Widgets
     EllesmereUI.Widgets = AbsorberW
+    EllesmereUI._prebuilding = true
     local ok, err = pcall(config.buildPage, page, wrapper, -6)
+    EllesmereUI._prebuilding = nil
     EllesmereUI.Widgets = realWidgets
     if not ok and EllesmereUI.IsDevModeActive and EllesmereUI.IsDevModeActive() then
         print("|cffff6060EUI GlobalSearch:|r prebuild failed for "
@@ -563,7 +570,6 @@ local function PrebuildOnce(config, folder, page, selectorSetter, selectorKey)
     EllesmereUI._buildingModule = nil
     EllesmereUI._buildingPage = nil
     EllesmereUI._buildingSelector = nil
-    EllesmereUI._prebuilding = nil
 end
 
 -- One staggered tick = ONE hidden page build. Selector variants are expanded
@@ -586,9 +592,15 @@ local function PrebuildJob(job)
             savedMethods[name] = EllesmereUI[name]
             EllesmereUI[name] = function() end
         end
-        PrebuildOnce(config, job.folder, job.page, job.selectorSetter, job.selectorKey)
+        -- pcall: the header stubs MUST be restored even if the job errors,
+        -- or the live panel's header methods stay no-ops for the session.
+        local jobOk, jobErr = pcall(PrebuildOnce, config, job.folder, job.page, job.selectorSetter, job.selectorKey)
         for _, name in ipairs(_CONTENT_HEADER_METHODS) do
             EllesmereUI[name] = savedMethods[name]
+        end
+        if not jobOk and EllesmereUI.IsDevModeActive and EllesmereUI.IsDevModeActive() then
+            print("|cffff6060EUI GlobalSearch:|r prebuild job errored for "
+                .. tostring(job.folder) .. "::" .. tostring(job.page) .. ": " .. tostring(jobErr))
         end
     end
     -- Set on the LAST variant job of a page: restore whatever the player
@@ -670,7 +682,10 @@ local function RunPrebuildPass(onComplete)
             if onComplete then onComplete() end
             return
         end
-        PrebuildJob(job)
+        -- pcall: one bad job (e.g. a module's selector restore erroring) must
+        -- not kill the whole staggered pass -- _prebuildDone is already true,
+        -- so a dead chain would never be retried this session.
+        pcall(PrebuildJob, job)
         C_Timer.After(0.05, StepJob)
     end
     if jobs[1] then

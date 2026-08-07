@@ -192,7 +192,7 @@ local function BuildAutoLoggingPage(pageName, parent, yOffset)
     ); y = y - trigH
 
     -- Replace dummy dropdown with a checkbox dropdown.
-    do
+    if not EllesmereUI._prebuilding then
         local rightRgn = trigRow._rightRegion
         if rightRgn._control then rightRgn._control:Hide() end
 

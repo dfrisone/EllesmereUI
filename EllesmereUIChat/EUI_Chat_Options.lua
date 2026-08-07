@@ -108,7 +108,12 @@ initFrame:SetScript("OnEvent", function(self)
               values={ __placeholder = "..." }, order={ "__placeholder" },
               getValue=function() return "__placeholder" end,
               setValue=function() end })
-        do
+        -- Hidden search pre-build: widget rows are absorber tables there, so
+        -- region chrome (CreateFrame/SetPoint against a row region) would
+        -- throw and abort the page's index pass. Guarded blocks register no
+        -- search entries, so skipping them loses nothing. Same for every
+        -- region-chrome block in this file.
+        if not EllesmereUI._prebuilding then
             local rightRgn = visRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
@@ -155,7 +160,7 @@ initFrame:SetScript("OnEvent", function(self)
               values=btValues, order=btOrder,
               getValue=function() return Cfg("bgTexture") or "none" end,
               setValue=function(v) Set("bgTexture", v); RefreshAll() end })
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = bgRow._leftRegion
             local ctrl = rgn._control
             local bgSwatch, bgSwatchRefresh = EllesmereUI.BuildColorSwatch(
@@ -214,7 +219,7 @@ initFrame:SetScript("OnEvent", function(self)
                       })
                   end })
             -- Cog for Outline Mode
-            do
+            if not EllesmereUI._prebuilding then
                 local rrgn = fontRow._rightRegion
                 local outlineValues = {
                     ["__global"] = { text = "EUI Global Default" },
@@ -293,7 +298,7 @@ initFrame:SetScript("OnEvent", function(self)
             y = y - h
 
             -- Border offset dropdown on Border Style.
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = borderRow._leftRegion
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title = "Border Offset",
@@ -382,7 +387,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             -- Accent, custom, and class-color selectors beside Border Size.
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = borderRow._rightRegion
                 local ctrl = rgn._control
                 local function ApplyMode(mode)
@@ -538,7 +543,7 @@ initFrame:SetScript("OnEvent", function(self)
                   if ECHAT.ApplySidebarBackground then ECHAT.ApplySidebarBackground() end
               end })
         -- Cog for Sidebar Visibility
-        do
+        if not EllesmereUI._prebuilding then
             local lrgn = sidebarRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Sidebar Settings",
@@ -583,7 +588,7 @@ initFrame:SetScript("OnEvent", function(self)
                   if ECHAT.ApplyExtendedBackground then ECHAT.ApplyExtendedBackground() end
                   EllesmereUI:RefreshPage()
               end })
-        do
+        if not EllesmereUI._prebuilding then
             local lrgn = sidebarLayoutRow._rightRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title="Separate Sidebar",
@@ -668,7 +673,7 @@ initFrame:SetScript("OnEvent", function(self)
               values={ __placeholder = "..." }, order={ "__placeholder" },
               getValue=function() return "__placeholder" end,
               setValue=function() end })
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = iconOptionsRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
             local pendingIconReload = false
@@ -726,7 +731,7 @@ initFrame:SetScript("OnEvent", function(self)
                   if ECHAT.ApplySidebarIcons then ECHAT.ApplySidebarIcons() end
                   EllesmereUI:RefreshPage()
               end })
-        do
+        if not EllesmereUI._prebuilding then
             local lrgn = sizeRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Icon Settings",
@@ -754,7 +759,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
         end
         -- "Reset" label next to the Free Move Icons toggle (only visible when enabled)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = sizeRow._rightRegion
             local resetFS = rgn:CreateFontString(nil, "OVERLAY")
             resetFS:SetFont(EllesmereUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 12, "")
@@ -858,7 +863,7 @@ initFrame:SetScript("OnEvent", function(self)
                       if ECHAT.ApplyTabLayout then ECHAT.ApplyTabLayout() end
                   end })
             -- Cog on Inner Padding X: Tab Offset X (applies in both tab modes)
-            do
+            if not EllesmereUI._prebuilding then
                 local rrgn = tabSizeRow._rightRegion
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title = "Tab Layout",
@@ -1089,6 +1094,7 @@ initFrame:SetScript("OnEvent", function(self)
                 { type="multiSwatch", text="Tab Background Color Active",
                   swatches=ActiveTabBgSwatches() })
             local function AttachTabBgOpacityCog(rgn, active)
+                if EllesmereUI._prebuilding then return end
                 local key = active and "tabBackgroundColorActive" or "tabBackgroundColor"
                 local fallback = TAB_BG_FALLBACK[active]
                 local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -1210,8 +1216,10 @@ initFrame:SetScript("OnEvent", function(self)
                       Set("tabBackgroundTexture", v)
                       if ECHAT.ApplyTabAppearance then ECHAT.ApplyTabAppearance() end
                   end })
-            EllesmereUI.BuildInlineSwatches(
-                underlineRow._leftRegion, UnderlineSwatches())
+            if not EllesmereUI._prebuilding then
+                EllesmereUI.BuildInlineSwatches(
+                    underlineRow._leftRegion, UnderlineSwatches())
+            end
             y = y - h
 
             -- (No tab idle-fade section: the per-tab fade layer was removed
@@ -1273,7 +1281,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end })
             y = y - h
 
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = borderRow._leftRegion
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title="Tab Border Offset", captureRegion=rgn,
@@ -1318,7 +1326,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI.RegisterWidgetRefresh(Refresh); Refresh()
             end
 
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn, ctrl = borderRow._rightRegion, borderRow._rightRegion._control
                 local function SetMode(mode)
                     if tabBordersDisabled() then return end
@@ -1364,7 +1372,7 @@ initFrame:SetScript("OnEvent", function(self)
                       EllesmereUI:RefreshPage()
                   end },
                 { type="label", text="" })
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = activeBorderRow._leftRegion
                 local swatch, refreshSwatch = EllesmereUI.BuildColorSwatch(
                     rgn, activeBorderRow:GetFrameLevel() + 3,
@@ -1498,7 +1506,7 @@ initFrame:SetScript("OnEvent", function(self)
                   if ECHAT.ApplyBorders then ECHAT.ApplyBorders() end
                   EllesmereUI:RefreshPage()
               end })
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = extrasBorderRow._rightRegion
             local ctrl = rgn._control
             local function SetInnerMode(mode)

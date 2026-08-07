@@ -91,7 +91,12 @@ initFrame:SetScript("OnEvent", function(self)
               values={ __placeholder = "..." }, order={ "__placeholder" },
               getValue=function() return "__placeholder" end,
               setValue=function() end })
-        do
+        -- Hidden search pre-build: widget rows are absorber tables there, so
+        -- region chrome (CreateFrame/SetPoint against a row region) would
+        -- throw and abort the page's index pass. Guarded blocks register no
+        -- search entries, so skipping them loses nothing. Same for every
+        -- region-chrome block in this file.
+        if not EllesmereUI._prebuilding then
             local rightRgn = visRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
@@ -201,7 +206,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Inline cog on Shape for the Rotate Minimap toggle. Off (default) keeps
         -- the rotateMinimap CVar at 0; on sets it to 1 (enforced in ApplyMinimap).
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = shapeRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Shape Settings",
@@ -265,7 +270,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Inline cog for border offset (left region); only shown for textured styles
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = borderRow._leftRegion
             local function BorderTex()
                 local m = MinimapDB(); return (m and m.borderTexture) or "solid"
@@ -360,7 +365,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
         -- Inline accent + class + custom colour swatches on the Border Size
         -- slider. Modes are mutually exclusive: class > accent > custom.
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = borderRow._rightRegion
             local PPl = EllesmereUI.PP
 
@@ -477,7 +482,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- "Reset" label next to the Free Move toggle (only visible when enabled)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = fmRow._leftRegion
             local resetFS = rgn:CreateFontString(nil, "OVERLAY")
             resetFS:SetFont(EllesmereUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 12, "")
@@ -527,7 +532,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Replace placeholder dropdown with checkbox dropdown
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = ungroupRow._leftRegion
             if leftRgn._control then leftRgn._control:Hide() end
 
@@ -620,7 +625,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Replace placeholder with checkbox dropdown
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = extraBtnRow._leftRegion
             if leftRgn._control then leftRgn._control:Hide() end
 
@@ -758,7 +763,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" }
         );  y = y - h
         -- Inline cog on Button Row Position for icon spacing
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = btnRowRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Button Row Settings",
@@ -839,7 +844,7 @@ initFrame:SetScript("OnEvent", function(self)
                   m.omniumFolioScale = v
                   RefreshMinimap()
               end });  y = y - h
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = omniumRow._leftRegion
             local function omniumOff() return OmniumMode() == "never" end
             local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -909,7 +914,7 @@ initFrame:SetScript("OnEvent", function(self)
                 m.scrollZoom = v
                 RefreshMinimap()
               end }); y = y - h
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = blizzRow._leftRegion
             if rgn._control then rgn._control:Hide() end
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
@@ -976,7 +981,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Inline offset cog on Mail Position (corner modes only)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = elRowRow._rightRegion
             local function mailOff()
                 local m = MinimapDB()
@@ -1029,7 +1034,7 @@ initFrame:SetScript("OnEvent", function(self)
             if mailOff() then cogBlock:Show() else cogBlock:Hide() end
         end
         -- Inline cog on Element Row Position for icon spacing
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = elRowRow._leftRegion
             local function elOff()
                 local m = MinimapDB(); return m and (m.shape or "square") ~= "square"
@@ -1126,7 +1131,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Inline cog on Clock Position for scale + X/Y offset
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = clockRow._rightRegion
             local function clockOff()
                 return ClockMode() == "none"
@@ -1216,7 +1221,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Inline cog on Zone Text Style: reactive zone coloring
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = zoneRow._leftRegion
             local function styleOff()
                 return LocationMode() == "none"
@@ -1264,7 +1269,7 @@ initFrame:SetScript("OnEvent", function(self)
             if styleOff() then cogBlock:Show() else cogBlock:Hide() end
         end
         -- Inline cog on Zone Position for scale + X/Y offset
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = zoneRow._rightRegion
             local function locOff()
                 return LocationMode() == "none"
@@ -1355,7 +1360,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Inline cog on Coordinates Position for X/Y offset
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = coordsRow._rightRegion
             local function coordsOff() return CoordsMode() == "never" end
             local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -1436,7 +1441,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline cog on Show FPS/MS (text size + which MS readouts show).
         -- The description-colour swatches live on the Accented Text row at
         -- the bottom of this section.
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = fpsRow._leftRegion
 
             local _, fpsCogShow = EllesmereUI.BuildCogPopup({
@@ -1501,7 +1506,7 @@ initFrame:SetScript("OnEvent", function(self)
             if FpsOff() then fpsCogBlock:Show() else fpsCogBlock:Hide() end
         end
         -- Inline offset cog on FPS/MS Position
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = fpsRow._rightRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "FPS/MS Size and Position",
@@ -1604,7 +1609,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
         -- Inline cog on Difficulty Position for text size + X/Y offset
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = diffRow._rightRegion
             local function diffOff()
                 return not DiffTextOn()
@@ -1682,7 +1687,7 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function() end },
             { type="label", text="" }
         );  y = y - h
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = accentRow._leftRegion
             if rgn._control then rgn._control:Hide() end
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(

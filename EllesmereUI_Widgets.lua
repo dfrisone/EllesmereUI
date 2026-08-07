@@ -8332,14 +8332,20 @@ function EllesmereUI.BuildVisibilityModeRow(W, parent, y, opts, rightCfg)
     end
 
     local leftRgn = row._leftRegion
-    if leftRgn._control then leftRgn._control:Hide() end
-    cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
-        leftRgn, opts.width or 210, leftRgn:GetFrameLevel() + 2,
-        items, GetChecked, SetChecked, nil, nil, nil, nil, OnMenuClosed)
-    PP.Point(cbDD, "RIGHT", leftRgn, "RIGHT", -20, 0)
-    leftRgn._control = cbDD
-    leftRgn._lastInline = nil
-    EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+    -- Hidden search pre-build: the W:DualRow above already registered this
+    -- row's search entries, but leftRgn is an absorber table there, and
+    -- BuildVisOptsCBDropdown would CreateFrame against it. Skip the checklist
+    -- chrome; cbDD stays nil, so the disabledFn block below is gated too.
+    if not EllesmereUI._prebuilding then
+        if leftRgn._control then leftRgn._control:Hide() end
+        cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+            leftRgn, opts.width or 210, leftRgn:GetFrameLevel() + 2,
+            items, GetChecked, SetChecked, nil, nil, nil, nil, OnMenuClosed)
+        PP.Point(cbDD, "RIGHT", leftRgn, "RIGHT", -20, 0)
+        leftRgn._control = cbDD
+        leftRgn._lastInline = nil
+        EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+    end
 
     -- Spec Overrides capture overlay: expose the scalar view of the setting
     -- (a captured multi applies as its representative single mode).
@@ -8367,7 +8373,7 @@ function EllesmereUI.BuildVisibilityModeRow(W, parent, y, opts, rightCfg)
     -- Row-level disabled state (e.g. Action Bars data bars in Blizzard
     -- mode): gray and lock the checklist button; the label tooltip is
     -- handled by the DualRow config passthrough above.
-    if opts.disabledFn then
+    if opts.disabledFn and cbDD then
         local function ApplyChecklistDisabled()
             local off = opts.disabledFn()
             cbDD:SetAlpha(off and 0.3 or 1)
