@@ -943,6 +943,38 @@ local function HarvestDefaults()
 end
 
 local function ApplyValuesFor(specID)
+    -- Bank the Default view's live edits BEFORE re-asserting the stored
+    -- layer below.
+    --
+    -- The Default view holds the user's edits in the LIVE profile and banks
+    -- them only at exit (ExitDefaultView -> HarvestDefaults). Every
+    -- RefreshAllAddons runs this function first, so a refresh raised BETWEEN
+    -- an edit and the exit wrote the STORED default straight over the edit
+    -- and silently reverted it. Most settings survive because their setters
+    -- do not raise a full refresh, which is why this surfaced on the custom
+    -- raid-size sliders: theirs runs ReloadAndUpdate on drag end, so the
+    -- revert lands about a second after the drag (field-reproduced on a
+    -- fresh install with no SavedVariables). It also explains the workaround
+    -- users found -- opening an Editing-as session and pressing Done exits
+    -- the view, which banks, after which the apply rewrites the same number.
+    --
+    -- Banking first makes the write below re-assert what the user just set
+    -- instead of what was stored before it, so the apply becomes a no-op for
+    -- edited keys rather than a reverter. It is the same call the exit path
+    -- already makes, so it inherits the match-owned and blacklist guards.
+    --
+    -- NOT during a transition: the leave step has already banked, and live
+    -- still holds the OUTGOING spec's values at that point (see
+    -- SpecOverrides_OnSpecChanged), so banking again would write those into
+    -- the incoming layer. Read before the flag is cleared below.
+    --
+    -- Group and conditional sessions are deliberately untouched: their
+    -- watcher banks on a 0.4s ticker, so their exposure is one tick rather
+    -- than "until you exit", and their harvests are exit-shaped with
+    -- teardown semantics this call site must not trigger.
+    if _defaultView and not _inTransition then
+        HarvestDefaults()
+    end
     _inTransition = false
     if specID then _activeSpec = specID end
     -- While Editing-as (or the panel's Default view) holds swapped values
