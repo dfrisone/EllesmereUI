@@ -9766,4 +9766,122 @@ SlashCmdList.CDMBUFF = function()
     end
     say("Run this again OUT of combat and compare: a row whose live= flips")
     say("from a number to SECRET is the one this is about.")
+    say("For ONE specific buff use: /cdmbuff <spellID or name>")
+end
+
+-------------------------------------------------------------------------------
+--  /cdmbuff <spellID|name> -- where is this ONE spell?
+--
+--  The bare dump above answers "what is in the pools", which is the wrong
+--  question when the reported buff is not in a pool at all. The settings list
+--  is deliberately a UNION of the live pools and the STATIC category API (see
+--  the picker: Blizzard withholds a pool frame until it considers the spell
+--  relevant, Beacon of Light being the documented case), so a spell can be
+--  offered in settings and never have a frame to claim. That reads to a user
+--  as "it is in the settings but not on my bars" with nothing wrong at the
+--  bar end at all.
+--
+--  This walks all four categories and all four viewers for one spell and says
+--  which of those two worlds it is in. Read-only; zero cost until typed.
+-------------------------------------------------------------------------------
+local function CDMBuffFindOne(query)
+    local isSecret = _G.issecretvalue or function() return false end
+    local function say(fmt, ...)
+        print("|cff0cd29fCDMbuff|r " .. string.format(fmt, ...))
+    end
+
+    local want = tonumber(query)
+    local wantName
+    if not want then
+        wantName = query:lower()
+    end
+    local function matches(sid)
+        if type(sid) ~= "number" or isSecret(sid) or sid <= 0 then return false end
+        if want then
+            if sid == want then return true end
+            -- Accept the base/override twins of the requested id too, so a
+            -- split-identity spell answers to whichever form the user typed.
+            local b = C_Spell and C_Spell.GetBaseSpell and C_Spell.GetBaseSpell(sid)
+            local o = C_Spell and C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid)
+            return b == want or o == want
+        end
+        local n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+        return n and n:lower():find(wantName, 1, true) ~= nil
+    end
+    local function nameOf(sid)
+        if type(sid) ~= "number" or isSecret(sid) or sid <= 0 then return "?" end
+        return (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or "?"
+    end
+
+    say("looking for: %s   combat=%s", query, tostring(InCombatLockdown and InCombatLockdown()))
+
+    -- 1) The STATIC category set: does Blizzard consider this spell trackable
+    --    at all, and is it "known" for this spec?
+    local hits = 0
+    local gcs = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
+    local gci = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
+    local evc = Enum and Enum.CooldownViewerCategory
+    if gcs and gci and evc then
+        for _, cname in ipairs({ "Essential", "Utility", "TrackedBuff", "TrackedBar" }) do
+            local cat = evc[cname]
+            if cat then
+                -- known set first, then the full set: a spell present only in
+                -- the full set is one this character cannot currently use.
+                local known = {}
+                local kIDs = gcs(cat, false)
+                if kIDs then for _, id in ipairs(kIDs) do known[id] = true end end
+                local allIDs = gcs(cat, true)
+                if allIDs then
+                    for _, cdID in ipairs(allIDs) do
+                        local info = gci(cdID)
+                        local sid = info and (info.overrideSpellID or info.spellID)
+                        if sid and matches(sid) then
+                            hits = hits + 1
+                            say("category %s: cdID=%d sid=%d(%s) known=%s",
+                                cname, cdID, sid, nameOf(sid), tostring(known[cdID] == true))
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if hits == 0 then
+        say("NOT in any category set. Blizzard does not track this spell for")
+        say("this character, so no bar can ever show it.")
+    end
+
+    -- 2) The LIVE pools: is there an actual frame to claim right now?
+    local found = 0
+    for _, vname in ipairs({ "EssentialCooldownViewer", "UtilityCooldownViewer",
+                            "BuffIconCooldownViewer", "BuffBarCooldownViewer" }) do
+        local vf = _G[vname]
+        if vf and vf.itemFramePool and vf.itemFramePool.EnumerateActive then
+            for ch in vf.itemFramePool:EnumerateActive() do
+                local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                local info = cdID and gci and gci(cdID)
+                local sid = info and (info.overrideSpellID or info.spellID)
+                local clean = ns._cdmCleanSidByCDID and cdID and ns._cdmCleanSidByCDID[cdID]
+                if (sid and matches(sid)) or (clean and matches(clean)) then
+                    found = found + 1
+                    local fc = ns._ecmeFC and ns._ecmeFC[ch]
+                    say("pool %s: cdID=%s shown=%s claimed=%s clean=%s",
+                        vname, tostring(cdID), tostring(ch:IsShown()),
+                        tostring(fc and fc.barKey or nil), tostring(clean))
+                end
+            end
+        end
+    end
+    if found == 0 then
+        say("NO live pool frame right now. If the category line above says it")
+        say("IS tracked, this is the answer: it shows in settings because the")
+        say("picker unions the static set, and there is simply no frame to put")
+        say("on a bar until Blizzard decides to create one.")
+    end
+end
+
+local _cdmBuffDumpAll = SlashCmdList.CDMBUFF
+SlashCmdList.CDMBUFF = function(msg)
+    msg = msg and msg:match("^%s*(.-)%s*$") or ""
+    if msg == "" then return _cdmBuffDumpAll(msg) end
+    return CDMBuffFindOne(msg)
 end
