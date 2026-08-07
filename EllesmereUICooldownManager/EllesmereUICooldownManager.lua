@@ -6630,6 +6630,164 @@ function ns.ResolveCastableInterrupt(sid)
     return nil
 end
 
+--------------------------------------------------------------------------------
+-- FOCUSKICK SILENCE PROBE (throwaway build -- never merge)
+--
+-- v8.7.6 is v8.7.5 plus PR #1194 for this whole code path, and #1194 added a
+-- fire-time spellbook gate that can return BEFORE the sound plays. This probe
+-- separates the two ways the sound can be silent:
+--   ARMING  -- the proxy was never built or is not listening, so the handler
+--              never runs at all (the #1178 family).
+--   GATE    -- the handler runs and returns early, and this says at which line
+--              and with what inputs.
+--------------------------------------------------------------------------------
+-- Scoped in a do-block and published on ns: the main chunk is at Lua's
+-- 200-local ceiling, so six more file locals will not compile.
+ns._fkpOn = true
+do
+local function fkp(msg)
+    print("|cff00ccffCDM fk|r " .. tostring(msg))
+end
+ns._fkp = fkp
+
+local function fkpTrace(msg)
+    if ns._fkpOn then fkp("fire: " .. tostring(msg)) end
+end
+
+-- Every arm of ns.ResolveCastableInterrupt, reported separately, so a rejected
+-- id says WHICH lookup refused it rather than just "nil".
+local function fkpDescribeSpell(sid)
+    if type(sid) ~= "number" then return "id=" .. tostring(sid) .. " (not a number)" end
+    local ok, out = pcall(function()
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
+        local name = (info and info.name) or "?"
+        local ips = IsPlayerSpell and tostring(IsPlayerSpell(sid)) or "no-api"
+        local kib = "no-api"
+        if C_SpellBook and C_SpellBook.IsSpellKnownOrInSpellBook then
+            kib = tostring(C_SpellBook.IsSpellKnownOrInSpellBook(sid))
+        end
+        local ovr = "no-api"
+        if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
+            ovr = tostring(C_SpellBook.FindSpellOverrideByID(sid))
+        end
+        local base = "no-api"
+        if C_Spell and C_Spell.GetBaseSpell then
+            base = tostring(C_Spell.GetBaseSpell(sid))
+        end
+        local pet = "no-api"
+        if C_SpellBook and C_SpellBook.IsSpellKnownOrInSpellBook
+            and Enum and Enum.SpellBookSpellBank then
+            pet = tostring(C_SpellBook.IsSpellKnownOrInSpellBook(sid, Enum.SpellBookSpellBank.Pet))
+        end
+        local res = "no-api"
+        if ns.ResolveCastableInterrupt then
+            res = tostring(ns.ResolveCastableInterrupt(sid))
+        end
+        local cd = "?"
+        if C_Spell and C_Spell.GetSpellCooldown then
+            local cdInfo = C_Spell.GetSpellCooldown(sid)
+            cd = tostring(cdInfo and cdInfo.isActive)
+        end
+        return string.format(
+            "id=%d name=%s IsPlayerSpell=%s KnownOrInBook=%s override=%s base=%s petBank=%s RESOLVED=%s cdActive=%s",
+            sid, name, ips, kib, ovr, base, pet, res, cd)
+    end)
+    if not ok then return "id=" .. tostring(sid) .. " LOOKUP ERROR: " .. tostring(out) end
+    return out
+end
+
+local function fkpProxyState()
+    if not _focusCastProxy then return "NOT CREATED" end
+    local start = _focusCastProxy:IsEventRegistered("UNIT_SPELLCAST_START")
+    local chan = _focusCastProxy:IsEventRegistered("UNIT_SPELLCAST_CHANNEL_START")
+    if start or chan then
+        return string.format("LISTENING (start=%s channel=%s)", tostring(start), tostring(chan))
+    end
+    return "DEAF (built but unregistered)"
+end
+
+local function fkpDump(tag)
+    local ok, err = pcall(function()
+        fkp("---- dump [" .. tostring(tag) .. "] ----")
+        local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
+        local unit = GetFocusKickUnit and GetFocusKickUnit() or "?"
+        fkp(string.format("proxy=%s unit=%s unitExists=%s unitCasting=%s",
+            fkpProxyState(), tostring(unit),
+            tostring(UnitExists and UnitExists(unit)),
+            tostring(UnitCastingInfo and UnitCastingInfo(unit) ~= nil)))
+        if not bd then
+            fkp("bd=nil (no focuskick bar data) -- nothing can fire")
+            return
+        end
+        fkp(string.format("bd=ok enabled=%s soundKey=%s useTarget=%s pick=%s",
+            tostring(bd.enabled), tostring(bd.focusCastSoundKey),
+            tostring(bd.focusKickUseTarget), tostring(bd.focusKickInterruptSpellID)))
+        if bd.focusKickInterruptSpellID then
+            fkp("pick: " .. fkpDescribeSpell(bd.focusKickInterruptSpellID))
+        else
+            fkp("pick: none set (sound depends entirely on the bar's spells)")
+        end
+        local sd = ns.GetBarSpellData and ns.GetBarSpellData(FOCUSKICK_BAR_KEY)
+        if not sd then
+            fkp("barSpellData=nil (spec key unresolved)")
+        else
+            local list = sd.assignedSpells or {}
+            local pos = 0
+            for _, sid in ipairs(list) do
+                if type(sid) == "number" and sid > 0 then pos = pos + 1 end
+            end
+            fkp(string.format("bar spells=%d(%d pos)", #list, pos))
+            for _, sid in ipairs(list) do
+                fkp("  bar: " .. fkpDescribeSpell(sid))
+            end
+        end
+        local soundKey = bd.focusCastSoundKey or "none"
+        fkp(string.format("soundPath=%s trace=%s",
+            tostring(FOCUSKICK_SOUND_PATHS and FOCUSKICK_SOUND_PATHS[soundKey]),
+            tostring(FKP_TRACE)))
+    end)
+    if not ok then fkp("DUMP ERROR: " .. tostring(err)) end
+end
+
+SLASH_EUIKICK1 = "/euikick"
+SlashCmdList["EUIKICK"] = function(msg)
+    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if msg == "off" then
+        FKP_TRACE = false
+        fkp("per-cast trace OFF")
+        return
+    elseif msg == "on" then
+        FKP_TRACE = true
+        fkp("per-cast trace ON")
+        return
+    elseif msg == "sound" then
+        -- Proves the configured sound file itself can play, independent of
+        -- every gate above it.
+        local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
+        local key = bd and bd.focusCastSoundKey or "none"
+        local path = FOCUSKICK_SOUND_PATHS and FOCUSKICK_SOUND_PATHS[key]
+        fkp("forcing sound key=" .. tostring(key) .. " path=" .. tostring(path))
+        if path then fkp("PlaySoundFile returned " .. tostring(PlaySoundFile(path, "Master"))) end
+        return
+    end
+    fkpDump("manual")
+end
+
+do
+    local f = ns.TakeShell()
+    f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    f:SetScript("OnEvent", function()
+        C_Timer.After(5, function() fkpDump("PEW+5s") end)
+        C_Timer.After(15, function() fkpDump("PEW+15s") end)
+    end)
+end
+
+ns._fkpT = fkpTrace
+ns._fkpDesc = fkpDescribeSpell
+ns._fkpProxyState = fkpProxyState
+ns._fkpDump = fkpDump
+end
+
 local function EnsureFocusCastProxy()
     if _focusCastProxy then
         -- Demand-gate re-activation: re-register (idempotent; re-applying
@@ -6643,11 +6801,12 @@ local function EnsureFocusCastProxy()
     local unit = GetFocusKickUnit()
     _focusCastProxy:RegisterUnitEvent("UNIT_SPELLCAST_START", unit)
     _focusCastProxy:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", unit)
-    _focusCastProxy:SetScript("OnEvent", function()
+    _focusCastProxy:SetScript("OnEvent", function(_, event, evUnit)
+        ns._fkpT(string.format("HANDLER RAN event=%s unit=%s", tostring(event), tostring(evUnit)))
         local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
-        if not bd then return end
+        if not bd then ns._fkpT("STOP: no bar data") return end
         local soundKey = bd.focusCastSoundKey or "none"
-        if soundKey == "none" then return end
+        if soundKey == "none" then ns._fkpT("STOP: sound key is none") return end
         local spellID = bd.focusKickInterruptSpellID
         -- An explicit pick is only trusted while this character can cast it.
         -- A stale profile-level id sails through the cooldown gate below
@@ -6661,7 +6820,13 @@ local function EnsureFocusCastProxy()
         -- into "cannot cast it" is what silently unregistered a working proxy
         -- in the first place. This handler only runs on a live cast, by which
         -- point the spellbook is settled.
-        if spellID then spellID = ns.ResolveCastableInterrupt(spellID) end
+        if spellID then
+            ns._fkpT("pick before gate: " .. ns._fkpDesc(spellID))
+            spellID = ns.ResolveCastableInterrupt(spellID)
+            ns._fkpT("pick after gate: " .. tostring(spellID))
+        else
+            ns._fkpT("no explicit pick, falling through to the bar")
+        end
         -- Auto-fallback: if user hasn't explicitly picked a spell, use the
         -- first CASTABLE positive spell on the bar. The picker exists for users
         -- who want a specific spell when multiple are on the bar.
@@ -6679,15 +6844,21 @@ local function EnsureFocusCastProxy()
                 for _, sid in ipairs(sd.assignedSpells) do
                     if type(sid) == "number" and sid > 0 then
                         local castable = ns.ResolveCastableInterrupt(sid)
+                        ns._fkpT("bar candidate: " .. ns._fkpDesc(sid))
                         if castable then
                             spellID = castable
                             break
                         end
                     end
                 end
+            else
+                ns._fkpT("bar has no spell data / no assignedSpells")
             end
         end
-        if not spellID or spellID <= 0 then return end
+        if not spellID or spellID <= 0 then
+            ns._fkpT("STOP: no castable interrupt resolved -- THIS IS THE #1194 GATE")
+            return
+        end
 
         -- No interruptible check. The kickProtected flag on UnitCastingInfo
         -- and UnitChannelInfo is a secret boolean in Midnight and any
@@ -6701,10 +6872,17 @@ local function EnsureFocusCastProxy()
         -- Midnight and can't be compared in Lua, but isActive is safe.
         if C_Spell and C_Spell.GetSpellCooldown then
             local cdInfo = C_Spell.GetSpellCooldown(spellID)
-            if cdInfo and cdInfo.isActive then return end
+            if cdInfo and cdInfo.isActive then
+                ns._fkpT("STOP: interrupt " .. tostring(spellID) .. " is on cooldown")
+                return
+            end
         end
         local path = FOCUSKICK_SOUND_PATHS[soundKey]
-        if not path then return end
+        if not path then
+            ns._fkpT("STOP: no sound path for key " .. tostring(soundKey))
+            return
+        end
+        ns._fkpT("PLAYING " .. tostring(path))
         PlaySoundFile(path, "Master")
     end)
     return _focusCastProxy
@@ -7070,9 +7248,10 @@ ns.EnsureFocusReminderProxy = EnsureFocusReminderProxy
 -- runtime: no events registered anywhere, no ticker, zero cost. Called from
 -- setup and from the tail of every BuildAllCDMBars, so assigning the first
 -- kick spell (or removing the last) flips the family on/off live.
-function ns.RefreshFocusKickProxies()
+function ns.RefreshFocusKickProxies(why)
     local bd = barDataByKey and barDataByKey[FOCUSKICK_BAR_KEY]
     local hasContent = false
+    ns._fkWhy = why or "unknown"
     -- "No spell data available" is NOT the same as "the bar is empty".
     -- GetBarSpellData returns nil while the active spec key is unresolved
     -- (not specKey or specKey == "0"), which is exactly the state during a
@@ -7122,6 +7301,10 @@ function ns.RefreshFocusKickProxies()
         -- spell store, so the sound can arm right now even though the store is
         -- still unresolved. Only the bar-content dependent parts have to wait.
         if soundWanted then EnsureFocusCastProxy() end
+        if ns._fkpOn then
+            ns._fkp(string.format("arm [%s]: store UNRESOLVED, soundWanted=%s -> proxy=%s (retry in 2s)",
+                tostring(why), tostring(soundWanted), ns._fkpProxyState()))
+        end
         -- One pending retry at a time, self-cancelling.
         if not ns._fkRearmPending then
             ns._fkRearmPending = true
@@ -7154,6 +7337,14 @@ function ns.RefreshFocusKickProxies()
         EnsureFocusCastProxy()
     elseif _focusCastProxy then
         _focusCastProxy:UnregisterAllEvents()
+    end
+    if ns._fkpOn then
+        ns._fkp(string.format("arm [%s]: bd=%s enabled=%s hasContent=%s storeReady=%s soundKey=%s pick=%s soundWanted=%s -> proxy=%s",
+            tostring(why), bd and "ok" or "nil",
+            tostring(bd and bd.enabled), tostring(hasContent), tostring(storeReady),
+            tostring(bd and bd.focusCastSoundKey),
+            tostring(bd and bd.focusKickInterruptSpellID),
+            tostring(soundWanted), ns._fkpProxyState()))
     end
 end
 
