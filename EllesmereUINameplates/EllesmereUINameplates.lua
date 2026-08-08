@@ -18,6 +18,12 @@ local UnitGetTotalAbsorbs = UnitGetTotalAbsorbs
 local C_UnitAuras = C_UnitAuras
 local C_UnitAuras_GetAuraAppDisplayCount = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
 local C_UnitAuras_GetAuraDuration = C_UnitAuras and C_UnitAuras.GetAuraDuration
+-- Enemy-buff re-rank, used only when the four-slot row has to truncate.
+-- On ns rather than file locals: this chunk sits on Lua's 200-local ceiling.
+-- Nil on any client predating the sort arguments; the caller then keeps
+-- Blizzard's own priority walk.
+ns._npBuffSort = Enum and Enum.UnitAuraSortRule and Enum.UnitAuraSortRule.Expiration
+ns._npBuffSortDir = Enum and Enum.UnitAuraSortDirection and Enum.UnitAuraSortDirection.Normal
 -- Permanent / no-duration auras (enemy buffs in M+, until-dispelled debuffs)
 -- return a degenerate (0,0) duration object whose armed CooldownFrame strobes:
 -- the client internally shows the reversed swipe then self-hides on every aura
@@ -7933,24 +7939,110 @@ function NameplateFrame:UpdateAuras(updateInfo)
     if buffsAttackable then
         local uf = self.nameplate.UnitFrame
         if uf and uf.AurasFrame and uf.AurasFrame.buffList and uf.AurasFrame.buffList.Iterate then
-            if not self._importantBuffSet then self._importantBuffSet = {} end
-            local importantBuffSet = self._importantBuffSet
-            wipe(importantBuffSet)
+            -- buffList is not a plain table: Blizzard builds it as a
+            -- priority table over BuffCompare, which ranks IsSpellImportant
+            -- auras first and then orders by aura instance id, and Iterate
+            -- walks it in exactly that order (TableUtil PriorityTableMixin),
+            -- stopping as soon as the callback returns true.
+            --
+            -- The previous code emptied that walk into a hash set and then
+            -- re-read it with pairs(), which THREW THE RANKING AWAY. Which
+            -- four auras survived the four-slot cap became hash order, and
+            -- because the set is wiped and refilled on every rebuild it could
+            -- differ from one rebuild to the next, so a buff could be dropped
+            -- for a rebuild or several before it happened to land a slot.
+            -- Reading the first four straight off the ordered walk restores
+            -- Blizzard's ranking, is stable between rebuilds, and drops both
+            -- the set and the per-id GetAuraDataByAuraInstanceID lookups.
+            --
+            -- The callback is cached per plate and therefore MUST NOT close
+            -- over this call's locals (skipIDs/skipAuras/bIdx are per-call);
+            -- a stale upvalue would write into a previous rebuild's scratch.
+            -- It reaches the shared scratch tables through ns and carries its
+            -- cursor on self instead.
+            self._buffFillIdx = bIdx
             if not self._buffIterateCB then
-                self._buffIterateCB = function(auraInstanceID)
-                    self._importantBuffSet[auraInstanceID] = true
+                self._buffIterateCB = function(auraInstanceID, aura)
+                    local i = self._buffFillIdx
+                    if i > 4 then return true end
+                    if aura and aura.icon then
+                        ns._npScratchIDs[i] = auraInstanceID
+                        ns._npScratchAuras[i] = aura
+                        self._buffFillIdx = i + 1
+                    end
                 end
             end
-            uf.AurasFrame.buffList:Iterate(self._buffIterateCB)
-            local _getAura = C_UnitAuras.GetAuraDataByAuraInstanceID
-            for id in pairs(importantBuffSet) do
-                if bIdx > 4 then break end
-                local aura = _getAura(unit, id)
-                if aura and aura.icon then
-                    skipIDs[bIdx] = id
-                    skipAuras[bIdx] = aura
-                    bIdx = bIdx + 1
+            local buffList = uf.AurasFrame.buffList
+            local total = buffList.Size and buffList:Size() or 0
+            -- Blizzard's ranking alone is not enough once the row has to
+            -- truncate. BuffCompare ties on ASCENDING aura instance id, so
+            -- with four buffs already holding the slots a newly applied fifth
+            -- sorts last and never appears. Blizzard can afford that: their
+            -- own row is uncapped, so the ranking never has to survive a cut.
+            -- Ours cuts at four, and a shield the mob just cast on itself is
+            -- exactly the aura a player needs to see.
+            --
+            -- So when, and only when, there are more qualifying buffs than
+            -- slots, re-rank by time remaining. A freshly applied buff still
+            -- carries its full, short duration and so outranks the long and
+            -- permanent auras the mob has been standing there with.
+            --
+            -- Expiration, specifically, and NOT ExpirationOnly. Only
+            -- Expiration is documented to place permanent auras last; a mob
+            -- in an instance commonly carries permanent auras, and if those
+            -- sorted first they would take all four slots and hide the very
+            -- thing this is meant to surface. Expiration also ranks auras the
+            -- player could cast ahead of the rest, which helps rather than
+            -- hurts here. The engine does the ordering because AuraData
+            -- contents are conditionally secret; ranking on aura fields in
+            -- Lua would be a secret-value bug waiting on the right instance.
+            --
+            -- Known trade-off: above the cap this drops Blizzard's
+            -- IsSpellImportant tier, so an important long buff can lose its
+            -- slot to shorter ones. Surfacing what just landed is the point
+            -- of the row; preserving both would need a reserved slot.
+            local ordered
+            if total > 4 and ns._npBuffSort and ns._npBuffSortDir
+                and buffList.Get and C_UnitAuras.GetUnitAuras then
+                ordered = C_UnitAuras.GetUnitAuras(unit,
+                    "HELPFUL|INCLUDE_NAME_PLATE_ONLY", nil, ns._npBuffSort, ns._npBuffSortDir)
+            end
+            if ordered then
+                for i = 1, #ordered do
+                    if bIdx > 4 then break end
+                    local aura = ordered[i]
+                    local id = aura and aura.auraInstanceID
+                    -- buffList:Get IS the gate. The filter string matches the
+                    -- one Blizzard builds buffList from, but GetUnitAuras
+                    -- returns every helpful nameplate aura whereas buffList
+                    -- holds only those AddAura kept (stealable or important),
+                    -- so membership still has to be tested. Nothing becomes
+                    -- visible here that was not visible before.
+                    if id and aura.icon and buffList:Get(id) then
+                        ns._npScratchIDs[bIdx] = id
+                        ns._npScratchAuras[bIdx] = aura
+                        bIdx = bIdx + 1
+                    end
                 end
+            end
+            -- Fall back whenever the ranked pass did not fill every slot it
+            -- should have, not merely when it filled none. buffList and
+            -- GetUnitAuras are two views of the same auras and can disagree
+            -- for a moment, and a partial fill would otherwise leave the row
+            -- showing FEWER icons than before the change. This also covers
+            -- the ordinary at-or-below-the-cap case, where nothing was ranked
+            -- and Blizzard's priority walk costs no allocation.
+            local want = (total < 4) and total or 4
+            if bIdx - 1 < want then
+                -- Re-fill from index 1, so clear what the ranked pass wrote:
+                -- the membership check downstream is positional and reads
+                -- #skipIDs, so leftover entries past the new count would be
+                -- read as displayed auras.
+                wipe(skipIDs); wipe(skipAuras)
+                bIdx = 1
+                self._buffFillIdx = 1
+                buffList:Iterate(self._buffIterateCB)
+                bIdx = self._buffFillIdx
             end
         end
     end
