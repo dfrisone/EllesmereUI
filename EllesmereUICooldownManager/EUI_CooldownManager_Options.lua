@@ -14257,7 +14257,6 @@ initFrame:SetScript("OnEvent", function(self)
         local function GetBuffIdToCdid()
             local specKey = (ns.GetActiveSpecKey and ns.GetActiveSpecKey()) or "?"
             if _buffIdToCdSpec == specKey then return _buffIdToCd end
-            _buffIdToCdSpec = specKey
             local map
             local gcs = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
             local gci = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
@@ -14281,7 +14280,18 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
             end
-            _buffIdToCd = map
+            -- Stamp the spec ONLY once a scan actually produced something. The
+            -- stamp used to be written before the scan, so a scan that came
+            -- back empty -- the cooldown-viewer API not being ready yet is the
+            -- realistic way that happens, early in a login or a spec change --
+            -- cached nil under the live spec key and every later call took the
+            -- memo hit and returned it. Dedup then stayed off for the rest of
+            -- the session on that spec, and duplicate buffs showed as separate
+            -- preview slots with no way to recover short of a reload. An empty
+            -- result now simply retries on the next call.
+            if map then
+                _buffIdToCd, _buffIdToCdSpec = map, specKey
+            end
             return map
         end
 
