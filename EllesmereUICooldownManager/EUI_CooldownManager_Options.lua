@@ -14262,20 +14262,51 @@ initFrame:SetScript("OnEvent", function(self)
             local gcs = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
             local gci = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
             if gcs and gci then
+                -- TWO passes, and the order is the whole point.
+                --
+                -- An entry's own spellID/overrideSpellID IDENTIFIES it. Another
+                -- entry's linkedSpellIDs merely REFERENCES it. Writing both in
+                -- one pass made the last write win, so a later entry's linked
+                -- list could overwrite a spell's own id and drag that spell
+                -- into the wrong cooldown group.
+                --
+                -- That matters because the grouping feeds BuildBuffDisplayDedup,
+                -- which collapses everything sharing a cooldownID into ONE
+                -- preview slot, and removing a slot deletes EVERY assignedSpells
+                -- entry in it. Dedup is meant for a legacy duplicate -- the same
+                -- buff stored twice -- so removing all copies is right. Two
+                -- DISTINCT buffs sharing a slot is not that, and there removing
+                -- one silently removed the other.
+                --
+                -- Claiming own ids first also leaves genuine duplicates working:
+                -- a spellID and its overrideSpellID belong to the SAME cdID, so
+                -- they still land in one group. Linked ids now fill only the
+                -- gaps, which is the case they exist for -- an id with no entry
+                -- of its own.
+                local recs = {}
                 for cat = 0, 3 do
                     local ids = gcs(cat, true)
                     if ids then
                         for _, cdID in ipairs(ids) do
                             local info = gci(cdID)
                             if info then
+                                recs[#recs + 1] = { cdID = cdID, info = info }
                                 map = map or {}
                                 if type(info.spellID) == "number" and info.spellID > 0 then map[info.spellID] = cdID end
                                 if type(info.overrideSpellID) == "number" and info.overrideSpellID > 0 then map[info.overrideSpellID] = cdID end
-                                if info.linkedSpellIDs then
-                                    for _, l in ipairs(info.linkedSpellIDs) do
-                                        if type(l) == "number" and l > 0 then map[l] = cdID end
-                                    end
-                                end
+                            end
+                        end
+                    end
+                end
+                for i = 1, #recs do
+                    local cdID, ls = recs[i].cdID, recs[i].info.linkedSpellIDs
+                    if ls then
+                        for _, l in ipairs(ls) do
+                            if type(l) == "number" and l > 0 then
+                                map = map or {}
+                                -- Never displace an id already claimed by the
+                                -- entry that actually owns it.
+                                if map[l] == nil then map[l] = cdID end
                             end
                         end
                     end
