@@ -531,6 +531,18 @@ local function DebuffSort()
     return SORT_IMPORTANT
 end
 
+-- Buff equivalent of DebuffSort. The buff group narrows in TWO independent
+-- ways -- the isStealable candidate filter and the ImportantOnly sort method
+-- -- and "Show All Enemy Buffs" has to release BOTH of them. It used to
+-- release only the candidate filter while the sort stayed pinned to
+-- ImportantOnly for the life of the container, so the option could not do
+-- what its name says. The debuff side has always switched its sort method
+-- with its Show All flag; this is the same rule for buffs.
+local function BuffSort()
+    if PVal("showAllEnemyBuffs") then return SORT_DEFAULT end
+    return SORT_IMPORTANT
+end
+
 -- Debuff importance: Blizzard's 12.1 nameplate rule (Blizzard_NamePlateAuras
 -- AddAura) is fetch HARMFUL|INCLUDE_NAME_PLATE_ONLY, then keep only auras
 -- flagged nameplateShowPersonal -- that flag IS the "useful debuff" gate that
@@ -722,13 +734,36 @@ end
 
 local function AddBundleBuffs(b)
     -- Default: dispellable (purgeable/stealable) enemy buffs only, matching
-    -- the live behavior; "Show All Enemy Buffs" clears the candidate filter
-    -- live (no swap) and falls back to the important-sorted full set.
+    -- the live behavior. "Show All Enemy Buffs" now releases BOTH of the
+    -- narrowing mechanisms live (no swap): the candidate filter below and the
+    -- sort method, which stays ImportantOnly while the toggle is off.
+    --
+    -- Two known gaps, neither introduced here, both needing a 12.1 client to
+    -- settle rather than a guess:
+    --  - maxFrameCount is a hard 4 with no user control, where the debuff
+    --    group pairs its Show All with a raisable maxDebuffs. On a target
+    --    carrying more than four buffs, Show All can therefore rank a
+    --    stealable one out of the row, and the purge glow is suppressed while
+    --    it is on, so the option can surface LESS than leaving it off.
+    --  - the candidate gate is isStealable only, while Blizzard's own rule is
+    --    isStealable OR IsSpellImportant (AddAura). The 12.0 path inherits
+    --    that rule by reading Blizzard's buffList, so an important but
+    --    non-stealable enemy buff shows there and not here. Widening the
+    --    fetch filter cannot reach it, because candidacy is evaluated after
+    --    the fetch; it needs a candidate key that is not verifiable against
+    --    the 12.0.7 source clone.
     b.containers.buffs = BundleContainer(b, "buffs", {
         key = "np",
-        filter = { "HELPFUL" },
+        -- INCLUDE_NAME_PLATE_ONLY matches the filter Blizzard builds its own
+        -- nameplate buff list from (AuraUtil.AuraFilters Helpful +
+        -- IncludeNameplateOnly), and matches the debuff group just above.
+        -- Without it an enemy buff flagged nameplate-only never reaches this
+        -- container at all, so no candidate filter or sort could bring it
+        -- back. The isStealable candidate filter below is unchanged, so this
+        -- widens the pool the engine ranks, not what the player is shown.
+        filter = { "HELPFUL", "INCLUDE_NAME_PLATE_ONLY" },
         maxFrameCount = 4,
-        sortMethod = SORT_IMPORTANT,
+        sortMethod = BuffSort(),
         -- Falsy-safe form: the truthy arm is a table ("X and nil or T"
         -- collapsed to T in BOTH toggle states -- an and/or chain can
         -- never select a nil arm).
@@ -1354,6 +1389,7 @@ function ns.NPC_ReloadAll()
         npFP.cfg = v
         local maxDbf = PVal("maxDebuffs") or 5
         local sort = DebuffSort()
+        local buffSort = BuffSort()
         local dbfCand = DebuffCand()
         -- Empty table (not nil) when showing all: guarantees the setter
         -- REPLACES the stored filter rather than risking a nil no-op.
@@ -1374,6 +1410,13 @@ function ns.NPC_ReloadAll()
             end
             if b.containers.buffs then
                 b.containers.buffs:SetAuraGroupCandidateFilters("np", buffCand)
+                -- Release the sort method too, on the same rule the debuff
+                -- branch above uses. Without this the Show All Enemy Buffs
+                -- toggle only half applies: the candidate filter opens up
+                -- but the group stays pinned to ImportantOnly.
+                if buffSort ~= nil and SORT_DIR ~= nil then
+                    b.containers.buffs:SetAuraGroupSortMethod("np", buffSort, SORT_DIR)
+                end
             end
             -- NPF record groups + np counts: declares run on the queued,
             -- budgeted ensure path (npcEnsurePending dedupes).
