@@ -472,20 +472,28 @@ initFrame:SetScript("OnEvent", function(self)
                     local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
                         rightRgn, 210, rightRgn:GetFrameLevel() + 2,
                         currencyItems,
+                        -- Tracked currencies are per character (the module owns
+                        -- the accessor and its first-use seeding; see
+                        -- CurrencyOrder in EllesmereUIBags.lua). Reading
+                        -- db.profile.currencyOrder here would edit the legacy
+                        -- shared table that nothing renders any more.
                         function(cID)
-                            local co = db.profile.currencyOrder
+                            local co = EllesmereUI._BagsCurrencyOrder
+                                and EllesmereUI._BagsCurrencyOrder()
                             return co and co[cID] and true or false
                         end,
                         function(cID, v)
-                            if not db.profile.currencyOrder then db.profile.currencyOrder = {} end
+                            local co = EllesmereUI._BagsCurrencyOrder
+                                and EllesmereUI._BagsCurrencyOrder()
+                            if not co then return end
                             if v then
                                 local maxOrder = 0
-                                for _, ord in pairs(db.profile.currencyOrder) do
+                                for _, ord in pairs(co) do
                                     if type(ord) == "number" and ord > maxOrder then maxOrder = ord end
                                 end
-                                db.profile.currencyOrder[cID] = maxOrder + 1
+                                co[cID] = maxOrder + 1
                             else
-                                db.profile.currencyOrder[cID] = nil
+                                co[cID] = nil
                             end
                             if _G.EUI_Bags and _G.EUI_Bags.RefreshInventory then
                                 C_Timer.After(0.1, function()
@@ -827,6 +835,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.bagItemAssignments = nil
                 EllesmereUIDB.characterGold = nil
                 EllesmereUIDB.warbandGold = nil
+                EllesmereUIDB.bagCurrencyByChar = nil
             end
             EllesmereUI:InvalidatePageCache()
         end,

@@ -3011,21 +3011,21 @@ local function SkinFriendsFrame()
                 -- inset 15 on each side of it, so (width - 30) / 3 is the same
                 -- number the old line was reaching for -- and it is the same
                 -- source LayoutFriendBtns uses for the other two bottom buttons.
-                local function LayoutJoinBtn()
-                    local w = frame:GetWidth()
-                    if not w or w <= 0 then return end
+                -- The width is checked BEFORE ClearAllPoints, so a pass that
+                -- cannot measure yet leaves Blizzard's own anchors intact rather
+                -- than clearing them and failing to replace them. That ordering
+                -- is the actual safety here: the old code cleared first and had
+                -- no way back. There is deliberately no OnShow re-apply -- this
+                -- module taints BNet whispers when it runs inside Blizzard's own
+                -- execution (see the bisect in EUI_Friends_Tiles_121.lua), and
+                -- writing geometry to a Blizzard frame from inside its show path
+                -- is not worth it for a retry that a correct width never needs.
+                local w = frame:GetWidth()
+                if w and w > 0 then
                     joinBtn:ClearAllPoints()
                     joinBtn:SetSize(math.max(1, math.floor((w - 30) / 3)), 22)
                     joinBtn:SetPoint("BOTTOMRIGHT", qjScroll, "BOTTOMRIGHT", 0, -22)
                 end
-                LayoutJoinBtn()
-                -- Re-apply on show so a pass that somehow still measured nothing
-                -- repairs itself instead of stranding the button for the session.
-                -- HookScript, not hooksecurefunc: this module taints BNet whispers
-                -- if it writes fields onto Blizzard frames, and a script hook
-                -- registers C-side. The tab watcher already hooks this same frame
-                -- the same way.
-                qjf:HookScript("OnShow", LayoutJoinBtn)
             end
         end
     end
