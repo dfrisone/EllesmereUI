@@ -8136,6 +8136,24 @@ function EAB_VTABLE.MainBarPageSync.InstallButton(btn)
                 self:SetAttribute("statehidden", nil)
                 changed = true
             end
+            -- Same edge-gated restore as SetShowGrid / UpdateShown above: with
+            -- "Always Show Buttons" off, an empty slot is parked alpha 0 +
+            -- mouse off, and BOTH insecure reversals are refused in combat
+            -- (mouse enablement is a protected write on a SecureActionButton),
+            -- so a combat page flip revealed the button visually while it
+            -- still rejected every click and hover. The keybind kept working
+            -- because secure click dispatch never consults frame mouse state.
+            -- The reveal must therefore be complete IN the restricted
+            -- environment. Gated on the hidden->shown edge so a live on-CD
+            -- alpha on an already-visible button is never stomped;
+            -- eab-click carries the bar's click-through setting so a reveal
+            -- never makes a click-through bar clickable.
+            if not self:IsShown() then
+                self:SetAlpha(1)
+                if (self:GetAttribute("eab-click") or 1) ~= 0 then
+                    self:EnableMouse(true)
+                end
+            end
             self:Show(true)
         else
             if not hidden then
