@@ -19,6 +19,41 @@ local function GetFFD(frame)
     return d
 end
 
+-- SetFont, with a fallback when the chosen face cannot render the client's
+-- alphabet.
+--
+-- The default EUI font is Expressway, which has no Cyrillic and no CJK glyphs.
+-- FontString:SetFont FAILS on those clients and the string then renders
+-- NOTHING -- and because this module strips every native texture off the
+-- buttons it skins and replaces them with a near-black backdrop, a button
+-- whose label failed to load reads as an EMPTY SPACE rather than as a button.
+-- That is the reported "no button to join a group" on a Cyrillic client with
+-- the black theme: QuickJoinFrame.JoinQueueButton is still there and still
+-- clickable, just unlabelled and unlit.
+--
+-- Every other module that re-fonts text already probes this (see FRSetFontSafe
+-- in the Cooldown Manager and the Movement Alert fallbacks in QoL); the friends
+-- module was the one that re-fonted without checking.
+-- Both fallbacks are LOCALE-RESOLVED on purpose. Fonts\FRIZQT__.TTF is the
+-- alphabet="roman" member of Blizzard's font families (GameFonts.xml); the
+-- korean/simplifiedchinese/traditionalchinese/russian members are entirely
+-- different files. Falling back to the roman asset by name would load happily
+-- and still render nothing, i.e. it would reproduce the bug it is meant to fix.
+-- STANDARD_TEXT_FONT is the client's own default and GameFontNormal resolves
+-- through the family, so both follow the alphabet.
+local function SetFontSafe(fs, path, size, flags)
+    if not fs or not fs.SetFont then return end
+    flags = flags or ""
+    size = size or 10
+    if path and fs:SetFont(path, size, flags) and fs:GetFont() then return end
+    if STANDARD_TEXT_FONT and fs:SetFont(STANDARD_TEXT_FONT, size, flags)
+       and fs:GetFont() then
+        return
+    end
+    local gf = GameFontNormal and GameFontNormal:GetFont()
+    if gf then fs:SetFont(gf, size, flags) end
+end
+
 -- Modules temporarily disabled for public release (Coming Soon).
 -- Force-overrides the per-module "enabled" flag so these do absolutely nothing
 -- regardless of what users have in their SavedVariables.
@@ -145,7 +180,7 @@ local function SkinRaidRoleCount(frame)
     for i = 1, select("#", frame:GetRegions()) do
         local region = select(i, frame:GetRegions())
         if region:IsObjectType("FontString") then
-            region:SetFont(fontPath, 10, "")
+            SetFontSafe(region, fontPath, 10, "")
             region:SetTextColor(1, 1, 1, 0.8)
         end
     end
@@ -190,7 +225,7 @@ local function SkinRaidTabButton(btn)
     end
     local text = btn:GetFontString()
     if text then
-        text:SetFont(fontPath, 9, "")
+        SetFontSafe(text, fontPath, 9, "")
         text:SetTextColor(1, 1, 1, 0.5)
         text:ClearAllPoints()
         text:SetPoint("CENTER", btn, "CENTER", 0, 0)
@@ -237,7 +272,7 @@ local function SkinCheckbox(checkbox)
     end
     local text = checkbox.Text or checkbox.text or (checkbox.GetName and _G[checkbox:GetName().."Text"])
     if text and text.SetFont then
-        text:SetFont(fontPath, 10, "")
+        SetFontSafe(text, fontPath, 10, "")
         text:SetTextColor(1, 1, 1, 0.8)
     end
 end
@@ -270,14 +305,14 @@ local function SkinRaidGroup(group)
             local region = select(i, labelFrame:GetRegions())
             if region and region:IsObjectType("FontString") then
                 if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(region, true) end
-                region:SetFont(fontPath, 10, "")
+                SetFontSafe(region, fontPath, 10, "")
                 region:SetTextColor(ar, ag, ab, 1)
             end
         end
         local fontString = labelFrame.GetFontString and labelFrame:GetFontString()
         if fontString and fontString.SetFont then
             if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(fontString, true) end
-            fontString:SetFont(fontPath, 10, "")
+            SetFontSafe(fontString, fontPath, 10, "")
             fontString:SetTextColor(ar, ag, ab, 1)
         end
     end
@@ -306,7 +341,7 @@ local function SkinRaidSlot(slot)
     for i = 1, select("#", slot:GetRegions()) do
         local region = select(i, slot:GetRegions())
         if region and region:IsObjectType("FontString") then
-            region:SetFont(fontPath, 9, "")
+            SetFontSafe(region, fontPath, 9, "")
         end
     end
     slot:HookScript("OnEnter", function()
@@ -340,7 +375,7 @@ local function SkinRaidGroupButton(btn)
     for i = 1, select("#", btn:GetRegions()) do
         local region = select(i, btn:GetRegions())
         if region and region:IsObjectType("FontString") then
-            region:SetFont(fontPath, 9, "")
+            SetFontSafe(region, fontPath, 9, "")
         end
     end
     btn:HookScript("OnEnter", function()
@@ -849,7 +884,7 @@ local function SkinFriendButton(button)
     local function ApplyFont(fs, size)
         if not fs or not fs.SetFont then return end
         if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(fs, true) end
-        fs:SetFont(fontPath, size, "")
+        SetFontSafe(fs, fontPath, size, "")
     end
 
     -- Tile background
@@ -1283,7 +1318,7 @@ local function SkinBottomButton(btn)
 
     local text = btn:GetFontString()
     if text then
-        text:SetFont(fontPath, 9, "")
+        SetFontSafe(text, fontPath, 9, "")
         text:SetTextColor(1, 1, 1, 0.5)
         text:ClearAllPoints()
         text:SetPoint("CENTER", btn, "CENTER", 0, 0)
@@ -1586,7 +1621,7 @@ local function SkinFriendsFrame()
             if blizLabel then blizLabel:SetTextColor(0, 0, 0, 0) end
             tab:SetPushedTextOffset(0, 0)
             local label = tab:CreateFontString(nil, "OVERLAY")
-            label:SetFont(fontPath, 9, "")
+            SetFontSafe(label, fontPath, 9, "")
             label:SetPoint("CENTER", tab, "CENTER", 0, 0)
             label:SetJustifyH("CENTER")
             label:SetText(labelText)
@@ -1741,7 +1776,7 @@ local function SkinFriendsFrame()
     titleBtn:SetFrameLevel(frame:GetFrameLevel() + 5)
 
     local titleLabel = titleBtn:CreateFontString(nil, "OVERLAY")
-    titleLabel:SetFont(fontPath, 12, "")
+    SetFontSafe(titleLabel, fontPath, 12, "")
     titleLabel:SetTextColor(1, 1, 1, 0.75)
     titleLabel:SetPoint("CENTER", titleBtn, "CENTER", 0, 0)
     titleLabel:SetJustifyH("CENTER")
@@ -1802,7 +1837,7 @@ local function SkinFriendsFrame()
             PP.CreateBorder(copyPopup, 1, 1, 1, 0.15, 1, "OVERLAY", 7)
 
             local hint = copyPopup:CreateFontString(nil, "OVERLAY")
-            hint:SetFont(fontPath, 8, "")
+            SetFontSafe(hint, fontPath, 8, "")
             hint:SetTextColor(1, 1, 1, 0.5)
             hint:SetPoint("TOP", copyPopup, "TOP", 0, -6)
             hint:SetText("Ctrl+C to copy, Escape to close")
@@ -1957,7 +1992,7 @@ local function SkinFriendsFrame()
             ct:SetHeight(20)
 
             local label = ct:CreateFontString(nil, "OVERLAY")
-            label:SetFont(fontPath, 11, "")
+            SetFontSafe(label, fontPath, 11, "")
             label:SetPoint("LEFT", ct, "LEFT", 0, 0)
             label:SetJustifyH("LEFT")
             label:SetText(info.name:match("^(%S+)") or info.name)
@@ -2040,7 +2075,7 @@ local function SkinFriendsFrame()
             ct:SetHeight(20)
 
             local label = ct:CreateFontString(nil, "OVERLAY")
-            label:SetFont(fontPath, 11, "")
+            SetFontSafe(label, fontPath, 11, "")
             label:SetPoint("LEFT", ct, "LEFT", 0, 0)
             label:SetJustifyH("LEFT")
             label:SetText(IGNORE or "Ignored")
@@ -2237,7 +2272,7 @@ local function SkinFriendsFrame()
         search:SetAutoFocus(false)
         search:SetMaxLetters(20)
         search:SetJustifyH("LEFT")
-        search:SetFont(fontPath, 10, "")
+        SetFontSafe(search, fontPath, 10, "")
         search:SetTextColor(1, 1, 1, 0.9)
 
         local sBg = search:CreateTexture(nil, "BACKGROUND")
@@ -2246,7 +2281,7 @@ local function SkinFriendsFrame()
         PP.CreateBorder(search, 1, 1, 1, 0.1, 1, "OVERLAY", 7)
 
         local sPh = search:CreateFontString(nil, "OVERLAY")
-        sPh:SetFont(fontPath, 10, "")
+        SetFontSafe(sPh, fontPath, 10, "")
         sPh:SetTextColor(0.5, 0.5, 0.5, 0.6)
         sPh:SetPoint("LEFT", search, "LEFT", 6, 0)
         sPh:SetText("Invite Friend...")
@@ -2257,7 +2292,7 @@ local function SkinFriendsFrame()
         clearBtn:SetPoint("RIGHT", search, "RIGHT", -4, 0)
         clearBtn:SetFrameLevel(search:GetFrameLevel() + 1)
         local clearX = clearBtn:CreateFontString(nil, "OVERLAY")
-        clearX:SetFont(fontPath, 11, "")
+        SetFontSafe(clearX, fontPath, 11, "")
         clearX:SetText("x")
         clearX:SetTextColor(1, 1, 1, 0.3)
         clearX:SetPoint("CENTER", 0, 0)
@@ -2390,7 +2425,7 @@ local function SkinFriendsFrame()
             hover:SetColorTexture(1, 1, 1, 0.06)
 
             local nameFS = row:CreateFontString(nil, "OVERLAY")
-            nameFS:SetFont(fontPath, 11, "")
+            SetFontSafe(nameFS, fontPath, 11, "")
             nameFS:SetPoint("LEFT", row, "LEFT", 8, 0)
             nameFS:SetWidth((FriendsListFrame:GetWidth() - 30) * 0.75)
             nameFS:SetJustifyH("LEFT")
@@ -2398,7 +2433,7 @@ local function SkinFriendsFrame()
             row._name = nameFS
 
             local infoFS = row:CreateFontString(nil, "OVERLAY")
-            infoFS:SetFont(fontPath, 9, "")
+            SetFontSafe(infoFS, fontPath, 9, "")
             infoFS:SetTextColor(0.5, 0.5, 0.5, 0.8)
             infoFS:SetPoint("RIGHT", row, "RIGHT", -8, 0)
             infoFS:SetJustifyH("RIGHT")
@@ -2818,7 +2853,7 @@ local function SkinFriendsFrame()
                     StripTextures(col)
                     local text = col:GetFontString()
                     if text then
-                        text:SetFont(fontPath, 10, "")
+                        SetFontSafe(text, fontPath, 10, "")
                         text:SetTextColor(1, 1, 1, 0.5)
                     end
                     col:SetClipsChildren(true)
@@ -2876,7 +2911,7 @@ local function SkinFriendsFrame()
 
             local totalCount = _G.WhoFrameTotals
             if totalCount and totalCount.SetFont then
-                totalCount:SetFont(fontPath, 10, "")
+                SetFontSafe(totalCount, fontPath, 10, "")
                 totalCount:SetTextColor(1, 1, 1, 0.5)
             end
 
@@ -2933,7 +2968,7 @@ local function SkinFriendsFrame()
                         for _, key in ipairs({"Name", "Level", "Class", "Variable"}) do
                             local txt = _G["WhoFrameButton" .. i .. key]
                             if txt and txt.SetFont then
-                                txt:SetFont(fontPath, 11, "")
+                                SetFontSafe(txt, fontPath, 11, "")
                             end
                         end
                     end
@@ -3036,7 +3071,7 @@ local function SkinFriendsFrame()
                 StripTextures(btn)
                 local text = btn:GetFontString()
                 if text then
-                    text:SetFont(btnFont, 9, "")
+                    SetFontSafe(text, btnFont, 9, "")
                     if btn == msgBtn and btnAccent then
                         text:SetTextColor(EG.r, EG.g, EG.b, 0.7)
                     else
@@ -3155,7 +3190,7 @@ local function SkinFriendsFrame()
     if closeBtn then
         StripTextures(closeBtn)
         GetFFD(closeBtn).x = closeBtn:CreateFontString(nil, "OVERLAY")
-        GetFFD(closeBtn).x:SetFont(fontPath, 14, "")
+        SetFontSafe(GetFFD(closeBtn).x, fontPath, 14, "")
         GetFFD(closeBtn).x:SetText("x")
         GetFFD(closeBtn).x:SetTextColor(1, 1, 1, 0.5)
         GetFFD(closeBtn).x:SetPoint("CENTER", -2, -3)

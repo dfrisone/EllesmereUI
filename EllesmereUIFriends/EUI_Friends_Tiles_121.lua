@@ -151,6 +151,25 @@ local function FontPath()
     return (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("friends")) or STANDARD_TEXT_FONT
 end
 
+-- SetFont with an alphabet fallback. Expressway (the EUI default) carries no
+-- Cyrillic or CJK glyphs, so SetFont fails on those clients and the string
+-- renders nothing at all. Mirrors SetFontSafe in EllesmereUIFriends.lua; these
+-- two files share no namespace, hence the second copy.
+-- Fallbacks are locale-resolved, never the roman Fonts\FRIZQT__.TTF asset --
+-- see the note on SetFontSafe in EllesmereUIFriends.lua.
+local function SetFontSafe(fs, path, size, flags)
+    if not fs or not fs.SetFont then return end
+    flags = flags or ""
+    size = size or 10
+    if path and fs:SetFont(path, size, flags) and fs:GetFont() then return end
+    if STANDARD_TEXT_FONT and fs:SetFont(STANDARD_TEXT_FONT, size, flags)
+       and fs:GetFont() then
+        return
+    end
+    local gf = GameFontNormal and GameFontNormal:GetFont()
+    if gf then fs:SetFont(gf, size, flags) end
+end
+
 local classFileByLocalName = {}
 local function BuildClassNameLookup()
     if next(classFileByLocalName) then return end
@@ -269,7 +288,7 @@ local function SkinStructure(card)
 
     d.name = card:CreateFontString(nil, "OVERLAY")
     if EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(d.name, true) end
-    d.name:SetFont(FontPath(), TILE_NAME_SIZE, "")
+    SetFontSafe(d.name, FontPath(), TILE_NAME_SIZE, "")
     d.name:SetJustifyH("LEFT")
     d.name:SetWordWrap(false)
     -- Horizontal inset is re-resolved per paint in PaintCard (it follows the
@@ -279,14 +298,14 @@ local function SkinStructure(card)
     -- Character name + level, its own line under the Battle.net name.
     d.charLine = card:CreateFontString(nil, "OVERLAY")
     if EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(d.charLine, true) end
-    d.charLine:SetFont(FontPath(), TILE_CHAR_SIZE, "")
+    SetFontSafe(d.charLine, FontPath(), TILE_CHAR_SIZE, "")
     d.charLine:SetJustifyH("LEFT")
     d.charLine:SetWordWrap(false)
     d.charLine:SetPoint("TOPLEFT", d.name, "BOTTOMLEFT", 0, TILE_LINE_GAP)
 
     d.info = card:CreateFontString(nil, "OVERLAY")
     if EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(d.info, true) end
-    d.info:SetFont(FontPath(), TILE_INFO_SIZE, "")
+    SetFontSafe(d.info, FontPath(), TILE_INFO_SIZE, "")
     d.info:SetJustifyH("LEFT")
     d.info:SetWordWrap(false)
     -- Anchored per paint: it follows charLine when there is one, otherwise the
