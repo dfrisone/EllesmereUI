@@ -9772,31 +9772,58 @@ end
 -------------------------------------------------------------------------------
 --  /cdmbuff <spellID|name> -- where is this ONE spell?
 --
---  The bare dump above answers "what is in the pools", which is the wrong
---  question when the reported buff is not in a pool at all. The settings list
---  is deliberately a UNION of the live pools and the STATIC category API (see
---  the picker: Blizzard withholds a pool frame until it considers the spell
---  relevant, Beacon of Light being the documented case), so a spell can be
---  offered in settings and never have a frame to claim. That reads to a user
---  as "it is in the settings but not on my bars" with nothing wrong at the
---  bar end at all.
+--  Round 3. Round 2 answered "NOT in any category set" AND "NO live pool
+--  frame", both in and out of combat, for a buff the reporter can see in a
+--  settings list. Those two cannot both be true of the same spell. Blizzard
+--  builds its settings data provider FROM
+--  GetCooldownViewerCategorySet(category, allowUnlearned = true) and then
+--  prunes every saved id that is not in that set, and EUI's picker only ever
+--  unions the live viewer pools with that same provider. Nothing can reach a
+--  settings list without being in a category set first.
 --
---  This walks all four categories and all four viewers for one spell and says
---  which of those two worlds it is in. Read-only; zero cost until typed.
+--  So the probe was wrong rather than the game. It resolved every entry to
+--  `overrideSpellID or spellID` alone. A tracked BUFF routinely carries the
+--  aura the player actually sees in info.linkedSpellIDs while spellID stays
+--  the ability that grants it -- Wither is exactly that case, already handled
+--  in EllesmereUICdmHooks. An id read off a tooltip is the AURA, so it misses
+--  every entry that holds it and the probe calls a tracked spell untracked.
+--
+--  This round matches spellID, overrideSpellID and every linkedSpellID, falls
+--  back to a name sweep when the id match finds nothing, reads the live aura
+--  off the player to recover the id the game actually applies, and asks the
+--  settings catalog the picker itself reads. Read-only; zero cost until typed.
 -------------------------------------------------------------------------------
 local function CDMBuffFindOne(query)
     local isSecret = _G.issecretvalue or function() return false end
     local function say(fmt, ...)
         print("|cff0cd29fCDMbuff|r " .. string.format(fmt, ...))
     end
+    local function readable(sid)
+        return type(sid) == "number" and not isSecret(sid) and sid > 0
+    end
+    local function nameOf(sid)
+        if not readable(sid) then return "?" end
+        return (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or "?"
+    end
+    -- Never tostring() a value that might be secret.
+    local function txt(v)
+        if v == nil then return "nil" end
+        if isSecret(v) then return "SECRET" end
+        return tostring(v)
+    end
 
     local want = tonumber(query)
-    local wantName
-    if not want then
-        wantName = query:lower()
+    local wantName = (not want) and query:lower() or nil
+    -- A numeric query still gets a name, so the id passes can fall back to a
+    -- name sweep without the tester typing the localized name by hand.
+    local needleName = wantName
+    if want then
+        local n = nameOf(want)
+        if n ~= "?" then needleName = n:lower() end
     end
-    local function matches(sid)
-        if type(sid) ~= "number" or isSecret(sid) or sid <= 0 then return false end
+
+    local function matchOne(sid)
+        if not readable(sid) then return false end
         if want then
             if sid == want then return true end
             -- Accept the base/override twins of the requested id too, so a
@@ -9805,24 +9832,57 @@ local function CDMBuffFindOne(query)
             local o = C_Spell and C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid)
             return b == want or o == want
         end
-        local n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
-        return n and n:lower():find(wantName, 1, true) ~= nil
+        local n = nameOf(sid)
+        return n ~= "?" and n:lower():find(wantName, 1, true) ~= nil
     end
-    local function nameOf(sid)
-        if type(sid) ~= "number" or isSecret(sid) or sid <= 0 then return "?" end
-        return (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or "?"
+    local function nameOne(sid)
+        if not needleName or not readable(sid) then return false end
+        local n = nameOf(sid)
+        return n ~= "?" and n:lower():find(needleName, 1, true) ~= nil
+    end
+    -- Test spellID, overrideSpellID and EVERY linked id. The linked list is
+    -- where a tracked buff keeps its aura, which is the id a tester reads off
+    -- a tooltip, and is the hole that made round 2 report a false negative.
+    local function matchInfo(info, test)
+        if not info then return nil end
+        if test(info.spellID) then return "spellID" end
+        if test(info.overrideSpellID) then return "overrideSpellID" end
+        if info.linkedSpellIDs then
+            for i, lid in ipairs(info.linkedSpellIDs) do
+                if test(lid) then return "linked[" .. i .. "]" end
+            end
+        end
+        return nil
+    end
+    local function describe(info)
+        local linked = {}
+        if info.linkedSpellIDs then
+            for _, lid in ipairs(info.linkedSpellIDs) do
+                linked[#linked + 1] = txt(lid) .. "(" .. nameOf(lid) .. ")"
+            end
+        end
+        return string.format("sid=%s(%s) ovr=%s(%s) linked=[%s] selfAura=%s hasAura=%s isKnown=%s",
+            txt(info.spellID), nameOf(info.spellID),
+            txt(info.overrideSpellID), nameOf(info.overrideSpellID),
+            table.concat(linked, " "),
+            txt(info.selfAura), txt(info.hasAura), txt(info.isKnown))
     end
 
-    say("looking for: %s   combat=%s", query, tostring(InCombatLockdown and InCombatLockdown()))
+    say("looking for: %s   name=%s   combat=%s", query,
+        want and nameOf(want) or query,
+        txt(InCombatLockdown and InCombatLockdown()))
 
     -- 1) The STATIC category set: does Blizzard consider this spell trackable
     --    at all, and is it "known" for this spec?
-    local hits = 0
     local gcs = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
     local gci = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
     local evc = Enum and Enum.CooldownViewerCategory
-    if gcs and gci and evc then
-        for _, cname in ipairs({ "Essential", "Utility", "TrackedBuff", "TrackedBar" }) do
+    local CATS = { "Essential", "Utility", "TrackedBuff", "TrackedBar" }
+
+    local function WalkCategories(test, label)
+        local n = 0
+        if not (gcs and gci and evc) then return 0 end
+        for _, cname in ipairs(CATS) do
             local cat = evc[cname]
             if cat then
                 -- known set first, then the full set: a spell present only in
@@ -9834,20 +9894,34 @@ local function CDMBuffFindOne(query)
                 if allIDs then
                     for _, cdID in ipairs(allIDs) do
                         local info = gci(cdID)
-                        local sid = info and (info.overrideSpellID or info.spellID)
-                        if sid and matches(sid) then
-                            hits = hits + 1
-                            say("category %s: cdID=%d sid=%d(%s) known=%s",
-                                cname, cdID, sid, nameOf(sid), tostring(known[cdID] == true))
+                        local via = matchInfo(info, test)
+                        if via then
+                            n = n + 1
+                            say("%s %s: cdID=%s via=%s known=%s", label, cname,
+                                txt(cdID), via, txt(known[cdID] == true))
+                            say("    %s", describe(info))
                         end
                     end
                 end
             end
         end
+        return n
     end
+
+    local hits = WalkCategories(matchOne, "category")
     if hits == 0 then
-        say("NOT in any category set. Blizzard does not track this spell for")
-        say("this character, so no bar can ever show it.")
+        say("no category entry carries that id (spellID, override or linked).")
+        -- The id may simply be the wrong form. Sweep by NAME across the same
+        -- three fields: a hit here means the spell IS tracked, under an id the
+        -- tester never saw.
+        local byName = needleName and WalkCategories(nameOne, "byNAME") or 0
+        if byName > 0 then
+            say("^ tracked under a DIFFERENT id than the one typed. Use the")
+            say("cdID and the sid= above, not the tooltip id.")
+        else
+            say("NOT in any category set by id OR by name. Blizzard does not")
+            say("track this spell for this character at all.")
+        end
     end
 
     -- 2) The LIVE pools: is there an actual frame to claim right now?
@@ -9859,23 +9933,80 @@ local function CDMBuffFindOne(query)
             for ch in vf.itemFramePool:EnumerateActive() do
                 local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
                 local info = cdID and gci and gci(cdID)
-                local sid = info and (info.overrideSpellID or info.spellID)
                 local clean = ns._cdmCleanSidByCDID and cdID and ns._cdmCleanSidByCDID[cdID]
-                if (sid and matches(sid)) or (clean and matches(clean)) then
+                local via = matchInfo(info, matchOne)
+                       or (needleName and matchInfo(info, nameOne) and "name")
+                       or (clean and matchOne(clean) and "clean")
+                if via then
                     found = found + 1
                     local fc = ns._ecmeFC and ns._ecmeFC[ch]
-                    say("pool %s: cdID=%s shown=%s claimed=%s clean=%s",
-                        vname, tostring(cdID), tostring(ch:IsShown()),
-                        tostring(fc and fc.barKey or nil), tostring(clean))
+                    say("pool %s: cdID=%s via=%s shown=%s claimed=%s clean=%s",
+                        vname, txt(cdID), via, txt(ch:IsShown()),
+                        txt(fc and fc.barKey or nil), txt(clean))
                 end
             end
         end
     end
     if found == 0 then
-        say("NO live pool frame right now. If the category line above says it")
-        say("IS tracked, this is the answer: it shows in settings because the")
-        say("picker unions the static set, and there is simply no frame to put")
-        say("on a bar until Blizzard decides to create one.")
+        say("NO live pool frame right now. If a category line above matched,")
+        say("this is expected: Blizzard withholds the frame until it considers")
+        say("the spell relevant, and the picker still offers it because it")
+        say("unions the static set.")
+    end
+
+    -- 3) The aura as the game actually applies it. Run this WITH the buff up:
+    --    it recovers the real id, which is the one the category entries link.
+    if needleName and AuraUtil and AuraUtil.ForEachAura then
+        local seen = 0
+        AuraUtil.ForEachAura("player", "HELPFUL", nil, function(aura)
+            if aura then
+                local nm = aura.name
+                local hit = (type(nm) == "string" and not isSecret(nm)
+                             and nm:lower():find(needleName, 1, true) ~= nil)
+                            or nameOne(aura.spellId)
+                if hit then
+                    seen = seen + 1
+                    say("player aura: id=%s name=%s source=%s",
+                        txt(aura.spellId), txt(aura.name), txt(aura.sourceUnit))
+                end
+            end
+        end, true)
+        if seen == 0 then
+            say("no matching aura on you right now. Rerun WITH the buff up:")
+            say("that line prints the id the game really applies.")
+        end
+    end
+
+    -- 4) The catalog the EUI picker reads. Blizzard derives it from the same
+    --    category sets, so a hit here with no category hit above means the id
+    --    was wrong, not the tracking.
+    if ns.EnumerateCDMSettingsCatalog and evc then
+        local wantSet = {}
+        for _, cname in ipairs(CATS) do
+            local cat = evc[cname]
+            if cat ~= nil then wantSet[cat] = true end
+        end
+        local catalog = ns.EnumerateCDMSettingsCatalog(wantSet)
+        if not catalog then
+            say("settings catalog unavailable (provider not loaded).")
+        else
+            local n = 0
+            for _, ce in ipairs(catalog) do
+                local info = gci and gci(ce.cdID)
+                local via = matchInfo(info, matchOne)
+                       or (needleName and matchInfo(info, nameOne) and "name")
+                if via then
+                    n = n + 1
+                    say("catalog: cdID=%s cat=%s sid=%s(%s) via=%s",
+                        txt(ce.cdID), txt(ce.category), txt(ce.sid), nameOf(ce.sid), via)
+                end
+            end
+            if n == 0 then
+                say("not in the settings catalog either, so the EUI picker")
+                say("cannot be the list it is showing up in. Say WHICH settings")
+                say("screen shows it: EUI Add Spell, or Blizzard Edit Mode.")
+            end
+        end
     end
 end
 
