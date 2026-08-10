@@ -575,6 +575,12 @@ local defaults = {
         dispelIconOffsetX  = 0,
         dispelIconOffsetY  = 0,
         dispelIconSize     = 16,
+        -- 12.1 dispel ring thickness in physical pixels (-1 follows the icon's own
+        -- Border, 0 hides it). Stored explicitly rather than left to the `or 2`
+        -- read fallback: ReloadPartyFrames temp-swaps party values onto db.profile
+        -- and restores from a table keyed by the raid value, so a key with no
+        -- default is absent from that table and its party value would stick.
+        dispelIconBorderSize = 2,
         dispelClockBorder  = false,  -- animated clock-style dispel border (erases clockwise) on dispellable debuff icons
         dispelClockExtraBorder = 0,  -- extra physical pixels added to the clock border thickness (on top of debuffBorderSize)
         dispellableDebuffLocation = "same",      -- "same" = use the main debuff layout; else a separate anchor for dispellable debuffs
@@ -4575,7 +4581,7 @@ local function UpdateButton(button)
         local stc = s.statusTextColor or { r = 1, g = 1, b = 1 }
         if s.statusTextPosition == "none" then
             d.statusText:Hide()
-        elseif db.profile.showIncomingRez and UnitHasIncomingResurrection(unit) then
+        elseif s.showIncomingRez and UnitHasIncomingResurrection(unit) then
             -- Being resurrected: hide the status text so the incoming-rez icon (shown in the same
             -- spot by UpdateReadyCheck) isn't covered by the status text.
             d.statusText:Hide()
@@ -6075,11 +6081,16 @@ local function UpdateReadyCheck(button, unit)
     local tex = d.readyCheck
     if not tex then return end
 
-    local sz = PixelSnap(db.profile.readyCheckSize or 20)
+    -- Party/extra-aware settings source, same as every other indicator updater.
+    -- AnchorReadyCheck already resolves LIVE this way, so a raw db.profile read
+    -- here re-sized the shared texture back to the RAID value on every paint.
+    local s = d._isParty and ns._scaledPartyProxy or (d._isExtra and ns._scaledExtraProxy) or ns._scaledProfile
+
+    local sz = PixelSnap(s.readyCheckSize or 20)
     tex:SetSize(sz, sz)
 
     -- Ready check (priority)
-    if db.profile.showReadyCheck and readyCheckActive then
+    if s.showReadyCheck and readyCheckActive then
         local status = GetReadyCheckStatus(unit)
         if status == "ready" then
             tex:SetTexCoord(0, 1, 0, 1)
@@ -6100,7 +6111,7 @@ local function UpdateReadyCheck(button, unit)
     end
 
     -- Incoming summon
-    if db.profile.showSummonPending and unit and C_IncomingSummon.HasIncomingSummon(unit) then
+    if s.showSummonPending and unit and C_IncomingSummon.HasIncomingSummon(unit) then
         local sStatus = C_IncomingSummon.IncomingSummonStatus(unit)
         if sStatus == SUMMON_STATUS_PENDING then
             tex:SetAtlas("RaidFrame-Icon-SummonPending")
@@ -6120,7 +6131,7 @@ local function UpdateReadyCheck(button, unit)
     -- Incoming resurrection ("someone is casting a rez / rez waiting to be
     -- accepted"). Lowest priority; only meaningful on a dead unit. Lets healers
     -- see a body is already being picked up so they don't all rez the same one.
-    if db.profile.showIncomingRez and unit and UnitHasIncomingResurrection(unit) then
+    if s.showIncomingRez and unit and UnitHasIncomingResurrection(unit) then
         tex:SetTexCoord(0, 1, 0, 1)
         tex:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
         tex:Show()
@@ -6487,7 +6498,7 @@ ns._UpdateButtonHealth = function(button)
         local stc = s.statusTextColor or { r = 1, g = 1, b = 1 }
         if s.statusTextPosition == "none" then
             d.statusText:Hide()
-        elseif db.profile.showIncomingRez and UnitHasIncomingResurrection(unit) then
+        elseif s.showIncomingRez and UnitHasIncomingResurrection(unit) then
             -- Being resurrected: hide the status text so the incoming-rez icon isn't covered.
             d.statusText:Hide()
         elseif not UnitIsConnected(unit) then
@@ -7732,7 +7743,8 @@ XF.EnsureBuilt = function(count)
             elseif event == "UNIT_THREAT_LIST_UPDATE" or event == "UNIT_THREAT_SITUATION_UPDATE" then
                 local d = GetFFD(b)
                 if d.threatFrame then
-                    local bs = db.profile.threatBorderSize or 0
+                    local s = d._isExtra and ns._scaledExtraProxy or ns._scaledProfile
+                    local bs = s.threatBorderSize or 0
                     if bs > 0 then
                         local status = UnitThreatSituation(unit)
                         if status and THREAT_ACTIVE[status] and PP then
@@ -10297,7 +10309,8 @@ local function OnEvent(self, event, arg1, ...)
         if btn then
             local d = GetFFD(btn)
             if d.threatFrame then
-                local bs = db.profile.threatBorderSize or 0
+                local s = d._isParty and ns._scaledPartyProxy or (d._isExtra and ns._scaledExtraProxy) or ns._scaledProfile
+                local bs = s.threatBorderSize or 0
                 if bs > 0 then
                     local status = UnitThreatSituation(arg1)
                     if status and THREAT_ACTIVE[status] and PP then
@@ -10539,6 +10552,8 @@ do
             "customBgColor", "bgClassColored", "bgDarkness", "smoothBars",
             "healPrediction", "healPredOpacity", "healPredColor",
             "healthVerticalFill",
+            -- Drawn as "Threat Borders" on the Health Bar row, so it files here.
+            "threatBorderSize",
         },
         absorbs = {
             "absorbStyle", "absorbOpacity", "absorbColor", "absorbEdgeMode", "showOvershield",
@@ -10578,13 +10593,22 @@ do
             "borderBehind", "borderTextureOffset", "borderTextureOffsetY",
             "borderTextureShiftX", "borderTextureShiftY",
             "hoverBorderEnabled", "hoverBorderSize", "hoverBorderColor", "hoverBorderAlpha",
-            "targetBorderEnabled", "targetBorderSize", "targetBorderColor", "targetBorderAlpha", "threatBorderSize",
+            "targetBorderEnabled", "targetBorderSize", "targetBorderColor", "targetBorderAlpha",
         },
+        -- Must list every key the DISPELS section of the options page draws:
+        -- the party tab's blocking overlay is sized from that section's y-range,
+        -- so a control there is editable whenever "dispels" is unsynced. A key
+        -- filed under another section (or missing) is still editable but writes
+        -- the shared raid value.
         dispels = {
             "dispelBorderSize", "dispelOverlay", "dispelOverlayOpacity", "dispelShowAll",
             "showDispelIcons", "dispelIconPosition", "dispelIconOffsetX", "dispelIconOffsetY", "dispelIconSize",
             "dispelColorMagic", "dispelColorCurse", "dispelColorDisease",
             "dispelColorPoison", "dispelColorBleed",
+            "dispelIconBorderSize", "dispelOverlayPosition",
+            "dispelClockBorder", "dispelClockExtraBorder",
+            "dispellableDebuffLocation", "dispellableDebuffGrowDirection",
+            "dispellableDebuffOffsetX", "dispellableDebuffOffsetY", "dispellableDebuffSize",
         },
         topNameBar = {
             "topNameBarEnabled", "topNameBarHeight",
@@ -10610,8 +10634,8 @@ do
             "debuffPosition", "debuffOffsetX", "debuffOffsetY",
             "debuffGrowDirection", "debuffPerRow", "debuffWrapDirection",
             "debuffCap", "debuffHideTooltips",
-            "dispellableDebuffLocation", "dispellableDebuffGrowDirection",
-            "dispellableDebuffOffsetX", "dispellableDebuffOffsetY", "dispellableDebuffSize",
+            -- The dispellableDebuff* keys live in "dispels": that is the section
+            -- whose header their controls are drawn under.
         },
         debuffStyle = {
             "debuffSize", "debuffIconZoom", "debuffBorderSize", "debuffBorderColor", "debuffSpacing",
@@ -11343,12 +11367,16 @@ ns.ReloadPartyFrames = function()
 
     -- Temp-swap: write party overrides onto db.profile so anchor closures
     -- (which captured db.profile) read party values. Only for keys whose
-    -- section is custom (unsynced).
-    local saved = {}
+    -- section is custom (unsynced). `swapped` records WHICH keys were swapped:
+    -- a key whose raid value is nil (no default, never set on raid) stores
+    -- nothing in `saved`, so restoring from `saved` alone would skip it and
+    -- leave the party value on the shared raid key permanently.
+    local saved, swapped = {}, {}
     for key, section in pairs(ns._PARTY_KEY_SECTION) do
         if ns._IsPartySectionCustom(section) then
             local pv = rawget(raw, "party_" .. key)
             if pv ~= nil then
+                swapped[#swapped + 1] = key
                 saved[key] = raw[key]
                 raw[key] = pv
             end
@@ -11504,9 +11532,10 @@ ns.ReloadPartyFrames = function()
         end
     end
 
-    -- Restore db.profile to raid values
-    for key, val in pairs(saved) do
-        raw[key] = val
+    -- Restore db.profile to raid values (via `swapped`, so a nil raid value
+    -- is written back as nil rather than skipped)
+    for _, key in ipairs(swapped) do
+        raw[key] = saved[key]
     end
 
     -- Re-layout header

@@ -9241,13 +9241,20 @@ CreatePendingWatcher = function(unit, nameplate)
         self:UnregisterAllEvents()
         pendingWatchers[u] = nil
         pendingUnits[u] = nil
+        local currentPlate = C_NamePlate.GetNamePlateForUnit(u)
+        -- Name-only friendly NPCs are suppressed via a nameplate-keyed name
+        -- overlay, not the friendlyPlates[] pool the calls below clean up.
+        -- Tear it down here or the old friendly name text is left rendering
+        -- on top of the new enemy plate/bar.
+        if ns.RemoveFriendlyNPCOverlayForUnit then
+            ns.RemoveFriendlyNPCOverlayForUnit(u, currentPlate)
+        end
         -- Remove friendly plate WITHOUT restoring Blizzard UF (we'll suppress it as enemy)
         if ns.RemoveFriendlyPlateNoRestore then
             ns.RemoveFriendlyPlateNoRestore(u)
         elseif ns.RemoveFriendlyPlate then
             ns.RemoveFriendlyPlate(u)
         end
-        local currentPlate = C_NamePlate.GetNamePlateForUnit(u)
         if currentPlate then
             local plate = frameCache:Acquire()
             if not plate._mixedIn then

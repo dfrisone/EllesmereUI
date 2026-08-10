@@ -1042,6 +1042,15 @@ end
 --- Enumerate default-buffs-bar entries (viewer pool + this bar's customs/items),
 --- minus spells diverted to other buff-family or hosted CD/utility bars.
 function ns.CollectDefaultBuffTrackEntries()
+    -- Variant-aware (base/override family), not a plain sid set: a claimed
+    -- buff's stored id and the id this same viewer slot enumerates as later
+    -- can legitimately differ (a talent-override swap, or a fresh clean-cache
+    -- forcing GetCanonicalSpellIDForFrame down its cooldownInfo fallback --
+    -- see the comment there). An exact-number set misses that drift and the
+    -- claimed buff reappears here as a phantom duplicate of the other bar's
+    -- entry. StoreVariantValue/ResolveVariantValue are the same mechanism
+    -- RebuildSpellRouteMap and ns.GetCDMSpellsForBar already use to answer
+    -- "is this the same buff" everywhere else in this file.
     local diverted = {}
     local divertedCd = {}  -- cooldownID-level diversions (collided-buff slots)
     local p = ECME and ECME.db and ECME.db.profile
@@ -1052,7 +1061,9 @@ function ns.CollectDefaultBuffTrackEntries()
                 if otherBd.barType == "buffs" or otherBd.barType == "custom_buff" then
                     if otherSd and otherSd.assignedSpells then
                         for _, sid in ipairs(otherSd.assignedSpells) do
-                            if type(sid) == "number" and sid > 0 then diverted[sid] = true end
+                            if type(sid) == "number" and sid > 0 then
+                                StoreVariantValue(diverted, sid, true, false)
+                            end
                         end
                     end
                     local otherClaims = otherSd and ns.CollectCdClaimSet(otherSd)
@@ -1061,7 +1072,9 @@ function ns.CollectDefaultBuffTrackEntries()
                     end
                 elseif otherSd and otherSd.hostedBuffSpellIDs then
                     for sid in pairs(otherSd.hostedBuffSpellIDs) do
-                        if type(sid) == "number" and sid > 0 then diverted[sid] = true end
+                        if type(sid) == "number" and sid > 0 then
+                            StoreVariantValue(diverted, sid, true, false)
+                        end
                     end
                 end
             end
@@ -1077,7 +1090,7 @@ function ns.CollectDefaultBuffTrackEntries()
         -- (Diabolist Demonic Art vs Diabolic Ritual). Keying on sid here would
         -- re-merge what EnumerateCDMViewerSpells now keeps separate.
         local key = BuffDisplayStableKey(e.sid, e.cdID)
-        if e.sid and not diverted[e.sid]
+        if e.sid and not ResolveVariantValue(diverted, e.sid)
            and not (e.cdID and divertedCd[e.cdID])
            and key and not seen[key] then
             seen[key] = true

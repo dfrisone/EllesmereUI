@@ -1214,7 +1214,7 @@ L["|cff0cd29dLeft-click:|r |cffE0E0E0Toggle EllesmereUI|r"] = "|cff0cd29d左键�
 L["|cff0cd29dMiddle-click:|r |cffE0E0E0Hide Minimap Button|r"] = "|cff0cd29d中键单击：|r |cffE0E0E0隐藏小地图按钮|r"
 L["|cff0cd29dRight-click:|r |cffE0E0E0Enter Unlock Mode|r"] = "|cff0cd29d右键单击：|r |cffE0E0E0进入解锁模式|r"
 L["Addon not loaded"] = "插件未加载"
-L["Anchor to Cursor"] = "锚定到光标"
+L["Anchor to Cursor"] = "跟随鼠标"
 L["Apply X to all Bars"] = "将 X 应用于所有条"
 L["Coming soon"] = "即将推出"
 L["Controls the text rendering style used across all UI elements"] = "控制所有界面元素使用的文字渲染样式"
@@ -1349,7 +1349,7 @@ L["BAR BACKGROUND"] = "条背景"
 
 --主要文本
 L["Menu, Bags & XP Bars"] = "菜单、背包和经验值条"
-L["Toggle Action Bar Visibility"] = "切换动作条可见性"
+L["Toggle Action Bar"] = "切换动作条"
 L["Micro Menu Visibility"] = "微型菜单可见性"
 L["Bag Bar Visibility"] = "背包条可见性"
 L["Use Blizzard's XP/Rep Bars"] = "使用暴雪经验/声望条"
@@ -1511,7 +1511,7 @@ L["Disable Skyriding Paging"] = "禁用驭龙术切换"
 
 
 -- 动作条鼠标提示 (tooltip)
-L["Toggling action bar visibility is only available out of combat"] = "切换动作条可见性仅在脱离战斗时可用"
+L["Toggling an action bar is only available out of combat"] = "切换动作条仅在脱离战斗时可用"
 L["Left-click to set a keybind."] = "左键设置快捷键。"
 L["Right-click to unbind."] = "右键取消绑定。"
 L["Apply Background Settings to all Bars"] = "将背景设置应用于所有条"
@@ -1566,7 +1566,7 @@ L["Toggles Blizzard's Show Numbers for Cooldowns setting (the countdownForCooldo
 L["The highlight overlay that appears on a spell button while it is the active/current action. Disable to hide it."] = "法术按钮作为当前激活动作时出现的高亮覆盖层。禁用可将其隐藏。"
 L["Dims action button icons to this opacity while on cooldown (100 = off), using the same detection as Desaturate on Cooldown."] = "将动作按钮图标在冷却时调暗至此不透明度（100 = 关闭），使用与“冷却时褪色”相同的检测方式。"
 L["Opacity of the cooldown swipe (the dark radial sweep); use the swatch to set its colour."] = "冷却动画（暗色径向动画）的不透明度；使用色板设置其颜色。"
-L["Toggling action bar visibility is only available out of combat\n\nLeft-click to set a keybind.\nRight-click to unbind."] = "切换动作条可见性仅可在非战斗状态下进行\n\n左键点击设置按键绑定。\n右键点击取消绑定。"
+L["Toggling an action bar is only available out of combat\n\nLeft-click to set a keybind.\nRight-click to unbind."] = "切换动作条仅可在非战斗状态下进行\n\n左键点击设置按键绑定。\n右键点击取消绑定。"
 L["Toggles Blizzard's Show Numbers for Cooldowns setting, which will show number text on any spells that are on cooldown on your action bars."] = "切换暴雪的“显示冷却时间数字”设置，该设置会在动作条上任何处于冷却中的法术上显示数字文本。"
 L["Order of the buttons on this bar; corner options place the first button in that corner."] = "此条上按钮的顺序；角落选项将第一个按钮放置在该角落。"
 L["Combines with conditions: shows on hover only while they pass."] = "与条件组合：仅在条件满足时，悬停才显示。"
@@ -3447,6 +3447,8 @@ L["Power Background"] = "能量背景"
 L["Arms Warrior Sweeping Strikes Bar"] = "武器战横扫攻击条"
 L["This replaces %d existing value(s) for this setting on this bar. Do you want to continue?"] = "这将替换此条上此设置的 %d 个现有值。是否继续？"
 L["This replaces %d existing value(s) for this setting across your specs. Do you want to continue?"] = "这将替换您的专精中此设置的 %d 个现有值。是否继续？"
+L["Smooth Bar Animation"] = "施法条平滑动画"
+
 
 -- 资源条鼠标提示 (ResourceBars Tooltip)
 L["Appends your latency in milliseconds to the cast timer, e.g. 1.8 (42ms)."] = "将您的延迟（毫秒）附加到施法计时器，例如 1.8 (42ms)。"
@@ -3502,7 +3504,7 @@ L["Start the bar full and drain it as the global cooldown elapses, instead of fi
 L["Draw tick lines across the bar at positions you choose."] = "在您选择的位置绘制刻度线横穿条。" 
 L["Attach the spell icon to the right of the cast bar instead of the left."] = "将法术图标附加到施法条的右侧而不是左侧。"
 L["Keep the cast bar visible (sitting empty) when you are not casting, instead of hiding it."] = "当你不施法时，保持施法条可见（空置），而非隐藏它。"
-
+L["Eases the cast fill between updates. Turn off for a raw, uneased fill."] = "在更新之间缓动施法填充。关闭可获得原始的、无缓动的填充。"
 
 -- == 增益提醒 (AuraBuffReminders) =============================================
 --标题
@@ -4090,6 +4092,7 @@ L["Lower Bound (30+)"] = "下限（30+）"
 L["Minimum (30)"] = "最小值（30）"
 L["Target Distance"] = "目标距离"
 L["Movement Alerts - Time Spiral"] = "位移警报 - 时间螺旋"
+L["Movement Alerts - Gateway Shard"] = "位移警报 - 传送门碎片"
 L["Not enough gold to repair."] = "金币不足以修理。"
 L["Repaired all items for "] = "已修理所有物品，花费 "
 L["Show Raid Tools"] = "显示团队工具"
@@ -4631,6 +4634,14 @@ L["Show Item ID"] = "显示物品ID"
 L["Cursor Tooltip Position"] = "光标提示框位置"
 L["Toast Scale"] = "通知缩放"
 L["Gold Toast Strip"] = "金币通知条"
+L["Fixed Position"] = "固定位置"
+L["Loot Roll Popups"] = "拾取骰子弹窗"
+L["Group Invite Popup"] = "组队邀请弹窗"
+L["Loot Rolls Window"] = "拾取骰子记录窗口"
+L["The pending-rolls window: encounter picker, roll timer, and the result rows."] = "待掷骰窗口：首领选择器、骰子计时器和结果列表。"
+L["The need / greed / pass roll popups, with a squared icon and a flat roll timer."] = "需求/贪婪/放弃的拾取骰子弹出窗口，带有方形图标和平铺的骰子计时器。"
+L["The \"you have been invited to a group\" dialogs, with your role and Accept / Decline."] = "“你已被邀请加入队伍”对话框，包含你的角色选择以及接受/拒绝按钮。"
+
 
 
 -- 暴雪界面增强鼠标提示 (BlizzardSkin Tooltip)
@@ -4662,9 +4673,9 @@ L["Increases melee attack power"] = "增加近战攻击强度"
 L["Increases the power of your spells and abilities"] = "增加法术和技能的威力"
 L["Item Level:"] = "物品等级："
 L["M+ Score"] = "大秘境分数"
-L["M+ Score:"] = "大秘境分数："
-L["Mount"] = "大秘境分数"
-L["Mount:"] = "大秘境分数："
+L["M+ Score:"] = "大秘境分数:"
+L["Mount"] = "坐骑"
+L["Mount:"] = "坐骑:"
 L["Missing Items:"] = "缺失物品："
 L["No better items in inventory"] = "背包中没有更好的物品"
 L["Parry"] = "招架"
@@ -5036,8 +5047,12 @@ L["Already used by Button Row Position"] = "已被按钮行位置占用"
 L["Already used by Element Row Position"] = "已被元素行位置占用"
 L["Coordinates Size and Position"] = "坐标大小和位置"
 L["Mail in Show Blizzard Elements"] = "“显示暴雪元素”中的邮件"
+L["Show Addon Compartment"] = "显示插件收纳按钮"
+L["Addon Compartment Position"] = "插件收纳按钮位置"
+L["Addon Compartment Scale"] = "插件收纳按钮缩放"
 
---鼠标指向 (tooltip)
+
+--小地图鼠标提示 (tooltip)
 L["Addon Buttons"] = "插件按钮"
 L["Always display player coordinates centered below the minimap instead of only on hover."] = "始终在小地图下方居中显示玩家坐标，而不是仅在悬停时显示。"
 L["Calendar"] = "日历"
@@ -5063,7 +5078,7 @@ L["Max rows per section in the Friends Online tooltip (0 = the 30-row max)."] = 
 L["Which minimap corner the button row builds out from and the direction it grows."] = "按钮行从小地图的哪个角落开始构建，以及其增长方向。"
 L["Scales the custom tooltips shown by the unique minimap buttons (Great Vault, friends, calendar, mail, tracking)."] = "缩放由特定小地图按钮（宏伟宝库、好友、日历、邮件、追踪）显示的自定义提示框。"
 L["Which minimap corner the Blizzard element row (tracking, calendar, mail, crafting) builds out from and the direction it grows."] = "暴雪元素行（追踪、日历、邮件、制造）从小地图的哪个角落开始构建，以及其增长方向。"
-
+L["Show Blizzard's addon compartment button on the minimap. Use the cog to choose its corner and nudge its position."] = "在小地图上显示暴雪的插件收纳按钮。使用齿轮选择其角落并微调位置。"
 
 -- == 聊天栏 (Chat) ============================================================
 --标题
@@ -5343,6 +5358,13 @@ L["Left of Window"] = "窗口左侧"
 L["Right of Window"] = "窗口右侧"
 L["Hide in Delves"] = "在地下堡中隐藏"
 L["Hide in PvP"] = "在PvP中隐藏"
+L["%1$d Death  -%2$s"] = "%1$d 死亡  -%2$s"
+L["%1$d Deaths  -%2$s"] = "%1$d 死亡  -%2$s"
+L["%1$s's %2$s Breakdown"] = "%1$s 的 %2$s 详细"
+L["%1$s's Death Recap"] = "%1$s 的死亡回顾"
+L["Overall %1$s"] = "总体 %1$s"
+L["You may only have %1$d windows active"] = "你最多只能有 %1$d 个窗口激活"
+L["Modern Background Style is required."] = "需要现代背景样式。"
 
 -- 伤害统计鼠标提示 (DamageMeters Tooltip)
 L["Set your window to this Meter Type on dungeon start"] = "在地下城开始时将窗口设为此统计类型"
@@ -5540,9 +5562,10 @@ L["Bag Show Soulbound Items"] = "背包显示灵魂绑定物品"
 L["Bag Show Accountbound Items"] = "背包显示账号绑定物品"
 L["Bag Show Warbound Items"] = "背包显示战团绑定物品"
 L["Merge Duplicate Items"] = "合并相同物品"
+L["Sort Options"] = "排序选项"
+L["Sort to Bottom"] = "从底部开始排列"
 
-
--- 鼠标提示 (tooltip)
+-- 背包鼠标提示 (tooltip)
 L["Assign an item to this category"] = "将物品分配到此类别"
 L["Collapse Sidebar"] = "折叠侧栏"
 L["Display item levels on equipment items in the inventory."] = "在物品栏中的装备物品上显示物品等级。"
@@ -5585,6 +5608,7 @@ L["Changes made in MultiBag will affect the positions of items in default Blizza
 L["Positions can only be changed\nin the All Items, OneBag, or MultiBag views"] = "位置只能在“所有物品”、整合背包或多背包视图中更改"
 L["Crops the border of every item icon in bags and bank. 0 shows the full icon."] = "裁剪背包和银行中每个物品图标的边框。0表示显示完整图标。"
 L["Show copies of the same item that sit in separate bag slots as one icon with their counts added together. Turn this off to keep every slot separate, for example when you deliberately split stacks. Merging is always paused while the mail, trade, auction house, bank or guild bank window is open, since those take one bag slot at a time."] = "将分散在不同背包栏位中的相同物品合并显示为一个图标，并叠加其数量。关闭此选项可保持每个栏位独立显示，例如当你故意拆分堆叠时。当邮件、交易、拍卖行、银行或公会银行窗口打开时，合并功能将自动暂停，因为这些操作每次只处理一个背包栏位。"
+L["Sorting normally packs your items into the first free slots, at the top of the grid. Turn this on to pack them into the last slots instead, so the empty slots end up at the top. The item order itself does not change. This affects the OneBag, MultiBag and bank views -- category views fill their own grid with no gaps, so there is nothing to move. MultiBag and the bank use Blizzard's own sorting, so while this is on it also flips Blizzard's cleanup direction; turning it back off restores the direction you had."] = "排序通常将物品填充到网格顶部的第一个空槽中。开启此选项后，物品将填充到最后的空槽中，使空槽位于顶部。物品本身的顺序不会改变。此设置影响整合背包、多背包和银行视图——分类视图会自行填满网格且无空位，因此无需移动。多背包和银行使用暴雪自带的排序机制，因此开启此选项也会翻转暴雪的整理方向；重新关闭则恢复之前的整理方向。"
 
 -- == 背包硬编码部分 =====
 L["...and %d more"] = "...还有 %d 个"

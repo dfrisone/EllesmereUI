@@ -4338,3 +4338,103 @@ EllesmereUI.RegisterMigration({
         if seeded ~= (cur or 1.0) then db.panelScale = seeded end
     end,
 })
+
+--------------------------------------------------------------------------------
+--  Player castbar spell target -> None. The player castbar never rendered the
+--  spell target before the display fix (an "and ownerUnit ~= 'player'" guard
+--  swallowed it), so any inherited or explicitly-set side would make the text
+--  pop in on update. Pin existing profiles to None; the player default is now
+--  false too, so only users who opt back in see it.
+--------------------------------------------------------------------------------
+EllesmereUI.RegisterMigration({
+    id          = "uf_player_cast_target_none_v1",
+    scope       = "profile",
+    description = "Pin the player castbar's spell target to None (it never displayed before the fix).",
+    body = function(ctx)
+        local uf = ctx.profile.addons and ctx.profile.addons.EllesmereUIUnitFrames
+        local p = uf and uf.player
+        if type(p) == "table" then p.showCastTarget = false end
+    end,
+})
+
+--------------------------------------------------------------------------------
+--  Raid Frames: dispellableDebuff* keys moved party-sync sections
+--
+--  Their controls are drawn under the DISPELS header but the keys were filed
+--  under "debuffDisplay", so on the Party tab they were editable whenever
+--  Dispels was unsynced while the write routed through Debuff Display. They now
+--  file under "dispels".
+--
+--  Writing one required BOTH sections custom, but re-syncing DISPELS afterwards
+--  only deleted keys mapped to "dispels", so these could survive as a live
+--  override under a custom Debuff Display with Dispels synced. Under the new
+--  mapping that value would go dormant; the mirror case (dormant under a synced
+--  Debuff Display, live once Dispels is custom) would switch on.
+--
+--  Clear the override whenever its live/dormant state would flip. In the
+--  flip-to-live case that preserves exactly what the party renders today; in
+--  the flip-to-dormant case the party inherits raid either way, and clearing
+--  stops the value reviving later. An override live in BOTH mappings (both
+--  sections custom, the normal case) is left untouched.
+--------------------------------------------------------------------------------
+EllesmereUI.RegisterMigration({
+    id          = "rf_dispellable_debuff_party_section_v1",
+    scope       = "profile",
+    description = "Clear dispellableDebuff* party overrides whose live/dormant state would flip when the keys moved to the Dispels sync section.",
+    body = function(ctx)
+        local rf = ctx.profile.addons and ctx.profile.addons.EllesmereUIRaidFrames
+        if type(rf) ~= "table" then return end
+        local ss = type(rf.partySyncSections) == "table" and rf.partySyncSections or nil
+        local wasLive    = (ss and ss.debuffDisplay == false) and true or false
+        local willBeLive = (ss and ss.dispels       == false) and true or false
+        if wasLive == willBeLive then return end
+        rf.party_dispellableDebuffLocation      = nil
+        rf.party_dispellableDebuffGrowDirection = nil
+        rf.party_dispellableDebuffOffsetX       = nil
+        rf.party_dispellableDebuffOffsetY       = nil
+        rf.party_dispellableDebuffSize          = nil
+    end,
+})
+
+--------------------------------------------------------------------------------
+--  Raid Frames: threatBorderSize moved party-sync sections
+--
+--  The "Threat Borders" slider is drawn on the Health Bar row but the key was
+--  filed under the Indicators party-sync section, so editing it on the Party
+--  tab wrote the shared raid value. The key now files under "healthBar", which
+--  matches where its control lives.
+--
+--  Writing party_threatBorderSize through the UI required both sections custom,
+--  but the legacy showThreat -> slider conversion writes it directly, bypassing
+--  that gate. So the override can be live under one mapping and dormant under
+--  the other, in either direction. Clear it whenever that state would flip: in
+--  the flip-to-live case that preserves exactly what party renders today, and
+--  in the flip-to-dormant case party inherits raid either way while clearing
+--  stops the value reviving later. An override live under BOTH mappings (the
+--  normal both-custom case) is left untouched.
+--------------------------------------------------------------------------------
+EllesmereUI.RegisterMigration({
+    id          = "rf_threat_border_party_section_v2",
+    scope       = "profile",
+    description = "Clear a party threat border override whose live/dormant state would flip when threatBorderSize moved to the Health Bar sync section.",
+    body = function(ctx)
+        local rf = ctx.profile.addons and ctx.profile.addons.EllesmereUIRaidFrames
+        if type(rf) ~= "table" then return end
+        -- Consume the legacy party conversion HERE. ERF:OnInitialize performs
+        -- the same rewrite, but child addons initialize after the parent's
+        -- ADDON_LOADED, so deferring to it would let a dormant 0 land after
+        -- this body had already decided and stamped. Clearing the flag makes
+        -- that later block a no-op; the raid showThreat key is untouched.
+        if rf.party_showThreat ~= nil then
+            if rf.party_showThreat == false then rf.party_threatBorderSize = 0 end
+            rf.party_showThreat = nil
+        end
+        if rf.party_threatBorderSize == nil then return end
+        local ss = type(rf.partySyncSections) == "table" and rf.partySyncSections or nil
+        local wasLive    = (ss and ss.indicators == false) and true or false
+        local willBeLive = (ss and ss.healthBar  == false) and true or false
+        if wasLive ~= willBeLive then
+            rf.party_threatBorderSize = nil
+        end
+    end,
+})

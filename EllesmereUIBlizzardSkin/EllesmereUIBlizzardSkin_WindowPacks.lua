@@ -8661,13 +8661,13 @@ local function Skin_Quest()
         end
     end
 
-    -- Action buttons: flat block + white label (color-only, keeps Blizz font).
+    -- Action buttons: flat block + state-aware label (color-only, keeps Blizz font).
     for _, bn in ipairs({ "QuestFrameAcceptButton", "QuestFrameDeclineButton",
                           "QuestFrameCompleteButton", "QuestFrameGoodbyeButton",
                           "QuestFrameCompleteQuestButton", "QuestFrameCancelButton",
                           "QuestFrameGreetingGoodbyeButton" }) do
         local b = _G[bn]
-        if b then WSkin.Button(b); WSkin.WhiteButtonLabel(b) end
+        if b then WSkin.Button(b); WSkin.StateButtonLabel(b) end
     end
 
     -- Shared QuestInfo body/header coloring (detail + reward panels). The

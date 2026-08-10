@@ -11522,7 +11522,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "8.7.6"
+EllesmereUI.VERSION = "8.7.8"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -12480,7 +12480,17 @@ initFrame:SetScript("OnEvent", function(self, event)
         -- (per-profile euiAccent -> frozen global root -> theme color). When a
         -- profile has no per-profile accent this reproduces the legacy behavior
         -- exactly, so existing users see zero change.
-        ELLESMERE_GREEN.r, ELLESMERE_GREEN.g, ELLESMERE_GREEN.b = EllesmereUI.ResolveActiveAccent()
+        --
+        -- Routed through the live-apply path rather than assigning the three
+        -- fields directly: Lite is TOC-ordered ahead of this file, so its
+        -- PLAYER_LOGIN fires first and every module's OnEnable has already
+        -- painted against the parse-time fallback. Notifying repaints them.
+        local accentR, accentG, accentB = EllesmereUI.ResolveActiveAccent()
+        if EllesmereUI.ApplyAccentColorLive then
+            EllesmereUI.ApplyAccentColorLive(accentR, accentG, accentB)
+        else
+            ELLESMERE_GREEN.r, ELLESMERE_GREEN.g, ELLESMERE_GREEN.b = accentR, accentG, accentB
+        end
     end
 
     -- Spell ID / Item ID + Icon ID / Max Item Stack on Tooltip (developer option)

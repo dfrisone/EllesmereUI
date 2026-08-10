@@ -1637,7 +1637,7 @@ initFrame:SetScript("OnEvent", function(self)
                     );  y = y - h
 
                     -- Eyeball preview toggle (on left region of glow type row)
-                    do
+                    if not EllesmereUI._prebuilding then
                         local EYE_VIS   = EllesmereUI.EYE_VISIBLE_ICON
                         local EYE_INVIS = EllesmereUI.EYE_INVISIBLE_ICON
                         local leftRgn = glowRow._leftRegion
@@ -1690,7 +1690,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
 
                     -- Inline color swatch for glow color (on right region of row 2)
-                    do
+                    if not EllesmereUI._prebuilding then
                         local rightRgn = glowRow._rightRegion
                         if rightRgn and EllesmereUI.BuildTrioColorSwatch then
                             local glowSwatch, defaultSwatch, classSwatch = EllesmereUI.BuildTrioColorSwatch(
@@ -4660,6 +4660,8 @@ initFrame:SetScript("OnEvent", function(self)
                   setValue = function(v)
                       ns.TBBSetGroupGrow(gid, v)
                       ns.BuildTrackedBuffBars()
+                      -- Preview popout: RefreshPage() takes the fast path, repaint it here.
+                      RefreshTBBPopout()
                       EllesmereUI:RefreshPage()
                   end },
                 { type = "slider", pixel = true, text = "Bar Spacing", min = -2, max = 20, step = 1,
@@ -4667,6 +4669,8 @@ initFrame:SetScript("OnEvent", function(self)
                   setValue = function(v)
                       ns.TBBSetGroupSpacing(gid, v)
                       ns.BuildTrackedBuffBars()
+                      -- Preview popout: RefreshPage() takes the fast path, repaint it here.
+                      RefreshTBBPopout()
                       EllesmereUI:RefreshPage()
                   end }
             );  y = y - h
@@ -4830,6 +4834,12 @@ initFrame:SetScript("OnEvent", function(self)
                       end
                   end
                   ns.BuildTrackedBuffBars()
+                  -- BuildTrackedBuffBars() only rebuilds the LIVE bar pool; the
+                  -- preview wraps in the popout are separate frames. RefreshPage()
+                  -- takes the fast widget-refresh path here, so the page builder
+                  -- tail that repaints the popout never re-runs. Repaint it
+                  -- directly or the preview keeps the old geometry.
+                  RefreshTBBPopout()
                   EllesmereUI:RefreshPage()
               end },
             { type = "slider", text = "Width",
@@ -4848,6 +4858,8 @@ initFrame:SetScript("OnEvent", function(self)
                       end
                   end
                   ns.BuildTrackedBuffBars()
+                  -- Preview popout: RefreshPage() takes the fast path, repaint it here.
+                  RefreshTBBPopout()
                   EllesmereUI:RefreshPage()
               end }
         );  y = y - h
@@ -4981,6 +4993,81 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
+        local function AddTBBTextSwatch(row, region, prefix)
+            local ctrl = region._control
+            local function GetColor()
+                local bd = SelectedTBB()
+                if not bd then return 1, 1, 1, 0.9 end
+                local r = bd[prefix .. "TextR"]
+                local g = bd[prefix .. "TextG"]
+                local b = bd[prefix .. "TextB"]
+                local a = bd[prefix .. "TextA"]
+                if r == nil then r = 1 end
+                if g == nil then g = 1 end
+                if b == nil then b = 1 end
+                if a == nil then a = 0.9 end
+                return r, g, b, a
+            end
+            local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(
+                region, row:GetFrameLevel() + 3, GetColor,
+                function(r, g, b, a)
+                    local bd = SelectedTBB(); if not bd then return end
+                    bd[prefix .. "TextR"] = r
+                    bd[prefix .. "TextG"] = g
+                    bd[prefix .. "TextB"] = b
+                    bd[prefix .. "TextA"] = a
+                    RefreshTBB()
+                end,
+                true, 20)
+            PP.Point(swatch, "RIGHT", ctrl, "LEFT", -12, 0)
+            region._lastInline = swatch
+
+            local block = CreateFrame("Frame", nil, swatch)
+            block:SetAllPoints()
+            block:SetFrameLevel(swatch:GetFrameLevel() + 10)
+            block:EnableMouse(true)
+            block:SetScript("OnEnter", function()
+                local bd = SelectedTBB()
+                local tip
+                if prefix == "name" and bd and bd.verticalOrientation then
+                    tip = "Horizontal Orientation (name text is not shown on vertical bars)"
+                else
+                    local label = prefix == "timer" and "Duration Text"
+                        or (prefix == "stacks" and "Stacks Text" or "Name Text")
+                    tip = "This option requires a " .. label .. " position other than None"
+                end
+                EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip(tip))
+            end)
+            block:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+            local function UpdateSwatchState()
+                local bd = SelectedTBB()
+                local position
+                if bd then
+                    position = bd[prefix .. "Position"]
+                    if not position then
+                        if prefix == "name" then
+                            position = (bd.showName ~= false) and "left" or "none"
+                        elseif prefix == "timer" then
+                            position = bd.showTimer and "right" or "none"
+                        else
+                            position = "center"
+                        end
+                    end
+                end
+                local enabled = position ~= nil and position ~= "none"
+                if prefix == "name" and bd and bd.verticalOrientation then enabled = false end
+                swatch:SetAlpha(enabled and 1 or 0.3)
+                if enabled then block:Hide() else block:Show() end
+            end
+
+            EllesmereUI.RegisterWidgetRefresh(function()
+                updateSwatch()
+                UpdateSwatchState()
+            end)
+            UpdateSwatchState()
+        end
+
         local nameRow
         nameRow, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Name Text",
@@ -5017,6 +5104,8 @@ initFrame:SetScript("OnEvent", function(self)
                   RefreshTBB(); EllesmereUI:RefreshPage()
               end }
         );  y = y - h
+        AddTBBTextSwatch(nameRow, nameRow._leftRegion, "name")
+        AddTBBTextSwatch(nameRow, nameRow._rightRegion, "timer")
         -- Cog on Name Text: text size + x/y
         do
             local rgn = nameRow._leftRegion
@@ -5200,7 +5289,7 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Stacks Text (dropdown + resize cog: size, x, y) | empty
+        -- Stacks Text (dropdown + resize cog: size, x, y) | Bar Strata
         local stacksRow
         stacksRow, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Stacks Text",
@@ -5211,13 +5300,26 @@ initFrame:SetScript("OnEvent", function(self)
                   EvictTBBTextConflicts(bd, "stacksPosition", v)
                   bd.stacksPosition = v; RefreshTBB(); EllesmereUI:RefreshPage()
               end },
-            { type = "toggle", text = "Reverse Fill",
-              getValue = function() local bd = SelectedTBB(); return bd and bd.reverseFill end,
+            { type = "dropdown", text = "Bar Strata",
+              tooltip = "Screen layer the bar renders on; changing a grouped bar changes its whole group.",
+              values = EllesmereUI.FRAME_STRATA_LABELS,
+              order = EllesmereUI.FRAME_STRATA_ORDER_FULL,
+              getValue = function() local bd = SelectedTBB(); return bd and bd.strata or "MEDIUM" end,
               setValue = function(v)
                   local bd = SelectedTBB(); if not bd then return end
-                  bd.reverseFill = v; RefreshTBB()
+                  bd.strata = v
+                  -- Grouped bars share one strata: write the rest of the group too.
+                  local gid = ns.TBBBarGroupID(bd)
+                  if gid ~= 0 then
+                      local t = ns.GetTrackedBuffBars()
+                      for _, b in ipairs(t.bars or {}) do
+                          if b ~= bd and ns.TBBBarGroupID(b) == gid then b.strata = v end
+                      end
+                  end
+                  RefreshTBB()
               end }
         );  y = y - h
+        AddTBBTextSwatch(stacksRow, stacksRow._leftRegion, "stacks")
         do
             local rgn = stacksRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -5283,6 +5385,58 @@ initFrame:SetScript("OnEvent", function(self)
                 end,
             })
         end
+
+        -- Reverse Fill | Fill Up. Deliberately paired on one row: they are the
+        -- two options a user reaches for when the bar is not moving the way
+        -- they expect, and they do different things. Reverse Fill mirrors the
+        -- geometry, Fill Up flips the direction the value travels. Splitting
+        -- them across the page is what makes people try the wrong one.
+        -- Named distinctly: `fillRow` is already taken further down by the
+        -- Fill Color row, which preview click-nav targets by reference.
+        local fillDirRow
+        fillDirRow, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Reverse Fill",
+              tooltip = "Mirrors which end of the bar the fill is anchored to. It does not change the direction the bar travels: use Fill Up for that.",
+              getValue = function() local bd = SelectedTBB(); return bd and bd.reverseFill end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  bd.reverseFill = v; RefreshTBB()
+              end },
+            { type = "toggle", text = "Fill Up",
+              tooltip = "Fills the bar as the cooldown recovers instead of draining it as the cooldown runs down.",
+              disabled = function()
+                  local bd = SelectedTBB()
+                  -- Charge Hash Lines drives its own recovery bar, which
+                  -- already fills upward, so fillUp cannot do anything there.
+                  -- Leaving the toggle live would promise behaviour it has no
+                  -- way to deliver. Test the same way the Charge Hash Lines
+                  -- toggle does: the stored flag alone is not enough, because
+                  -- chargeHashLines rides in TBB_STYLE_KEYS and a style copy
+                  -- or preset can set it on a single-charge spell, where the
+                  -- hash fill never actually runs.
+                  return not bd or bd.trackType ~= "cooldown"
+                      or (bd.chargeHashLines == true
+                          and SelectedTBBSupportsChargeHash())
+              end,
+              -- rawTooltip: these are whole sentences. Without it they get
+              -- wrapped into "This option requires <text> to be enabled".
+              rawTooltip = true,
+              disabledTooltip = function()
+                  local bd = SelectedTBB()
+                  if not bd or bd.trackType ~= "cooldown" then
+                      return "This option requires a cooldown-tracking bar"
+                  end
+                  return "Charge Hash Lines already fills as charges recover"
+              end,
+              getValue = function()
+                  local bd = SelectedTBB(); return bd and bd.fillUp == true
+              end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  bd.fillUp = v and true or nil
+                  RefreshTBB()
+              end }
+        );  y = y - h
 
         -- Charge Hash Lines | Smooth Bars. The number and orientation of hash
         -- separators are resolved automatically from the tracked spell's max
@@ -5407,29 +5561,6 @@ initFrame:SetScript("OnEvent", function(self)
             rgn._lastInline = nil
             EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
         end
-
-        -- Bar Strata
-        local barStrataRow
-        barStrataRow, h = W:DualRow(parent, y,
-            { type = "dropdown", text = "Bar Strata",
-              tooltip = "Screen layer the bar renders on; changing a grouped bar changes its whole group.",
-              values = EllesmereUI.FRAME_STRATA_LABELS,
-              order = EllesmereUI.FRAME_STRATA_ORDER_FULL,
-              getValue = function() local bd = SelectedTBB(); return bd and bd.strata or "MEDIUM" end,
-              setValue = function(v)
-                  local bd = SelectedTBB(); if not bd then return end
-                  bd.strata = v
-                  -- Grouped bars share one strata: write the rest of the group too.
-                  local gid = ns.TBBBarGroupID(bd)
-                  if gid ~= 0 then
-                      local t = ns.GetTrackedBuffBars()
-                      for _, b in ipairs(t.bars or {}) do
-                          if b ~= bd and ns.TBBBarGroupID(b) == gid then b.strata = v end
-                      end
-                  end
-                  RefreshTBB()
-              end },
-            { type = "label", text = "" });  y = y - h
 
         -------------------------------------------------------------------
         --  DISPLAY
@@ -16982,7 +17113,7 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function() end });  y = y - visH
 
         -- Replace the dummy right dropdown with our checkbox dropdown
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = visRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
             local visItems = EllesmereUI.VIS_OPT_ITEMS
@@ -17003,7 +17134,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Sync icon on Visibility (left) -- set-aware so multi-selections
         -- compare and copy correctly (uniform caps across CDM bars).
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = visRow._leftRegion
             EllesmereUI.BuildSyncIcon({
                 region  = rgn,
@@ -17027,7 +17158,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Sync icon on Visibility Options (right)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = visRow._rightRegion
             EllesmereUI.BuildSyncIcon({
                 region  = rgn,
@@ -17063,7 +17194,7 @@ initFrame:SetScript("OnEvent", function(self)
                     ns.BuildAllCDMBars(); ns.RegisterCDMUnlockElements()
                     Refresh()
                 end,
-                makeCogBtn = MakeCogBtn,
+                makeCogBtn = (not EllesmereUI._prebuilding) and MakeCogBtn or nil,
             })
             y = y - cursorH
         end
@@ -17097,7 +17228,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline color swatch on Bar Background (left)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = opacityRow._leftRegion
             local ctrl = rgn and rgn._control
             if ctrl and EllesmereUI.BuildColorSwatch then
@@ -17179,7 +17310,7 @@ initFrame:SetScript("OnEvent", function(self)
             row3Right);  y = y - h
 
         -- Inline cog on Number of Rows: Row Icons settings (only relevant when numRows == 2)
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = numRowsRow._leftRegion
             local ctrl = leftRgn._control
             local function customTopOff()
@@ -17386,7 +17517,9 @@ initFrame:SetScript("OnEvent", function(self)
                       end },
                 },
             })
+            if not EllesmereUI._prebuilding then
             MakeCogBtn(rgn, oocCogShow, ctrl, EllesmereUI.COGS_ICON)
+            end
         end
 
         -- Max Icons + Overflow To: excess icons (beyond Max, the tail of this
@@ -17580,7 +17713,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end });  y = y - h
 
             -- Inline cog for Nameplate Offset (left)
-            do
+            if not EllesmereUI._prebuilding then
                 local _, npCogShow = EllesmereUI.BuildCogPopup({
                     title = "Nameplate Offset",
                     rows = {
@@ -17607,7 +17740,7 @@ initFrame:SetScript("OnEvent", function(self)
             --   [control] [accent swatch] [custom swatch] [cog]
             -- Accent swatch (closest to control) is the active mode by
             -- default; custom swatch dims and blocks while accent is on.
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = npRow._rightRegion
                 local ctrl = rgn and rgn._control
 
@@ -18002,6 +18135,7 @@ initFrame:SetScript("OnEvent", function(self)
                           end },
                     },
                 })
+                if not EllesmereUI._prebuilding then
                 local leftRgn = scaleAnimRow._leftRegion
                 local asbCog = MakeCogBtn(leftRgn, asbCogShow, leftRgn._control, EllesmereUI.COGS_ICON)
                 local function asbCogOff() return not BD().showInactiveBuffIcons end
@@ -18017,6 +18151,7 @@ initFrame:SetScript("OnEvent", function(self)
                     if asbCogOff() then asbCog:SetAlpha(0.15); asbBlock:Show()
                     else asbCog:SetAlpha(0.4); asbBlock:Hide() end
                 end)
+                end
             end
 
             -- Row 2: Buff Glow + swatches | Icon Spacing
@@ -18049,7 +18184,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end });  y = y - h
 
             -- Inline buff glow color swatches (left of row 2)
-            do
+            if not EllesmereUI._prebuilding then
                 local leftRgn = buffGlowRow._leftRegion
                 local ctrl = leftRgn._control
 
@@ -18132,6 +18267,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end });  y = y - h
 
             -- Sync icon on Custom Icon Shape (left of row 3)
+            if not EllesmereUI._prebuilding then
             EllesmereUI.BuildSyncIcon({
                 region  = buffShapeZoomRow._leftRegion,
                 tooltip = "Apply Icon Shape to all Bars",
@@ -18161,7 +18297,9 @@ initFrame:SetScript("OnEvent", function(self)
                     ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize(); EllesmereUI:RefreshPage()
                 end,
             })
+            end
             -- Sync icon on Icon Zoom (right of row 3)
+            if not EllesmereUI._prebuilding then
             EllesmereUI.BuildSyncIcon({
                 region  = buffShapeZoomRow._rightRegion,
                 tooltip = "Apply Icon Zoom to all Bars",
@@ -18177,6 +18315,7 @@ initFrame:SetScript("OnEvent", function(self)
                     ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview(); EllesmereUI:RefreshPage()
                 end,
             })
+            end
 
             -- Row 4: Border Size + swatches | Border Style dropdown + offset cog
             do
@@ -18219,7 +18358,7 @@ initFrame:SetScript("OnEvent", function(self)
                           EllesmereUI:RefreshPage()
                       end });  y = y - h
                 -- Inline cog for border offset
-                do
+                if not EllesmereUI._prebuilding then
                     local rgn = buffBsRow._rightRegion
                     local _, cogShow = EllesmereUI.BuildCogPopup({
                         title = "Border Offset",
@@ -18297,7 +18436,7 @@ initFrame:SetScript("OnEvent", function(self)
                     UpdateCogVis()
                 end
                 -- Inline border color swatches on Border Size (left region of row 4)
-                do
+                if not EllesmereUI._prebuilding then
                     local leftRgn = buffBsRow._leftRegion
                     local ctrl = leftRgn._control
 
@@ -18366,6 +18505,7 @@ initFrame:SetScript("OnEvent", function(self)
                     UpdateBorderState()
                 end
                 -- Sync icon: Border Size (left region)
+                if not EllesmereUI._prebuilding then
                 EllesmereUI.BuildSyncIcon({
                     region  = buffBsRow._leftRegion,
                     tooltip = "Apply Border Size to all Bars",
@@ -18389,7 +18529,9 @@ initFrame:SetScript("OnEvent", function(self)
                         ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview(); EllesmereUI:RefreshPage()
                     end,
                 })
+                end
                 -- Sync icon: Border Style (right region)
+                if not EllesmereUI._prebuilding then
                 EllesmereUI.BuildSyncIcon({
                     region  = buffBsRow._rightRegion,
                     tooltip = "Apply Border Style to all Bars",
@@ -18436,6 +18578,7 @@ initFrame:SetScript("OnEvent", function(self)
                         return synced
                     end,
                 })
+                end
             end
 
         else
@@ -18481,6 +18624,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Sync icon on Icon Spacing (right of row 1)
+        if not EllesmereUI._prebuilding then
         EllesmereUI.BuildSyncIcon({
             region  = scaleAnimRow._rightRegion,
             tooltip = "Apply Icon Spacing to all Bars",
@@ -18504,6 +18648,7 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize(); EllesmereUI:RefreshPage()
             end,
         })
+        end
         end -- isBuffBar else
 
         -- Border Style dropdown (CD/utility and non-buff bars only)
@@ -18548,7 +18693,7 @@ initFrame:SetScript("OnEvent", function(self)
                       ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview()
                   end });  y = y - h
             -- Inline cog for border offset
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = bsRow._leftRegion
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title = "Border Offset",
@@ -18626,6 +18771,7 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdateCogVis()
             end
             -- Sync icon: Border Style (left region of bsRow)
+            if not EllesmereUI._prebuilding then
             EllesmereUI.BuildSyncIcon({
                 region  = bsRow._leftRegion,
                 tooltip = "Apply Border Style to all Bars",
@@ -18670,8 +18816,9 @@ initFrame:SetScript("OnEvent", function(self)
                     return synced
                 end,
             })
+            end
             -- Inline color swatches on Border Size (right region)
-            do
+            if not EllesmereUI._prebuilding then
                 local rightRgn = bsRow._rightRegion
                 local ctrl = rightRgn._control
 
@@ -18736,6 +18883,7 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdateBorderSwatchState()
             end
             -- Sync icon on Border Size (right region)
+            if not EllesmereUI._prebuilding then
             EllesmereUI.BuildSyncIcon({
                 region  = bsRow._rightRegion,
                 tooltip = "Apply Border Size to all Bars",
@@ -18773,6 +18921,7 @@ initFrame:SetScript("OnEvent", function(self)
                     ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview(); EllesmereUI:RefreshPage()
                 end,
             })
+            end
         end
         end -- not isBuffGlowBar
 
@@ -18821,6 +18970,7 @@ initFrame:SetScript("OnEvent", function(self)
                     ns.RefreshCDMIconAppearance(BD().key); Refresh(); UpdateCDMPreview()
                 end });  y = y - h
 
+        if not EllesmereUI._prebuilding then
         EllesmereUI.BuildSyncIcon({
             region  = shapeRow._leftRegion,
             tooltip = "Apply Icon Shape to all Bars",
@@ -18850,6 +19000,8 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize(); EllesmereUI:RefreshPage()
             end,
         })
+        end
+        if not EllesmereUI._prebuilding then
         EllesmereUI.BuildSyncIcon({
             region  = shapeRow._rightRegion,
             tooltip = "Apply Icon Zoom to all Bars",
@@ -18865,6 +19017,7 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview(); EllesmereUI:RefreshPage()
             end,
         })
+        end
         end -- not isBuffGlowBar
 
         -- Row 4: Duration Size (swatch + cog) | Stack Size (swatch + cog)
@@ -18887,7 +19040,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Duration Size: inline color swatch + cog
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = durationRow._leftRegion
             local ctrl = leftRgn._control
             local durSwatch, updateDurSwatch = EllesmereUI.BuildColorSwatch(
@@ -18951,7 +19104,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Stack Size: inline color swatch + cog
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = durationRow._rightRegion
             local ctrl = rightRgn._control
             local scSwatch, updateScSwatch = EllesmereUI.BuildColorSwatch(
@@ -19045,7 +19198,7 @@ initFrame:SetScript("OnEvent", function(self)
                       ns.BuildAllCDMBars(); if ns.RequestBarGlowUpdate then ns.RequestBarGlowUpdate() end; Refresh()
                   end });  y = y - h
             -- Inline cog on Pixel Glow Thickness: Lines + Speed
-            do
+            if not EllesmereUI._prebuilding then
                 local rightRgn = sgcdRow._rightRegion
                 local _, pgCogShow = EllesmereUI.BuildCogPopup({
                     title = "Pixel Glow",
@@ -19104,7 +19257,7 @@ initFrame:SetScript("OnEvent", function(self)
                       ns.BuildAllCDMBars(); Refresh()
                   end });  y = y - h
             -- Inline cog on Pixel Glow Thickness: Lines + Speed (buffGlow* vars)
-            do
+            if not EllesmereUI._prebuilding then
                 local leftRgn = pgRow._leftRegion
                 local _, pgCogShow = EllesmereUI.BuildCogPopup({
                     title = "Pixel Glow",
@@ -19228,7 +19381,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Inline color swatch + cog on Show Keybind (right region)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = kbRow._rightRegion
             local ctrl = rgn and rgn._control
 
@@ -19257,6 +19410,23 @@ initFrame:SetScript("OnEvent", function(self)
                     { type = "slider", label = "Y Offset", min = -30, max = 30, step = 1,
                       get = function() return BD().keybindOffsetY or -2 end,
                       set = function(v) BD().keybindOffsetY = v; ns.RefreshCDMIconAppearance(BD().key); ns.ApplyCachedKeybinds(); UpdateCDMPreview(); EllesmereUI:RefreshPage() end },
+                    -- Global, not per-bar: there is one shared keybind cache
+                    -- for every CDM bar, so this toggle is labelled as such.
+                    { type = "toggle", label = "Keep Keys on Bar Swap (global)",
+                      tooltip = "Keep keybind text identical when your action bar swaps -- rogue stealth, druid forms, skyriding. Also covers conditional macros like \"/cast [bonusbar:1] Backstab; Shadow Dance\", where the key would otherwise jump to whichever branch is live.\n\nThe key then only changes when you actually move the ability or rebind it.\n\nOn by default. Applies to every CDM bar at once.",
+                      get = function()
+                          local p = DB()
+                          return (p and p.cdmBars and p.cdmBars.stableKeybinds) == true
+                      end,
+                      set = function(v)
+                          local p = DB()
+                          if not p or not p.cdmBars then return end
+                          p.cdmBars.stableKeybinds = v and true or false
+                          -- Changes how the cache is built, not just how it is
+                          -- drawn -- needs a full rebuild, not an apply pass.
+                          if ns.UpdateCDMKeybinds then ns.UpdateCDMKeybinds() end
+                          UpdateCDMPreview(); EllesmereUI:RefreshPage()
+                      end },
                 },
             })
             MakeCogBtn(rgn, kbCogShow, kbSwatch, EllesmereUI.RESIZE_ICON)
@@ -19323,6 +19493,7 @@ initFrame:SetScript("OnEvent", function(self)
                   tooltip="Show a glow on icons when the remaining duration is in the pandemic window (last 30%)" },
                 { type="label", text="Pandemic Glow Color" });  y = y - h
 
+            if not EllesmereUI._prebuilding then
             local leftRgn = panGlowRow._leftRegion
             local previewIcon = BuildPandemicPreview(panGlowRow, pandemicOff, BD, leftRgn)
             leftRgn._lastInline = previewIcon
@@ -19382,6 +19553,7 @@ initFrame:SetScript("OnEvent", function(self)
                         Refresh()
                     end,
                 })
+            end
             end
         end
 

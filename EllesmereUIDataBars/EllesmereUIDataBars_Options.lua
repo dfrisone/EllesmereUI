@@ -2845,6 +2845,13 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Off (default) = the letter suffixes; on = coin textures.
                     -- Independent of Coin Colored, which tints those letters.
                     MkToggle("Coin Icons", "coinIcons", "Uses Blizzard's coin textures instead of the letter suffixes."),
+                    -- Rides the slot next to Coin Icons; the checklist
+                    -- dropdown swaps in after the loop (goldTipRow capture).
+                    { type = "dropdown", text = "Show Tooltip Data",
+                      tooltip = "Which sections the gold tooltip shows.",
+                      values = { __placeholder = "..." }, order = { "__placeholder" },
+                      getValue = function() return "__placeholder" end,
+                      setValue = function() end },
                 }
             elseif b.type == "xprep" then
                 typeRows = {
@@ -2991,6 +2998,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             local msIconRow
+            local goldTipRow
             for k = 1, #typeRows, 2 do
                 local rightCfg = typeRows[k + 1]
                 if not rightCfg then rightCfg = { type = "label", text = "" } end
@@ -2998,6 +3006,8 @@ initFrame:SetScript("OnEvent", function(self)
                 -- Latency: the Show Icon toggle rides this row's right slot and
                 -- carries the inline icon-color swatches built after the loop.
                 if b.type == "ms" and k == 1 then msIconRow = row end
+                -- Gold: Show Tooltip Data rides the Coin Icons row's right slot.
+                if b.type == "gold" and k == 3 then goldTipRow = row end
                 -- Deep-link target for an unconfigured currency block: clicking
                 -- its "Select a currency" placeholder on the live bar lands on
                 -- the picker itself, not just the section (ns.OpenBlockSettings).
@@ -3128,29 +3138,22 @@ initFrame:SetScript("OnEvent", function(self)
                 rgn._lastInline = anchor
             end
 
-            if b.type == "gold" then
+            if b.type == "gold" and goldTipRow then
                 -- Show Tooltip Data: ONE checklist dropdown for the gold
                 -- tooltip's sections (same placeholder-swap idiom as the
                 -- micro menu's Menu Elements below). Characters includes the
-                -- Warbank row and the Total. All three default ON.
+                -- Warbank row and the Total. All three default ON. The
+                -- placeholder itself is the Coin Icons row's right slot.
                 local GOLD_TIP_ELEMENTS = {
                     { key = "tipSession",    label = "Session" },
                     { key = "tipCharacters", label = "Characters" },
                     { key = "tipToken",      label = "WoW Token" },
                 }
-                local gtRow
-                gtRow, h = W:DualRow(parent, y,
-                    { type = "dropdown", text = "Show Tooltip Data",
-                      tooltip = "Which sections the gold tooltip shows.",
-                      values = { __placeholder = "..." }, order = { "__placeholder" },
-                      getValue = function() return "__placeholder" end,
-                      setValue = function() end },
-                    { type = "label", text = "" });  y = y - h
-                do
-                    local leftRgn = gtRow._leftRegion
-                    if leftRgn._control then leftRgn._control:Hide() end
+                if not EllesmereUI._prebuilding then
+                    local rightRgn = goldTipRow._rightRegion
+                    if rightRgn._control then rightRgn._control:Hide() end
                     local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
-                        leftRgn, 210, leftRgn:GetFrameLevel() + 2,
+                        rightRgn, 210, rightRgn:GetFrameLevel() + 2,
                         GOLD_TIP_ELEMENTS,
                         function(k)
                             return s[k] ~= false
@@ -3158,9 +3161,9 @@ initFrame:SetScript("OnEvent", function(self)
                         function(k, v)
                             if v then s[k] = true else s[k] = false end
                         end)
-                    PP.Point(cbDD, "RIGHT", leftRgn, "RIGHT", -20, 0)
-                    leftRgn._control = cbDD
-                    leftRgn._lastInline = nil
+                    PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
+                    rightRgn._control = cbDD
+                    rightRgn._lastInline = nil
                     if cbDDRefresh then EllesmereUI.RegisterWidgetRefresh(cbDDRefresh) end
                 end
             end

@@ -250,7 +250,13 @@ initFrame:SetScript("OnEvent", function(self)
             ); y = y - h
 
             -- Inline cog (RESIZE) on Show BoE / Warbound Text: text size
-            do
+            -- Skipped during the hidden search pre-build: that pass swaps the
+            -- widget factory for the frameless absorber, so DualRow returns a
+            -- plain table and CreateFrame/SetPoint against its regions throw.
+            -- Nothing is lost from the index -- cog popup rows are not search
+            -- entries, and the host rows were already registered by DualRow.
+            -- Same for every region-chrome block below.
+            if not EllesmereUI._prebuilding then
                 local _, btCogShow = EllesmereUI.BuildCogPopup({
                     title = "BoE / Warbound Text Options",
                     rows = {
@@ -321,7 +327,7 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Inline cog on Show Item Level (right region): Show Gear Track Rank
             -- (gated by Show Item Level; the rank only renders when ilvl is shown).
-            do
+            if not EllesmereUI._prebuilding then
                 local _, ilCogShow = EllesmereUI.BuildCogPopup({
                     title = "Item Level Options",
                     rows = {
@@ -376,7 +382,7 @@ initFrame:SetScript("OnEvent", function(self)
             ); y = y - h
 
             -- Enabled Categories dropdown (left side)
-            do
+            if not EllesmereUI._prebuilding then
                 local catItems = {}
                 if _G.EUI_CategoryManager then
                     local cats = _G.EUI_CategoryManager:GetCategories()
@@ -417,7 +423,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             -- Enabled Currencies dropdown (right side)
-            do
+            if not EllesmereUI._prebuilding then
                 local currencyItems = {}
                 if C_CurrencyInfo and C_CurrencyInfo.GetCurrencyListSize then
                     -- Expand all collapsed headers so we can see every currency,
@@ -466,20 +472,28 @@ initFrame:SetScript("OnEvent", function(self)
                     local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
                         rightRgn, 210, rightRgn:GetFrameLevel() + 2,
                         currencyItems,
+                        -- Tracked currencies are per character (the module owns
+                        -- the accessor and its first-use seeding; see
+                        -- CurrencyOrder in EllesmereUIBags.lua). Reading
+                        -- db.profile.currencyOrder here would edit the legacy
+                        -- shared table that nothing renders any more.
                         function(cID)
-                            local co = db.profile.currencyOrder
+                            local co = EllesmereUI._BagsCurrencyOrder
+                                and EllesmereUI._BagsCurrencyOrder()
                             return co and co[cID] and true or false
                         end,
                         function(cID, v)
-                            if not db.profile.currencyOrder then db.profile.currencyOrder = {} end
+                            local co = EllesmereUI._BagsCurrencyOrder
+                                and EllesmereUI._BagsCurrencyOrder()
+                            if not co then return end
                             if v then
                                 local maxOrder = 0
-                                for _, ord in pairs(db.profile.currencyOrder) do
+                                for _, ord in pairs(co) do
                                     if type(ord) == "number" and ord > maxOrder then maxOrder = ord end
                                 end
-                                db.profile.currencyOrder[cID] = maxOrder + 1
+                                co[cID] = maxOrder + 1
                             else
-                                db.profile.currencyOrder[cID] = nil
+                                co[cID] = nil
                             end
                             if _G.EUI_Bags and _G.EUI_Bags.RefreshInventory then
                                 C_Timer.After(0.1, function()
@@ -553,7 +567,7 @@ initFrame:SetScript("OnEvent", function(self)
             ); y = y - h
 
             -- Inline cog for Show Sort Icon: "Sort to Bottom"
-            do
+            if not EllesmereUI._prebuilding then
                 local _, sortCogShow = EllesmereUI.BuildCogPopup({
                     title = "Sort Options",
                     rows = {
@@ -639,7 +653,7 @@ initFrame:SetScript("OnEvent", function(self)
             ); y = y - h
 
             -- Inline cog for Show Pinned Items: "Show in OneBag"
-            do
+            if not EllesmereUI._prebuilding then
                 local _, pinCogShow = EllesmereUI.BuildCogPopup({
                     title = "Pinned Items Options",
                     rows = {
@@ -687,7 +701,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             -- Inline cog for Show Recent Items: "Show in OneBag"
-            do
+            if not EllesmereUI._prebuilding then
                 local _, recentCogShow = EllesmereUI.BuildCogPopup({
                     title = "Recent Items Options",
                     rows = {
@@ -821,6 +835,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.bagItemAssignments = nil
                 EllesmereUIDB.characterGold = nil
                 EllesmereUIDB.warbandGold = nil
+                EllesmereUIDB.bagCurrencyByChar = nil
             end
             EllesmereUI:InvalidatePageCache()
         end,

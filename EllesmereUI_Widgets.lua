@@ -8331,6 +8331,10 @@ function EllesmereUI.BuildVisibilityModeRow(W, parent, y, opts, rightCfg)
         end
     end
 
+    -- Search pre-build: the row is an absorber, so the dropdown/PP.Point
+    -- chrome below would throw. The row's label was already indexed by the
+    -- factory stub; nothing here registers.
+    if EllesmereUI._prebuilding then return row, h end
     local leftRgn = row._leftRegion
     if leftRgn._control then leftRgn._control:Hide() end
     cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(

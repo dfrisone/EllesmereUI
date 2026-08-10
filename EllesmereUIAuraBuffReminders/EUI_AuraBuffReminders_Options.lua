@@ -189,7 +189,7 @@ initFrame:SetScript("OnEvent", function(self)
             if co and co.enabled and co.enabled.weapon_enchant then
                 local WEI = _G._EABR_WEAPON_ENCHANT_ITEMS or {}
                 if #WEI > 0 then
-                    icons[#icons+1] = { texture = WEI[1].icon or 134400, label = "Weapon", cat = "consumable", itemKey = "weapon_enchant" }
+                    icons[#icons+1] = { texture = WEI[1].icon or 134400, label = EllesmereUI.L("Weapon"), cat = "consumable", itemKey = "weapon_enchant" }
                 end
             end
         end
@@ -839,6 +839,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Add "(min)" suffix in smaller, dimmer text on both sliders
+        if not EllesmereUI._prebuilding then
         for _, rgn in ipairs({threshRow._leftRegion, threshRow._rightRegion}) do
             local labelText = rgn == threshRow._leftRegion
                 and "Party: Show Consumes Below" or "Raid: Show Consumes Below"
@@ -856,6 +857,7 @@ initFrame:SetScript("OnEvent", function(self)
                 suffix:SetPoint("LEFT", found, "RIGHT", 5, -1)
             end
             suffix:SetText(EllesmereUI.L("(min)"))
+        end
         end
 
         -----------------------------------------------------------------------
@@ -887,7 +889,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Inline color swatch on Glow Type (right of row 3)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = row2._rightRegion
             local isNone = function()
                 local d = DDB()
@@ -951,7 +953,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline color swatch + cog on Show Text (left of row 2)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = row2._leftRegion
             local swatch = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel()+5,
                 function()
@@ -1049,7 +1051,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Inline DIRECTIONS cog on Icon Spacing (left of row 3) for Y offset
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = row3._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Layout Settings",
@@ -1367,7 +1369,7 @@ initFrame:SetScript("OnEvent", function(self)
         local healthstoneRow = row
 
         -- Inline "Choose Zones" button on the right region (Inky Black)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = row._rightRegion
             local eg = EllesmereUI.ELLESMERE_GREEN or {r=0, g=0.82, b=0.62}
             local lerp = EllesmereUI.lerp
@@ -1475,7 +1477,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Inline: eyeball | cog | color swatch on the mana warning toggle
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = row._leftRegion
             local function rcwOff()
                 local c = CDB()

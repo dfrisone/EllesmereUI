@@ -1304,6 +1304,7 @@ initFrame:SetScript("OnEvent", function(self)
             local rightRgn = visRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
             local PP = EllesmereUI.PanelPP
+            if not EllesmereUI._prebuilding then
             local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
                 rightRgn, 210, rightRgn:GetFrameLevel() + 2,
                 EllesmereUI.VIS_OPT_ITEMS,
@@ -1318,6 +1319,7 @@ initFrame:SetScript("OnEvent", function(self)
             rightRgn._control = cbDD
             rightRgn._lastInline = nil
             EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+            end
 
             return visRow
         end
@@ -1548,7 +1550,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         local xpBarRow = BuildDataBarSection("XPBar",  "EXPERIENCE BAR", "XP Bar Visibility")
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = xpBarRow._leftRegion
             local _, xpCogShow = EllesmereUI.BuildCogPopup({
                 title = "XP Bar Visibility",
@@ -1927,7 +1929,7 @@ initFrame:SetScript("OnEvent", function(self)
         if not visOnly then
             local ctRow
             ctRow, h = W:DualRow(parent, y,
-                { type="label", text="Toggle Action Bar Visibility" },
+                { type="label", text="Toggle Action Bar" },
                 { type="toggle", text="Click Through",
                   getValue=function()
                       return SGet("clickThrough")
@@ -2032,7 +2034,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                     kbBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA)
                     if kbBtn._border and kbBtn._border.SetColor then kbBtn._border:SetColor(1, 1, 1, 0.3) end
-                    EllesmereUI.ShowWidgetTooltip(self, "Toggling action bar visibility is only available out of combat\n\nLeft-click to set a keybind.\nRight-click to unbind.")
+                    EllesmereUI.ShowWidgetTooltip(self, "Toggling an action bar is only available out of combat\n\nLeft-click to set a keybind.\nRight-click to unbind.")
                 end)
                 kbBtn:SetScript("OnLeave", function()
                     if listening then return end
@@ -2056,7 +2058,7 @@ initFrame:SetScript("OnEvent", function(self)
                 -- with a synthetic accessor (the left half is a plain label
                 -- cfg, which carries no get/set of its own).
                 EllesmereUI.AddCaptureAccessor(rgn, {
-                    type = "keybind", text = "Toggle Action Bar Visibility",
+                    type = "keybind", text = "Toggle Action Bar",
                     getValue = function() return SB().toggleVisKey end,
                     setValue = function(v)
                         SB().toggleVisKey = v
@@ -5651,7 +5653,7 @@ initFrame:SetScript("OnEvent", function(self)
                   UpdateHighlightPreview(_highlightPreview)
                   EllesmereUI:RefreshPage()
               end })
-        do
+        if not EllesmereUI._prebuilding then
             -- Pushed Type inline elements (left)
             local leftRgn = row._leftRegion
             _pushedPreview = CreatePreviewIcon(leftRgn)
@@ -5853,7 +5855,7 @@ initFrame:SetScript("OnEvent", function(self)
                   UpdateProcGlowPreview(_procGlowPreview)
                   EllesmereUI:RefreshPage()
               end })
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = row._leftRegion
             _procGlowPreview = CreatePreviewIcon(leftRgn)
             if _procGlowPreview._icon then

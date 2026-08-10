@@ -1207,6 +1207,44 @@ local function CdmFrameIsActive(frame)
     return false
 end
 
+-- Charge info for a CDM frame, resolved the way BLIZZARD resolves it.
+--
+-- We were resolving the charge spell with C_SpellBook.FindSpellOverrideByID and
+-- Blizzard resolves it from the CooldownViewer's OWN override record --
+-- CooldownViewerItemDataMixin:GetSpellChargeInfo reads
+-- `info.overrideSpellID or info.spellID`, deliberately, "to ensure that charges
+-- work correctly for cooldown items that are actively cast, apply auras, and
+-- have charges". Those are two different sources and they disagree in the field:
+-- captured on a Mage, base Blink 1953 with FindSpellOverrideByID resolving to
+-- Shimmer 212653, our read returned isActive=false (no recharge) while Blizzard's
+-- own HasVisualDataSource_Charges was true (a recharge running with charges in
+-- hand) on the very same frame in the very same call.
+--
+-- That disagreement is not cosmetic: chargeRecharging false is what lets the
+-- Suppress GCD block alpha-0 a swipe, so with Suppress GCD on, an override
+-- spell's recharge swipe gets blanked for the whole GCD every time another
+-- ability is pressed -- the exact failure the charge carve-out exists to
+-- prevent. Asking Blizzard removes the whole class rather than special-casing
+-- Shimmer.
+--
+-- Falls back to the old resolution for frames without the accessor (preset,
+-- custom-spell and item frames are ours, not CooldownViewer items), so those
+-- keep exactly today's behaviour.
+local function CdmChargeInfoFor(frame, sid)
+    if frame and type(frame.GetSpellChargeInfo) == "function" then
+        local ci = frame:GetSpellChargeInfo()
+        if ci then return ci end
+    end
+    if not (sid and C_Spell and C_Spell.GetSpellCharges) then return nil end
+    local effID = sid
+    if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
+        local ovr = C_SpellBook.FindSpellOverrideByID(sid)
+        if ovr and ovr > 0 and ovr ~= sid then effID = ovr end
+    end
+    return C_Spell.GetSpellCharges(effID) or C_Spell.GetSpellCharges(sid)
+end
+ns.CdmChargeInfoFor = CdmChargeInfoFor
+
 -- Apply charge cooldown style. Returns true for charge spells (caller then skips
 -- its own swipe forcing). BASELINE edge is drawn for every charge spell; the
 -- swipe is hidden only when the per-spell Hide Swipe toggle is set (resolved
@@ -1880,11 +1918,21 @@ local function EvalZeroChargeTextFrame(frame, fd)
     -- write, no comparison, correct for every charge wiring (see the block
     -- header). Secret count (instanced combat): same write, memo dirtied.
     local cc = ci.currentCharges
-    if cc == nil then
-        ZctSetAlpha(fd, fs, 1)
-    elseif issecretvalue and issecretvalue(cc) then
+    -- issecretvalue FIRST, and type() rather than == nil for the missing case.
+    -- currentCharges is secret whenever cooldowns are restricted (combat,
+    -- encounter, challenge mode, PvP match), and comparing a secret to nil is
+    -- the exact operation this addon's own secret rules forbid. Ordering the
+    -- nil "belt" ahead of the guard made the belt the hazard: a throw here
+    -- aborts the eval with the alpha still 0, so the counter stays HIDDEN until
+    -- the next SPELL_UPDATE_CHARGES -- which for a charge spell that just
+    -- refilled is a whole recharge away. That is the reported "0 -> 1 hides the
+    -- stack count temporarily". The throw also kills the pairs() loop in the
+    -- event handler, so every other watched icon stops updating with it.
+    if issecretvalue and issecretvalue(cc) then
         fd._zctAlpha = nil
         fs:SetAlpha(cc)
+    elseif type(cc) ~= "number" then
+        ZctSetAlpha(fd, fs, 1)
     else
         ZctSetAlpha(fd, fs, cc > 1 and 1 or cc)
     end
@@ -2648,9 +2696,13 @@ local function DecorateFrame(frame, barData)
                         local ovr = C_SpellBook.FindSpellOverrideByID(sid2)
                         if ovr and ovr > 0 and ovr ~= sid2 then effID2 = ovr end
                     end
+                    -- Resolved through Blizzard's own accessor: see CdmChargeInfoFor.
+                    -- This value decides whether the swipe may be alpha-0'd, and a
+                    -- wrong "not recharging" here blanks a live recharge for a whole
+                    -- GCD on every override spell.
                     local chargeRecharging = false
-                    if C_Spell.GetSpellCharges then
-                        local ci = C_Spell.GetSpellCharges(effID2) or C_Spell.GetSpellCharges(sid2)
+                    do
+                        local ci = CdmChargeInfoFor(frame, sid2)
                         chargeRecharging = (ci and (ci.maxCharges or 0) > 1 and ci.isActive == true) or false
                     end
                     -- The GCD read must use the override too: a transform's real
@@ -2676,6 +2728,14 @@ local function DecorateFrame(frame, barData)
                         end
                     end
                 end
+                -- Publish the tail decision for ReArmChargeRecharge. That runs from
+                -- the SetCooldown hooks, which fire for EVERY icon on every push,
+                -- so it must decide whether it cares without paying for a spell
+                -- lookup. This flag is exactly the state it needs -- a charge
+                -- recharge running underneath a GCD -- and it is already computed
+                -- here from clean bools. Blizzard's refresh calls SetSwipeColor
+                -- before CooldownFrame_Set, so it is fresh when the re-arm reads it.
+                fd._gcdChargeTailArmed = _gcdChargeTail ~= nil
                 -- Check per-spell settings
                 local ss2
                 if sid2 and bk2 then
@@ -2731,8 +2791,8 @@ local function DecorateFrame(frame, barData)
                         local ovrID = C_SpellBook.FindSpellOverrideByID(sid2)
                         if ovrID and ovrID > 0 and ovrID ~= sid2 then
                             local chargeRecharging = false
-                            if C_Spell.GetSpellCharges then
-                                local ci = C_Spell.GetSpellCharges(ovrID) or C_Spell.GetSpellCharges(sid2)
+                            do
+                                local ci = CdmChargeInfoFor(frame, sid2)
                                 chargeRecharging = (ci and (ci.maxCharges or 0) > 1 and ci.isActive == true) or false
                             end
                             local oc = C_Spell.GetSpellCooldown(ovrID)
@@ -3047,8 +3107,8 @@ local function DecorateFrame(frame, barData)
                 -- ONLY inside our Hide-Active override so non-override charge spells
                 -- keep Blizzard's native display untouched. Secret-safe: GetSpellCharges
                 -- .isActive is a clean bool; currentCharges is never read.
-                local chargeActive = fd._hideActiveOverriding and C_Spell.GetSpellCharges
-                    and (C_Spell.GetSpellCharges(effID) or C_Spell.GetSpellCharges(sid2) or {}).isActive == true
+                local chargeActive = fd._hideActiveOverriding
+                    and (CdmChargeInfoFor(frame, sid2) or {}).isActive == true
                 if not (cdActive or chargeActive) then return end
                 -- Re-derive the charge recharge duration. The duration object is
                 -- opaque and fed straight to the widget, never inspected, so it is
@@ -3078,25 +3138,82 @@ local function DecorateFrame(frame, barData)
             -- SetUseAuraDisplayTime / SetCooldownFromDurationObject writes below.
             local function ReArmChargeRecharge()
                 if fd._isProcessingOverride then return end
-                if not fd._hideActiveOverriding then return end
-                local hasCharges = type(frame.HasVisualDataSource_Charges) == "function"
-                    and frame:HasVisualDataSource_Charges()
-                if not hasCharges then return end
+                -- Two field reads and nothing else. This runs from the SetCooldown
+                -- / SetCooldownFromDurationObject / SetUseAuraDisplayTime hooks, so
+                -- it fires for EVERY icon on EVERY cooldown push -- every GCD the
+                -- player triggers. Neither entry can be live without one of these
+                -- set, so bail before touching the frame or any API.
+                if not (fd._hideActiveOverriding or fd._gcdChargeTailArmed) then
+                    return
+                end
                 local fc2 = _ecmeFC[frame]
                 local sid2 = fc2 and fc2.spellID
                 if not sid2 or not C_Spell or not C_Spell.GetSpellCharges
                     or not C_Spell.GetSpellChargeDuration then
                     return
                 end
+                -- Hosted buff / custom buff frames are excluded here for the same
+                -- reason the SetSwipeColor and Clear hooks exclude them: their
+                -- cooldown widget is showing an AURA, and arming a spell recharge
+                -- over it would overwrite the duration they exist to display.
+                if fd._isBuffViewerFrame or frame._isCustomBuffFrame then return end
+                -- Split from the value: "false" and "the frame has no such method"
+                -- are different states, and entry B needs the first. Preset, racial,
+                -- custom-spell and trinket frames are ours rather than CooldownViewer
+                -- items and have no data source at all, which the sibling Clear hook
+                -- relies on as an exclusion -- treating that as "at zero charges"
+                -- would let them into a branch written for viewer items.
+                local isViewerItem = type(frame.HasVisualDataSource_Charges) == "function"
+                local hasCharges = isViewerItem and frame:HasVisualDataSource_Charges()
+                -- ENTRY A (original): the Hide-Active override window, where
+                -- Blizzard's aura pushes wipe the recharge we armed.
+                local entryA = (fd._hideActiveOverriding and hasCharges) or false
+                -- ENTRY B: the GCD has taken the icon over at the TAIL of a
+                -- recharge. Measured in game: once the remaining recharge falls
+                -- below one GCD length, Blizzard re-points the widget at the GCD
+                -- (SetCooldown fires, GetSpellCooldown().isOnGCD flips true), and
+                -- HasVisualDataSource_Charges is false throughout because the
+                -- player is at ZERO charges -- so entry A cannot fire. Suppress
+                -- GCD then does its job and alpha-0s that swipe, and the last
+                -- second of the recharge goes blank, snapping back only when the
+                -- charge lands. That is the reported "0 -> 1 breaks the cooldown
+                -- swipe", and hiding was never the right answer: the recharge is
+                -- still running and is what the player is watching. Re-arm the
+                -- real recharge so the swipe keeps showing the truth.
+                --
+                -- fd._gcdChargeTailArmed is the SetSwipeColor hook's own verdict on
+                -- that state, published one call earlier in the same refresh, so
+                -- this path re-derives nothing.
+                --
+                -- Suppress GCD is re-checked here rather than trusted from the
+                -- latch. Blizzard's expired branch skips SetSwipeColor entirely and
+                -- frames are pooled, so the latch can survive into a frame or a bar
+                -- it was not set for; requiring the setting again bounds a stale
+                -- latch to "re-arm a charge spell that is genuinely recharging",
+                -- which is the intended action anyway.
+                local entryB = false
+                if not entryA and isViewerItem and not hasCharges
+                   and fd._gcdChargeTailArmed == true then
+                    local bkB = fc2.barKey
+                    local bdB = bkB and barDataByKey and barDataByKey[bkB]
+                    entryB = (bdB and bdB.suppressGCD and true) or false
+                end
+                if not (entryA or entryB) then return end
                 local effID = sid2
                 if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
                     local ovr = C_SpellBook.FindSpellOverrideByID(sid2)
                     if ovr and ovr > 0 and ovr ~= sid2 then effID = ovr end
                 end
-                -- Only while a recharge is genuinely running. isActive is a clean
-                -- bool; currentCharges (secret) is never read.
-                local ci = C_Spell.GetSpellCharges(effID) or C_Spell.GetSpellCharges(sid2)
-                if not (ci and ci.isActive == true) then return end
+                -- Charge spell with a recharge genuinely running. maxCharges > 1 is
+                -- the charge-spell test every other carve-out in this file uses --
+                -- a 1-charge spell reports charge data too, and re-arming one that
+                -- Suppress GCD had just alpha-0'd would repaint it at full alpha in
+                -- the same refresh. Both fields are clean; the secret
+                -- currentCharges is never read.
+                local ci = CdmChargeInfoFor(frame, sid2)
+                if not (ci and (ci.maxCharges or 0) > 1 and ci.isActive == true) then
+                    return
+                end
                 local durObj = C_Spell.GetSpellChargeDuration(effID)
                 if not durObj and effID ~= sid2 then
                     durObj = C_Spell.GetSpellChargeDuration(sid2)
@@ -3107,17 +3224,31 @@ local function DecorateFrame(frame, barData)
                     cd:SetUseAuraDisplayTime(false)
                 end
                 cd:SetCooldownFromDurationObject(durObj)
+                -- No-op on the entry-B path by construction: ApplyCdmChargeStyle
+                -- bails unless HasVisualDataSource_Charges is true, and entry B
+                -- requires it false. That is correct rather than an oversight --
+                -- Hide Swipe (Charges) and Hide Recharge Edge already do not apply
+                -- while the widget is off the charge source, so the tail now
+                -- matches the rest of the zero-charge window instead of differing
+                -- from it. Entry A still needs the call.
                 ApplyCdmChargeStyle(frame, cd)
                 -- We have just re-armed the REAL recharge, so whatever is now
                 -- displayed is the recharge -- never a GCD. Suppress-GCD's alpha-0
                 -- swipe (set while isOnGCD, e.g. right after pressing ANOTHER
-                -- ability) must not stick here or the recharge stays invisible
-                -- until the active state ends. Restore the normal black
-                -- hide-active swipe unconditionally; black where black is already
-                -- correct is a no-op for the Suppress-GCD-off case.
-                local bkSw = fc2 and fc2.barKey
-                local bdSw = bkSw and barDataByKey and barDataByKey[bkSw]
-                cd:SetSwipeColor(0, 0, 0, (bdSw and bdSw.swipeAlpha) or 0.7)
+                -- ability) must not stick here or the recharge stays invisible.
+                --
+                -- Black is only unconditionally right on the entry-A path, which by
+                -- definition runs inside the Hide-Active window. Entry B can reach
+                -- an icon whose active state paints a COLOURED swipe, and this write
+                -- sits under _isProcessingOverride so the SetSwipeColor hook cannot
+                -- put that colour back -- hence the active check. When the icon is
+                -- active, leaving the colour alone is correct: the next refresh
+                -- repaints it, and the geometry we just armed is what mattered.
+                local bkA = fc2.barKey
+                local bdA = bkA and barDataByKey and barDataByKey[bkA]
+                if entryA or not CdmFrameIsActive(frame) then
+                    cd:SetSwipeColor(0, 0, 0, (bdA and bdA.swipeAlpha) or 0.7)
+                end
                 fd._isProcessingOverride = false
             end
             if cd.SetCooldownFromDurationObject then
@@ -4768,8 +4899,11 @@ local function ApplyPresetGCDSwipe(f, sid, cdInfo, barKey)
             -- showing its RECHARGE, never a GCD, and alpha-0'ing that would
             -- blank the recharge for a whole GCD every time another ability is
             -- pressed. Read it from the stable charge data (maxCharges +
-            -- isActive), never the secret currentCharges.
-            local ci = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+            -- isActive), never the secret currentCharges. Resolved through
+            -- CdmChargeInfoFor so this copy cannot drift from the hook's answer;
+            -- preset frames are ours rather than CooldownViewer items, so it
+            -- falls back to the spellbook resolution for them.
+            local ci = CdmChargeInfoFor(f, sid)
             hide = not (ci and (ci.maxCharges or 0) > 1 and ci.isActive == true)
         end
     end
@@ -5509,6 +5643,10 @@ local _scratch_spellOrder = {}  -- CD/utility: spellID -> sort index
 local _scratch_activeFrames = {}
 local _scratch_usedFrames = {}
 local _scratch_cdFrames = {}    -- CD/utility: barKey -> {frame, frame, ...}
+-- CD/utility frames that routed to one of our bars but whose spell could not be
+-- resolved this pass (see the collect loop). "Unknown", NOT "rejected": the
+-- Phase 4 sweep must leave these alone rather than park them offscreen.
+local _scratch_unresolved = {}
 
 local function _sortByLayoutIndex(a, b)
     return (a.layoutIndex or 0) < (b.layoutIndex or 0)
@@ -5568,8 +5706,10 @@ local function CollectAndReanchor()
 
     wipe(_scratch_usedFrames)
     wipe(_scratch_activeFrames)
+    wipe(_scratch_unresolved)
     local allActiveFrames = _scratch_activeFrames
     local usedFrames = _scratch_usedFrames
+    local unresolvedFrames = _scratch_unresolved
 
     -- Always Show Buffs: hide every placeholder up front; the routing path below
     -- re-shows only the placeholders it injects this pass, so stale ones (buff
@@ -5850,6 +5990,18 @@ local function CollectAndReanchor()
                                     fc.barKey = barKey
                                     fc.spellID = baseSID or displaySID
                                     fc.isHostedBuff = nil
+                                else
+                                    -- Routed to one of our bars, but the spell
+                                    -- would not resolve: GetCooldownViewerCooldownInfo
+                                    -- returns nil for a cooldownID while Blizzard is
+                                    -- mid-rebuild (zone-in, PvP talents activating,
+                                    -- a spec swap that just wiped the resolve memos).
+                                    -- This frame is OURS and merely unidentified, so
+                                    -- Phase 4 must not treat it like a deliberately
+                                    -- unrouted one and park it at -10000 -- that is
+                                    -- what empties the bars until a reload, since
+                                    -- nothing re-collects afterwards.
+                                    unresolvedFrames[frame] = true
                                 end
                             end
                         end
@@ -6777,6 +6929,13 @@ local function CollectAndReanchor()
                         if key then
                             fc.sortOrder = key
                         else
+                            -- Remember where this frame last sorted before the
+                            -- marker overwrites it. The interpolation below needs
+                            -- a fallback that holds position rather than guessing
+                            -- when Blizzard has not laid the viewer out yet.
+                            if type(fc.sortOrder) == "number" then
+                                fc.lastSortOrder = fc.sortOrder
+                            end
                             fc.sortOrder = false  -- spillover marker, resolved below
                             hasSpill = true
                         end
@@ -6801,10 +6960,20 @@ local function CollectAndReanchor()
                     for _, frame in ipairs(frames) do
                         local fc = _ecmeFC[frame]
                         local k = fc and fc.sortOrder
-                        if type(k) == "number" and frame.cooldownID ~= nil then
+                        -- layoutIndex must be REAL to anchor anything. It used to
+                        -- fall back to 0, which is below every true layoutIndex, so
+                        -- an anchor that had not been laid out yet became a valid
+                        -- predecessor for every spillover -- and during a full
+                        -- relayout, when they all collapse to 0, the interpolation
+                        -- degenerates to "after whichever anchor came first". An
+                        -- anchor we cannot place is not an anchor; dropping it just
+                        -- narrows the anchor set, and an empty set already has a
+                        -- defined meaning (spillovers fall to the tail).
+                        if type(k) == "number" and frame.cooldownID ~= nil
+                           and frame.layoutIndex then
                             blizzKeys = blizzKeys or {}; blizzLIs = blizzLIs or {}
                             blizzKeys[#blizzKeys + 1] = k
-                            blizzLIs[#blizzKeys] = frame.layoutIndex or 0
+                            blizzLIs[#blizzKeys] = frame.layoutIndex
                         end
                     end
                     -- Full anchor set = Blizzard anchors + preset anchors (interpolated
@@ -6856,8 +7025,9 @@ local function CollectAndReanchor()
                     for _, frame in ipairs(frames) do
                         local fc = _ecmeFC[frame]
                         if fc and fc.sortOrder == false then
-                            if anchorKeys and frame.cooldownID ~= nil then
-                                local L = frame.layoutIndex or 0
+                            if anchorKeys and frame.cooldownID ~= nil
+                               and frame.layoutIndex then
+                                local L = frame.layoutIndex
                                 local predIdx, predLI
                                 for i = 1, #anchorKeys do
                                     local li = anchorLIs[i]
@@ -6871,6 +7041,19 @@ local function CollectAndReanchor()
                                 -- slots and never ties its predecessor.
                                 local baseIdx = predIdx or ((minAnchorIdx or 1) - 1)
                                 fc.sortOrder = baseIdx + ((L + 1) / 1e6)
+                            elseif frame.cooldownID ~= nil and not frame.layoutIndex then
+                                -- Blizzard has not assigned this frame a layout
+                                -- position yet: it re-lays the viewer out on a
+                                -- preset switch, an addon update and at login,
+                                -- which is exactly when this was reported.
+                                -- `layoutIndex or 0` used to stand in here, and 0
+                                -- is below every real layoutIndex, so the frame
+                                -- landed before every anchor -- a tracked spell
+                                -- silently jumping to FIRST place while
+                                -- Blizzard's own order was never wrong.
+                                -- Hold the last known position instead; the next
+                                -- pass, once the layout exists, places it properly.
+                                fc.sortOrder = fc.lastSortOrder or 99999
                             else
                                 fc.sortOrder = 99999
                             end
@@ -7203,9 +7386,35 @@ local function CollectAndReanchor()
     end
     local buffViewer = _G["BuffIconCooldownViewer"]
     local barViewer  = _G["BuffBarCooldownViewer"]
+    -- Only protect NEVER-CLAIMED unresolved frames while the retry budget below
+    -- still has passes left. Once it is spent, a frame that has never been ours
+    -- and still will not resolve is no longer plausibly transient (a stale pool
+    -- entry with a dead cooldownID), and parking it is right again -- otherwise
+    -- it would sit at Blizzard's own Edit Mode position forever, which is the
+    -- "CDM looks scrambled" face of this bug rather than the "CDM is empty" one.
+    local protectUnresolved = (ns._cdmUnresolvedRetries or 0) < 3
     for frame in pairs(allActiveFrames) do
         if usedFrames[frame] then
             -- Claimed: leave alone
+        elseif unresolvedFrames[frame]
+               and (protectUnresolved
+                    or (_ecmeFC[frame] and _ecmeFC[frame].barKey)) then
+            -- Unknown, not rejected: identification failed this pass, so we
+            -- have no basis to park it. Leave it exactly as it is and let the
+            -- re-collect scheduled at the end of this function claim it once
+            -- the cooldown-viewer API answers again.
+            --
+            -- fc.barKey means we HAVE claimed this frame before, and that
+            -- exemption never expires. ScheduleTalentRebuild wipes resolvedSid
+            -- and cachedCdID but deliberately not barKey, so it survives the
+            -- exact rebuild that strips the resolve memos -- which is the zone
+            -- transition where the API answers nil for longer than any fixed
+            -- retry budget can cover. A frame that was on a bar a moment ago
+            -- and is momentarily unidentifiable is transient by definition, and
+            -- parking it is what turns a working CDM blank. Note this cannot
+            -- strand a genuinely retired frame: one whose spell was unassigned
+            -- or ghosted RESOLVES fine and simply routes nowhere, so it never
+            -- reaches this branch at all.
         elseif frame._isRacialFrame or frame._isTrinketFrame
                or frame._isPresetFrame or frame._isItemPresetFrame
                or frame._isCustomSpellFrame then
@@ -7419,6 +7628,29 @@ local function CollectAndReanchor()
         local pv = EllesmereUI._contentHeaderPreview
         if pv and pv.Update then pv:Update() end
     end
+    -- Frames we could not identify this pass were skipped by the Phase 4 sweep
+    -- and are still sitting wherever Blizzard left them. Re-collect shortly so
+    -- they claim as soon as the cooldown-viewer API answers again -- this is
+    -- what makes the recovery timing-independent instead of racing a fixed
+    -- delay against the loading screen. Bounded and self-resetting: a clean
+    -- pass restores the budget, and an id that never resolves falls back to the
+    -- park path above once the budget is spent, so this can never spin.
+    if next(unresolvedFrames) then
+        local tries = ns._cdmUnresolvedRetries or 0
+        if tries < 3 and not ns._cdmUnresolvedPending then
+            ns._cdmUnresolvedRetries = tries + 1
+            ns._cdmUnresolvedPending = true
+            -- Backoff 0.5s / 1.5s / 2.5s: covers a loading-screen settle
+            -- without a poll, since each retry is one queued reanchor.
+            C_Timer.After(0.5 + tries, function()
+                ns._cdmUnresolvedPending = nil
+                if ns.QueueReanchor then ns.QueueReanchor() end
+            end)
+        end
+    elseif ns._cdmUnresolvedRetries then
+        ns._cdmUnresolvedRetries = 0
+    end
+
     -- Claims just settled: retire the proc-alert child map so the next alert
     -- rebuilds it against the fresh claim set.
     if ns._cdmClaimGen then ns._cdmClaimGen = ns._cdmClaimGen + 1 end
@@ -8975,6 +9207,26 @@ do
         end
         wipe(_held); _heldN = 0; _poll:Hide()
         RefreshCdmPressMirrorFlag()
+    end
+
+    -- Click-routed keybinds (Bars 9/10, empower spells, custom paging) go
+    -- through the button via SetOverrideBindingClick and never fire the native
+    -- commands hooked below; the EAB PostClick hook publishes them here.
+    -- PostClick runs after Blizzard's click handler returns, downstream of its
+    -- protected item-use calls -- same taint posture as the native hooks.
+    _G._EUI_OnActionButtonPress = function(btn, down, bindCmd)
+        -- Down edge only: buttons register both edges, and in key-up mode the
+        -- key is already released by the up click.
+        if not down or not btn or not bindCmd or not _anyPressMirror then return end
+        -- Keyboard evidence (a real mouse click must not mirror): a held
+        -- binding key proves keyboard, but wheel binds are never IsKeyDown, so
+        -- the cursor-rect test covers those. Only miss: a wheel bind pressed
+        -- while the cursor rests on its own button.
+        local k1, k2 = GetBindingKey(bindCmd)
+        local b1, b2 = BaseKey(k1), BaseKey(k2)
+        local keyHeld = (b1 and IsKeyDown(b1)) or (b2 and IsKeyDown(b2))
+        if not keyHeld and btn.IsUnderMouse and btn:IsUnderMouse() then return end
+        OnPress(btn, bindCmd)
     end
 
     ---------------------------------------------------------------------------

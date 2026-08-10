@@ -22,6 +22,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         local function AttachBorderControls(row, prefix, disabledFn, allowBehind)
             local PP = EllesmereUI.PanelPP
+            if not EllesmereUI._prebuilding then
             local left, right = row._leftRegion, row._rightRegion
             local popupRows = {
                 { type="slider", label="Offset X", min=-10,max=10,step=1,
@@ -80,6 +81,7 @@ initFrame:SetScript("OnEvent", function(self)
             local class=AddModeSwatch(accent,"class","Class Color",function() local _,k=UnitClass("player"); local c=RAID_CLASS_COLORS[k]; return c.r,c.g,c.b,1 end,false)
             local custom=AddModeSwatch(class,"custom","Custom Color",function() local c=EllesmereUIDB[prefix.."BorderColor"] or {r=1,g=1,b=1}; return c.r,c.g,c.b,EllesmereUIDB[prefix.."BorderOpacity"] or EllesmereUI.RESKIN.BRD_ALPHA end,true)
             right._lastInline=custom
+            end
         end
 
         if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
@@ -186,7 +188,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Red "!" warning left of the Reskin Queue Popup toggle when EnhanceQoL is loaded
         local _eqolLoaded = C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("EnhanceQoL")
-        if _eqolLoaded and queueRow and queueRow._rightRegion then
+        if _eqolLoaded and queueRow and queueRow._rightRegion and not EllesmereUI._prebuilding then
             local rgn = queueRow._rightRegion
             local toggle = rgn._control
             if toggle then
@@ -293,7 +295,7 @@ initFrame:SetScript("OnEvent", function(self)
         );  y = y - h
 
         -- Position control on Anchor to Cursor (right region): position + X/Y offset
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = ttCursorRow._rightRegion
             local function ttCursorOff()
                 return not (EllesmereUIDB and EllesmereUIDB.tooltipAnchorCursor)
@@ -364,7 +366,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- because Show Detailed Tooltips and Hide Unit Health Strip work with
         -- the default Blizzard tooltip too; the reskin-driven rows gray out
         -- individually inside the popup.
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = ttCursorRow._leftRegion
             local _, ttContentShow = EllesmereUI.BuildCogPopup({
                 title = "Tooltip Content",
@@ -525,7 +527,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- "Use Modifier" cog on Show Spell ID (right region): the spell/item ID
         -- lines only show while the chosen modifier is held. Disabled (blocked +
         -- dimmed) when Show Spell ID is off, mirroring the cursor-position cog.
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = ttModeRow._rightRegion
             local function sidOff()
                 return not (EllesmereUIDB and EllesmereUIDB.showSpellID)
@@ -593,7 +595,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- modifier is held, suppression is lifted so a hidden tooltip can be
         -- read on hover (e.g. peeking a spell in combat). Disabled (blocked +
         -- dimmed) when the reskin is off or the mode is "Always" (nothing hides).
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = ttModeRow._leftRegion
             local function showModOff()
                 if ttReskinOff() then return true end
@@ -696,7 +698,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- "Use Modifier" cog on Show Max Stack for Items (right region): the Max
         -- Stack line only shows while the chosen modifier is held. Disabled
         -- (blocked + dimmed) when the toggle is off, mirroring the Spell ID cog.
-        do
+        if not EllesmereUI._prebuilding then
             -- The toggle now lives in the LEFT slot (slot swap above).
             local rightRgn = borderRow._leftRegion
             local function iStacksOff()
@@ -776,6 +778,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         local function AttachDisabledOverlay(target)
+            if not EllesmereUI._prebuilding then
             local block = CreateFrame("Frame", nil, target)
             block:SetAllPoints(target)
             block:SetFrameLevel(target:GetFrameLevel() + 10)
@@ -791,9 +794,11 @@ initFrame:SetScript("OnEvent", function(self)
                 else block:Hide(); target:SetAlpha(1) end
             end
             EllesmereUI.RegisterWidgetRefresh(refresh); refresh()
+            end
         end
 
         local function AttachStatSwatch(rgn, dbColorKey, defaultColor, parentEnabledFn, cogOpts)
+            if not EllesmereUI._prebuilding then
             local swGet = function()
                 local c = EllesmereUIDB and EllesmereUIDB.statCategoryColors and EllesmereUIDB.statCategoryColors[dbColorKey]
                 if c then return c.r, c.g, c.b, 1 end
@@ -848,6 +853,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
                 EllesmereUI.RegisterWidgetRefresh(cogRefresh); cogRefresh()
+            end
             end
         end
 
@@ -968,7 +974,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline cog on the Enchants toggle: "Show Enchant Names". Disabled
         -- (grayed, non-interactive) while Enchants are hidden, since the name
         -- only replaces the enchant icon when enchants are shown.
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = enchGemRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Enchant Settings",
@@ -1234,7 +1240,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
-        do
+        if not EllesmereUI._prebuilding then
             local function themedOff()
                 return not (EllesmereUIDB and EllesmereUIDB.themedInspectSheet)
             end
@@ -1300,6 +1306,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         local function AttachDisabledOverlay(target)
+            if not EllesmereUI._prebuilding then
             local block = CreateFrame("Frame", nil, target)
             block:SetAllPoints(target)
             block:SetFrameLevel(target:GetFrameLevel() + 10)
@@ -1315,6 +1322,7 @@ initFrame:SetScript("OnEvent", function(self)
                 else block:Hide(); target:SetAlpha(1) end
             end
             EllesmereUI.RegisterWidgetRefresh(refresh); refresh()
+            end
         end
 
         _, h = WSCardSection(parent, "QUALITY OF LIFE", y);  y = y - h
@@ -2500,8 +2508,10 @@ initFrame:SetScript("OnEvent", function(self)
                   return math.floor(((c and c.alpha) or 0.95) * 100 + 0.5)
               end,
               setValue = function(v) WSLookSet("blizzWinBarFill", "alpha", v / 100) end })
+        if not EllesmereUI._prebuilding then
         AttachLookSwatches(gRow1._leftRegion, gRow1, "blizzWinAccentBar")
         AttachLookSwatches(gRow1._rightRegion, gRow1, "blizzWinBarFill")
+        end
         y = y - h
 
         _, h = W:DualRow(parent, y,
@@ -2675,7 +2685,7 @@ initFrame:SetScript("OnEvent", function(self)
               getValue = function() return EDR_Cfg("barTexture") or "none" end,
               setValue = function(v) EDR_Set("barTexture", v); EDR_Redraw() end }
         ); y = y - h
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = borderRow._leftRegion
             local ctrl = rgn._control
             local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(
@@ -2774,6 +2784,7 @@ initFrame:SetScript("OnEvent", function(self)
               getValue = function() return (EDR_Cfg("speedText") or {}).justify or "CENTER" end,
               setValue = function(v) EDR_SetField("speedText", "justify", v); EDR_Redraw() end }
         )
+        if not EllesmereUI._prebuilding then
         local _, cogShow = EllesmereUI.BuildCogPopup({
             title = "Speed Text Position",
             rows = {
@@ -2798,6 +2809,7 @@ initFrame:SetScript("OnEvent", function(self)
         cogBtn:SetScript("OnEnter", function(s) s:SetAlpha(0.7) end)
         cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
         cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
+        end
         y = y - h
         _, h = W:Spacer(parent, y, 20); y = y - h
         end   -- close Dragon Riding hidden-while-disabled gate

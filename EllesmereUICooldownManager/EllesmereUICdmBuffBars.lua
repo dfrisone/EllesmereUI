@@ -77,6 +77,19 @@ local function SetFont(fs, size)
     fs:SetFont(GetFont(), size, GetOutline())
 end
 
+local function SetTBBTextColor(fs, cfg, prefix)
+    if not fs or not cfg then return end
+    local r = cfg[prefix .. "TextR"]
+    local g = cfg[prefix .. "TextG"]
+    local b = cfg[prefix .. "TextB"]
+    local a = cfg[prefix .. "TextA"]
+    if r == nil then r = 1 end
+    if g == nil then g = 1 end
+    if b == nil then b = 1 end
+    if a == nil then a = 0.9 end
+    fs:SetTextColor(r, g, b, a)
+end
+
 -------------------------------------------------------------------------------
 --  Pandemic state via Blizzard hooks
 -------------------------------------------------------------------------------
@@ -226,6 +239,7 @@ local TBB_DEFAULT_BAR = {
     width     = 270,
     verticalOrientation = false,
     reverseFill = false,
+    fillUp = false,          -- cooldown bars only: fill as the cooldown recovers
     chargeHashLines = false,
     chargeHashLineWidth = 2,
     chargeHashLineR = 0, chargeHashLineG = 0,
@@ -241,10 +255,12 @@ local TBB_DEFAULT_BAR = {
     timerPosition = "right",
     timerSize = 11,
     timerX = 0, timerY = 0,
+    timerTextR = 1, timerTextG = 1, timerTextB = 1, timerTextA = 0.9,
     showName  = true,
     namePosition = "left",
     nameSize  = 11,
     nameX = 0, nameY = 0,
+    nameTextR = 1, nameTextG = 1, nameTextB = 1, nameTextA = 0.9,
     showSpark = true,
     iconDisplay = "none",
     iconSize    = 24,
@@ -253,6 +269,7 @@ local TBB_DEFAULT_BAR = {
     stacksPosition = "center",
     stacksSize     = 11,
     stacksX = 0, stacksY = 0,
+    stacksTextR = 1, stacksTextG = 1, stacksTextB = 1, stacksTextA = 0.9,
     stackThresholdEnabled = false,
     stackThreshold = 5,
     stackThresholdR = 0.8, stackThresholdG = 0.1, stackThresholdB = 0.1, stackThresholdA = 1,
@@ -1509,7 +1526,7 @@ end
 --  and stackThresholds too: a copied style must not carry threshold numbers.
 -------------------------------------------------------------------------------
 local TBB_STYLE_KEYS = {
-    "height", "width", "verticalOrientation", "reverseFill",
+    "height", "width", "verticalOrientation", "reverseFill", "fillUp",
     "chargeHashLines", "chargeHashLineWidth",
     "chargeHashLineR", "chargeHashLineG", "chargeHashLineB", "chargeHashLineA",
     "texture", "strata",
@@ -1518,11 +1535,14 @@ local TBB_STYLE_KEYS = {
     "gradientEnabled", "gradientR", "gradientG", "gradientB", "gradientA", "gradientDir",
     "opacity", "hideWhenInactive", "onlyInCombat",
     "showTimer", "timerPosition", "timerSize", "timerX", "timerY",
+    "timerTextR", "timerTextG", "timerTextB", "timerTextA",
     "timerDecimals", "timerDecimalThreshold",
     "showName", "namePosition", "nameSize", "nameX", "nameY",
+    "nameTextR", "nameTextG", "nameTextB", "nameTextA",
     "showSpark",
     "iconDisplay", "iconSize", "iconX", "iconY", "iconBorderSize",
     "stacksPosition", "stacksSize", "stacksX", "stacksY",
+    "stacksTextR", "stacksTextG", "stacksTextB", "stacksTextA",
     "borderSize", "borderTexture", "borderR", "borderG", "borderB",
     "borderTextureOffset", "borderTextureOffsetY",
     "borderTextureShiftX", "borderTextureShiftY", "borderBehind",
@@ -2524,6 +2544,10 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
     -- Opacity
     bar._opacityTarget = cfg.opacity or 1.0
     if not bar._tbbReady then bar:SetAlpha(bar._opacityTarget) end
+
+    SetTBBTextColor(bar._timerText, cfg, "timer")
+    SetTBBTextColor(bar._nameText, cfg, "name")
+    SetTBBTextColor(bar._stacksText, cfg, "stacks")
 
     -- Timer text. Vertical bars honor the same position choices as horizontal
     -- ones: left/right sit OUTSIDE the (thin) bar, top/bottom sit above/below
@@ -4275,13 +4299,18 @@ end
 
 -------------------------------------------------------------------------------
 --  Cooldown-tracking bar (cfg.trackType == "cooldown"): the stock fill drains
---  with the spell's remaining cooldown. Charge Hash Lines instead fill through
---  one section per recovered charge while the timer remains the NEXT charge's
---  remaining cooldown. Stacks text = current charges. Ready (off cooldown /
---  GCD-only / at max charges / spell unknown) counts as INACTIVE for
---  hideWhenInactive; a shown-but-ready bar renders full with no timer.
+--  with the spell's remaining cooldown. cfg.fillUp inverts that, filling as
+--  the cooldown recovers -- it changes only WHICH WAY the value travels, and
+--  every fill source below honours it. Reverse Fill is a different thing
+--  entirely and composes with it: that mirrors the bar's geometry and never
+--  touches the value. Charge Hash Lines instead fill through one section per
+--  recovered charge while the timer remains the NEXT charge's remaining
+--  cooldown, and already fill upward by construction, so fillUp is a no-op
+--  there. Stacks text = current charges. Ready (off cooldown / GCD-only / at
+--  max charges / spell unknown) counts as INACTIVE for hideWhenInactive; a
+--  shown-but-ready bar renders full with no timer, in either direction.
 --
---  FILL SOURCE ORDER:
+--  FILL SOURCE ORDER (each honours cfg.fillUp):
 --  1. Engine duration handle (C_Spell.GetSpellCooldownDuration /
 --     GetSpellChargeDuration + StatusBar:SetTimerDuration): the ENGINE
 --     animates the drain and tracks CDR / resets live, secret-proof by
@@ -4500,11 +4529,19 @@ local function _UpdateCooldownBar(bar, cfg)
             -- the visible clipped texture and spark were updated above.
         elseif durObj and sb.SetTimerDuration and timerDir then
             _restoreTBBNormalFill(bar, cfg)
-            -- Engine-driven drain: the duration handle tracks CDR and
+            -- Engine-driven fill: the duration handle tracks CDR and
             -- resets live, no numbers ever read. The bar timer is re-set
-            -- only when a fresh handle was fetched (event/revalidate) or
-            -- the bar just appeared -- the engine animates in between.
-            if bar._cdNeedSet or not wasShown then
+            -- only when a fresh handle was fetched (event/revalidate), the
+            -- bar just appeared, or the requested direction changed -- the
+            -- engine animates in between. Fill Up asks the engine for
+            -- ElapsedTime instead of RemainingTime, the same constant the
+            -- charge-hash recovery bar uses. The direction term matters
+            -- because toggling the option restyles a LIVE bar in place: with
+            -- only the fetch/show terms the engine would keep animating the
+            -- old direction until the next handle fetch.
+            local wantDir = cfg.fillUp and timerDir.ElapsedTime
+                or timerDir.RemainingTime
+            if bar._cdNeedSet or not wasShown or bar._cdFillDir ~= wantDir then
                 sb:SetMinMaxValues(0, 1)
                 local interpE = Enum.StatusBarInterpolation
                 local interp
@@ -4515,33 +4552,51 @@ local function _UpdateCooldownBar(bar, cfg)
                         interp = interpE.None
                     end
                 end
-                sb:SetTimerDuration(durObj, interp, timerDir.RemainingTime)
-                if not wasShown and sb.SetToTargetValue then
-                    -- Snap on first show: avoids the empty-to-full sweep-in.
+                sb:SetTimerDuration(durObj, interp, wantDir)
+                -- Snap whenever the bar was not already animating THIS
+                -- direction. First show is the original case (the
+                -- empty-to-full sweep-in). The direction term adds two more:
+                -- arriving from the ready state, which parks the bar full and
+                -- clears _cdFillDir, and a mid-cooldown toggle. Both leave the
+                -- bar sitting at the opposite end, and with smooth cooldowns
+                -- on, easing from there plays a visible backwards sweep at the
+                -- exact moment the spell was cast.
+                if (not wasShown or bar._cdFillDir ~= wantDir)
+                    and sb.SetToTargetValue then
                     sb:SetToTargetValue()
                 end
                 bar._cdNeedSet = nil
+                bar._cdFillDir = wantDir
             end
             if cfg.showSpark and bar._spark then bar._spark:Show() end
         elseif remaining then
             _restoreTBBNormalFill(bar, cfg)
             sb:SetMinMaxValues(0, duration)
+            -- Both operands are clean numbers on this branch, and a
+            -- non-positive remaining was normalised away above, so Fill Up
+            -- can simply mirror the fraction in Lua.
+            local fillVal = cfg.fillUp and (duration - remaining) or remaining
             -- Smooth fill is baseline (see UpdateLustBar note).
             local smooth = _smoothCooldowns and wasShown and Enum
                 and Enum.StatusBarInterpolation
                 and Enum.StatusBarInterpolation.ExponentialEaseOut
             if smooth then
-                sb:SetValue(remaining, smooth)
+                sb:SetValue(fillVal, smooth)
             else
-                sb:SetValue(remaining)
+                sb:SetValue(fillVal)
             end
+            -- Plain SetValue cancels the running bar timer, so the cached
+            -- engine direction is stale the moment this branch runs.
+            bar._cdFillDir = nil
             if cfg.showSpark and bar._spark then bar._spark:Show() end
         else
             _restoreTBBNormalFill(bar, cfg)
-            -- Ready (kept on screen) or unreadable fail-open: full bar.
-            -- Plain SetValue also cancels any running bar timer.
+            -- Ready (kept on screen) or unreadable fail-open: full bar in
+            -- either direction. Plain SetValue also cancels any running bar
+            -- timer.
             sb:SetMinMaxValues(0, 1)
             sb:SetValue(1)
+            bar._cdFillDir = nil
             if bar._spark then bar._spark:Hide() end
         end
     end

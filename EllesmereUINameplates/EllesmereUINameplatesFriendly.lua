@@ -815,6 +815,22 @@ local function RestoreNPCNameplate(nameplate, unit)
     end
 end
 
+-- Name-only friendly NPCs never touch friendlyPlates[] -- they're suppressed
+-- purely via SuppressNPCNameplate/npcOverlays, keyed by nameplate rather than
+-- unit. RemoveFriendlyPlate/RemoveFriendlyPlateNoRestore only clean up the
+-- full-plate pool, so when such an NPC is promoted to an enemy plate (e.g.
+-- becomes attackable) the orphaned name overlay is left rendering on top of
+-- the new enemy bar. Called from the friendly->enemy promotion watcher
+-- BEFORE the enemy plate spawns; leaves the Blizzard UF alpha'd/reparented
+-- as-is (mirrors RemoveFriendlyPlateNoRestore) since HideBlizzardFrame takes
+-- over suppression independently in the enemy plate's SetUnit.
+function ns.RemoveFriendlyNPCOverlayForUnit(unit, nameplate)
+    nameplate = nameplate or (unit and C_NamePlate.GetNamePlateForUnit(unit))
+    if not nameplate or not nameOnlyNPCSuppressed[nameplate] then return end
+    nameOnlyNPCSuppressed[nameplate] = nil
+    HideNPCOverlay(nameplate)
+end
+
 -------------------------------------------------------------------------------
 --  NamePlateDriverFrame hooks — suppress Blizzard UFs at the earliest moment
 --  These fire synchronously inside Blizzard's nameplate creation, BEFORE

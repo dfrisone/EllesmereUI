@@ -2498,7 +2498,7 @@ initFrame:SetScript("OnEvent", function(self)
         ---------------------------------------------------------------
         --  Friendly Player cog popup (Distance, Height, Width, Show Health %)
         ---------------------------------------------------------------
-        do
+        if not EllesmereUI._prebuilding then
             local fpPopup, fpPopupOwner
             local _, ShowFriendlyPlayerPopup = EllesmereUI.BuildCogPopup({
                 title = "Friendly Nameplate Settings",
@@ -2565,7 +2565,7 @@ initFrame:SetScript("OnEvent", function(self)
         --  opens a color picker -- White is fixed, Class follows the player's
         --  class color. Both gray out when Name Only mode is off.
         ---------------------------------------------------------------
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = friendlyRow._rightRegion
             local whiteSwatch, updateWhite, classSwatch, updateClass
             local function refreshNameSwatches()
@@ -2700,7 +2700,7 @@ initFrame:SetScript("OnEvent", function(self)
               swatches = MakeGuildColorSwatches() });  y = y - h
 
         -- Subtitle Text inline cog (guild bracket toggle)
-        do
+        if not EllesmereUI._prebuilding then
             local subCogOwner
             local _, ShowSubtitlePopup = EllesmereUI.BuildCogPopup({
                 title = "Subtitle Text Settings",
@@ -2765,7 +2765,7 @@ initFrame:SetScript("OnEvent", function(self)
               tooltip="Adjusts the size of friendly player names shown in Name Only mode. Default is 15." });  y = y - h
 
         -- Cog popup for NPC nameplate settings (Show NPC Titles)
-        do
+        if not EllesmereUI._prebuilding then
             -- Retained (always nil) so the cog button's legacy owner checks stay
             -- harmless after the popup itself moved to the shared BuildCogPopup.
             local npcCogPopup, npcCogPopupOwner
@@ -2871,7 +2871,7 @@ initFrame:SetScript("OnEvent", function(self)
               tooltip="Toggle visibility of enemy pet nameplates." });  y = y - h
 
         -- Inline DIRECTIONS cog on Friendly Name Size: name-only vertical distance
-        do
+        if not EllesmereUI._prebuilding then
             local _, distCogShow = EllesmereUI.BuildCogPopup({
                 title = "Name Distance",
                 rows = {
@@ -2938,7 +2938,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Enemy and Friendly stacking are independent toggles over the Midnight
         -- stacking bitfield. Friendly is locked out while EUI is not managing
         -- friendly player nameplates, since Blizzard owns that stacking bit then.
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = stackingRow._leftRegion
             if leftRgn._control then leftRgn._control:Hide() end
             local stackItems = {
@@ -2990,7 +2990,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Eyeball toggle on Hitbox Size X: shows a translucent overlay on real
         -- enemy nameplates marking the clickable area, so the sliders can be
         -- dialled in visually. Runtime-only; auto-hides when the panel closes.
-        do
+        if not EllesmereUI._prebuilding then
             local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
             local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
             local leftRgn = hitboxRow._leftRegion
@@ -3131,7 +3131,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="Pandemic Glow Preview" });  y = y - h
 
         -- Glow Preview icon: built into the right half of the glow style row
-        do
+        if not EllesmereUI._prebuilding then
             local SIDE_PAD = 20
 
             local iconSize = 36
@@ -3197,7 +3197,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline color swatch next to the Glow Style dropdown
-        do
+        if not EllesmereUI._prebuilding then
             local glowColorGet = function()
                 local c = DB().pandemicGlowColor or defaults.pandemicGlowColor
                 return c.r, c.g, c.b
@@ -3225,7 +3225,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Apply-to-All: push this nameplate pandemic glow out to all CDM bars.
         -- The coordinator lives in the CDM core, so the link only appears when
         -- that module is loaded (otherwise there's nothing to sync to).
-        if EllesmereUI.BuildSyncIcon and EllesmereUI.ApplyPandemicGlowToAll then
+        if EllesmereUI.BuildSyncIcon and EllesmereUI.ApplyPandemicGlowToAll and not EllesmereUI._prebuilding then
             EllesmereUI.BuildSyncIcon({
                 region = glowStyleRow._leftRegion,
                 tooltip = "Apply this pandemic glow to all CDM bars and tracking bars. A surface that can't show a style uses its closest match.",
@@ -3250,7 +3250,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Cog popup for Pixel Glow settings.
-        do
+        if not EllesmereUI._prebuilding then
             local pgPopup, pgPopupOwner
             local function ShowPixelGlowPopup(anchorBtn)
                 if not pgPopup then
@@ -3570,7 +3570,7 @@ initFrame:SetScript("OnEvent", function(self)
         dispelGlowRow, h = W:DualRow(parent, y, dispelGlowDropdown, dispelRightWidget);  y = y - h
 
         -- Inline color swatch for dispel glow
-        do
+        if not EllesmereUI._prebuilding then
             local glowColorGet = function()
                 local c = DB().dispelGlowColor or defaults.dispelGlowColor
                 return c.r, c.g, c.b
@@ -3597,7 +3597,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Eye icon: show/hide dispel glow on preview buff icons
-        do
+        if not EllesmereUI._prebuilding then
             local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
             local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
             local leftRgn = dispelGlowRow._leftRegion
@@ -3663,7 +3663,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Add "(Percent)" suffix in smaller, dimmer text next to the slider label
-        do
+        if not EllesmereUI._prebuilding then
             local rightFrame = row._rightRegion
             if rightFrame then
                 local suffixFS = rightFrame:CreateFontString(nil, "OVERLAY")
@@ -3692,7 +3692,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline color swatch for hash line custom color
-        do
+        if not EllesmereUI._prebuilding then
             local hashColorGet = function()
                 local c = (DB() and DB().hashLineColor) or defaults.hashLineColor
                 return c.r, c.g, c.b
@@ -3740,7 +3740,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI:RefreshPage()  -- update the cog disabled state
               end });  y = y - h
         -- "(Percent)" suffix on the target scale slider
-        do
+        if not EllesmereUI._prebuilding then
             local leftFrame = tfScaleRow._leftRegion
             if leftFrame then
                 local suffixFS = leftFrame:CreateFontString(nil, "OVERLAY")
@@ -3763,7 +3763,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
         -- Inline cog on Non-Target Opacity: focus exclusion toggle.
-        do
+        if not EllesmereUI._prebuilding then
             local function ntOff() return (DBVal("nonTargetAlpha") or 100) >= 100 end
             local rgn = tfScaleRow._rightRegion
             local _, ntCogShow = EllesmereUI.BuildCogPopup({
@@ -3824,7 +3824,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI:RefreshPage()
               end });  y = y - h
         -- "(Percent)" suffix on Focus Cast Height
-        do
+        if not EllesmereUI._prebuilding then
             local leftFrame = tfFocusRow._leftRegion
             if leftFrame then
                 local suffixFS = leftFrame:CreateFontString(nil, "OVERLAY")
@@ -3847,7 +3847,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = tfFocusRow._rightRegion
             local _, focusLetterCogShow = EllesmereUI.BuildCogPopup({
                 title = "Focus Letter",
@@ -3919,7 +3919,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" }
         );  y = y - h
         -- RESIZE cog: text size + X/Y offsets (mirrors the raid-marker cog)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = tfRangeRow._leftRegion
             local _, rangeCogShow = EllesmereUI.BuildCogPopup({
                 title = "Distance Text",
@@ -3967,7 +3967,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnLeave", function() UpdateRangeCogAlpha() end)
         end
         -- Inline color swatch (default light orange), left of the cog
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = tfRangeRow._leftRegion
             local rangeColorGet = function()
                 local c = (DB() and DB().rangeTextColor) or defaults.rangeTextColor
@@ -4017,7 +4017,7 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdatePreview()
               end });  y = y - h
         -- "(Percent)" suffix on the cast scale slider
-        do
+        if not EllesmereUI._prebuilding then
             local leftFrame = exCastRow._leftRegion
             if leftFrame then
                 local suffixFS = leftFrame:CreateFontString(nil, "OVERLAY")
@@ -4062,7 +4062,7 @@ initFrame:SetScript("OnEvent", function(self)
                   RefreshAllAuras()
               end });  y = y - h
 
-        do
+        if not EllesmereUI._prebuilding then
             local function nameRaidMarkerOff() return DBVal("nameRaidMarkerEnabled") ~= true end
             local rgn = nameRaidMarkerRow._leftRegion
             local _, nameRaidMarkerCogShow = EllesmereUI.BuildCogPopup({
@@ -4126,7 +4126,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline cog on the quest toggle: objective text size
-        do
+        if not EllesmereUI._prebuilding then
             local function questObjOff() return DBVal("replaceQuestIconWithObjective") ~= true end
             local rgn = questObjRow._leftRegion
             local _, sizeCogShow = EllesmereUI.BuildCogPopup({
@@ -4553,7 +4553,7 @@ initFrame:SetScript("OnEvent", function(self)
         y = y - h
         -- Inline color swatch next to the Border dropdown (left region) -- the
         -- standard (Basic) border color. Dimmed unless the mode is Basic.
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = borderStyleRow._leftRegion
             local function isBorderOff()
                 -- Off for None and Custom (the standard border, and therefore
@@ -4589,7 +4589,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline cog on the Border region: opt-in "Wrap Around Castbar". Placed
         -- to the left of the colour swatch. Dimmed only for the "None" mode
         -- (the wrap applies to both Basic and Custom borders).
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = borderStyleRow._leftRegion
             local _, wrapCogShow = EllesmereUI.BuildCogPopup({
                 title = "Castbar Border",
@@ -4676,7 +4676,7 @@ initFrame:SetScript("OnEvent", function(self)
             y = y - h
 
             -- Inline "Border Offset" cog on the Custom Border Style region
-            do
+            if not EllesmereUI._prebuilding then
                 local leftRgn = customBorderRow._leftRegion
                 local _, cbCogShow = EllesmereUI.BuildCogPopup({
                     title = "Border Offset",
@@ -4754,7 +4754,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             -- Inline color swatch (with alpha) on the Custom Border Size region
-            do
+            if not EllesmereUI._prebuilding then
                 local rightRgn = customBorderRow._rightRegion
                 local cbColGet = function()
                     local c = (DB() and DB().customBorderColor) or defaults.customBorderColor
@@ -4851,7 +4851,7 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
         -- Inline color swatch on Background (left region)
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = bgHoverRow._leftRegion
             local cbColorGet = function()
                 local c = (DB() and DB().bgColor) or defaults.bgColor
@@ -4875,7 +4875,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- White by default; tints every style except Blizzard (disabled there,
         -- since the Blizzard texture keeps its own coloring). Mirrors the Focus
         -- Texture swatch's disabled pattern.
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = bgHoverRow._rightRegion
             local acColorGet = function()
                 local c = (DB() and DB().absorbColor) or defaults.absorbColor or { r = 1, g = 1, b = 1 }
@@ -4902,7 +4902,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline "Absorb Settings" cog on the Absorb Style region (right of Row 2)
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = bgHoverRow._rightRegion
             local _, absorbCogShow = EllesmereUI.BuildCogPopup({
                 title = "Absorb Settings",
@@ -4937,7 +4937,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Eye icon: toggle absorb preview on the preview nameplate
-        do
+        if not EllesmereUI._prebuilding then
             local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
             local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
             local rgn = bgHoverRow._rightRegion
@@ -6329,8 +6329,10 @@ initFrame:SetScript("OnEvent", function(self)
               disabled = function() return CorePosOffDisabled("right") end,
               disabledTooltip = "This option requires an aura or indicator to be assigned", rawTooltip = true,
               labelOnlyDisabled = true });  y = y - h
+        if not EllesmereUI._prebuilding then
         MakeCogIcon(coreRow1, "_leftRegion",  "top",      "Top")
         MakeCogIcon(coreRow1, "_rightRegion", "right",    "Right")
+        end
 
         -- Row 2: Left | Top Right
         coreRow2, h = W:DualRow(parent, y,
@@ -6348,8 +6350,10 @@ initFrame:SetScript("OnEvent", function(self)
               disabled = function() return CorePosOffDisabled("topright") end,
               disabledTooltip = "This option requires an aura or indicator to be assigned", rawTooltip = true,
               labelOnlyDisabled = true });  y = y - h
+        if not EllesmereUI._prebuilding then
         MakeCogIcon(coreRow2, "_leftRegion",  "left",     "Left")
         MakeCogIcon(coreRow2, "_rightRegion", "topright", "Top Right")
+        end
 
         -- Row 3: Top Left | Bottom
         coreRow3, h = W:DualRow(parent, y,
@@ -6367,8 +6371,10 @@ initFrame:SetScript("OnEvent", function(self)
               disabled = function() return CorePosOffDisabled("bottom") end,
               disabledTooltip = "This option requires an aura or indicator to be assigned", rawTooltip = true,
               labelOnlyDisabled = true });  y = y - h
+        if not EllesmereUI._prebuilding then
         MakeCogIcon(coreRow3, "_leftRegion", "topleft", "Top Left")
         MakeCogIcon(coreRow3, "_rightRegion", "bottom", "Bottom")
+        end
 
         -- Map each position to { row, regionKey } for eye icon anchoring
         local posToRegion = {
@@ -6381,7 +6387,7 @@ initFrame:SetScript("OnEvent", function(self)
         }
 
         -- Eye icon that follows whichever Core Positions dropdown has "Raid Marker"
-        do
+        if not EllesmereUI._prebuilding then
             local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
             local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
             local eyeBtn = CreateFrame("Button", nil, parent)
@@ -6426,7 +6432,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Eye icon that follows whichever Core Positions dropdown has "Rare/Quest Indicator"
-        do
+        if not EllesmereUI._prebuilding then
             local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
             local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
             local eyeBtn = CreateFrame("Button", nil, parent)
@@ -6660,10 +6666,12 @@ initFrame:SetScript("OnEvent", function(self)
               disabledTooltip="This option requires a text to be assigned", rawTooltip=true,
               labelOnlyDisabled=true,
               disabledValues=function(k) if ns.IsComboHealthText(k) and ns.IsNameElement(DBVal("textSlotCenter")) then return "Disabled when the Name/Level text is centered on the health bar due to overlapping text" end end });  y = y - h
+        if not EllesmereUI._prebuilding then
         MakeTextColorSwatch(textRow1, "_leftRegion",  "textSlotTop")
         MakeTextCogIcon(textRow1, "_leftRegion",  "textSlotTop",   "Top Text")
         MakeTextColorSwatch(textRow1, "_rightRegion", "textSlotRight")
         MakeTextCogIcon(textRow1, "_rightRegion", "textSlotRight", "Right Text")
+        end
 
         -- Row 2: Left Text | Center Text
         textRow2, h = W:DualRow(parent, y,
@@ -6682,10 +6690,12 @@ initFrame:SetScript("OnEvent", function(self)
               disabled=function() return DBVal("textSlotCenter") == "none" end,
               disabledTooltip="This option requires a text to be assigned", rawTooltip=true,
               labelOnlyDisabled=true });  y = y - h
+        if not EllesmereUI._prebuilding then
         MakeTextColorSwatch(textRow2, "_leftRegion",  "textSlotLeft")
         MakeTextCogIcon(textRow2, "_leftRegion",  "textSlotLeft",   "Left Text")
         MakeTextColorSwatch(textRow2, "_rightRegion", "textSlotCenter")
         MakeTextCogIcon(textRow2, "_rightRegion", "textSlotCenter", "Center Text")
+        end
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
 
@@ -6751,7 +6761,7 @@ initFrame:SetScript("OnEvent", function(self)
         local showCastIconRow = castBarHeightRow
 
         -- Inline cog on Spell Icon (right region) for Scale
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = castBarHeightRow._rightRegion
             local _, spellIconCogShow = EllesmereUI.BuildCogPopup({
                 title = "Spell Icon Settings",
@@ -6883,7 +6893,7 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.RefreshCastBorder()
                 UpdatePreview()
               end });  y = y - h
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = castBgRow._leftRegion
             local castBgColorGet = function()
                 local c = (DB() and DB().castBgColor) or defaults.castBgColor
@@ -6903,7 +6913,7 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(function() castBgUpdateSwatch() end)
         end
         -- Inline color swatch on Cast Bar Border (right region)
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = castBgRow._rightRegion
             local castBorderColorGet = function()
                 local c = (DB() and DB().castBorderColor) or defaults.castBorderColor
@@ -6959,7 +6969,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 UpdatePreview()
               end });  y = y - h
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = castTimerRow._leftRegion
             local ctColorGet = function()
                 local c = (DB() and DB().castTimerColor) or defaults.castTimerColor
@@ -7093,7 +7103,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline mid-cast colour swatch on the Hint dropdown (moved here from the
         -- Cast Color swatches). Greys out unless "Tick + Bar" is selected, since
         -- the colour only applies to the bar.
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = castColorRow._rightRegion
             local ctrl = rightRgn and rightRgn._control
             if ctrl and EllesmereUI.BuildColorSwatch then
@@ -7129,7 +7139,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline cog beside the Cast Color swatches: Show Shield Icon
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = castColorRow._leftRegion
             local _, midCastCogShow = EllesmereUI.BuildCogPopup({
                 title = "Cast Color",
@@ -7238,7 +7248,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end });  y = y - h
 
             -- Inline color swatch
-            do
+            if not EllesmereUI._prebuilding then
                 local leftRgn = impGlowRow._leftRegion
                 local ctrl = leftRgn and leftRgn._control
                 if ctrl and EllesmereUI.BuildColorSwatch then
@@ -7266,7 +7276,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             -- Cog popup for Pixel Glow settings.
-            do
+            if not EllesmereUI._prebuilding then
                 local _, ShowImpCastGlowPopup = EllesmereUI.BuildCogPopup({
                     title = "Pixel Glow Settings",
                     rows = {
@@ -7396,7 +7406,7 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Inline flash colour swatch on the Show Interrupted Flash Effect
             -- toggle. Greys out when the effect is disabled.
-            do
+            if not EllesmereUI._prebuilding then
                 local rgn = swatchRegion
                 local ctrl = rgn and rgn._control
                 if ctrl and EllesmereUI.BuildColorSwatch then
@@ -7490,7 +7500,7 @@ initFrame:SetScript("OnEvent", function(self)
         local refreshTargetBorderSwatch  -- fwd decl; assigned when the swatch builds
         local refreshTargetGlowSwatch    -- fwd decl; assigned when the glow swatch builds
         local refreshTargetHighlightCog  -- fwd decl; assigned when the cog builds
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = targetGlowRow._leftRegion
             if leftRgn._control then leftRgn._control:Hide() end
             local glowItems = {
@@ -7661,7 +7671,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline Custom + Class color swatches on Target Arrows (next to the dropdown;
         -- custom adjacent to the control, class to its left). Click to switch; the
         -- inactive swatch dims. Both gray out when arrows are off.
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = targetGlowRow._rightRegion
             local arrowOff = function() return DBVal("showTargetArrows") ~= true end
             local customSwatch, updateCustom, classSwatch, updateClass
@@ -7715,7 +7725,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline cog (arrow scale), to the left of the swatches
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = targetGlowRow._rightRegion
             local arrowOff = function() return DBVal("showTargetArrows") ~= true end
             local _, arrowCogShow = EllesmereUI.BuildCogPopup({
@@ -7761,7 +7771,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Eye icon to the left of the Target Glow Style dropdown to toggle glow on preview
-        do
+        if not EllesmereUI._prebuilding then
             local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
             local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
             local leftRgn = targetGlowRow._leftRegion
@@ -7870,7 +7880,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline Target Color swatch
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = targetColorRow._leftRegion
             local targetColorGet = function() return DBColor("target") end
             local targetColorSet = function(r, g, b)
@@ -7892,7 +7902,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline Focus Color swatch
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = targetColorRow._rightRegion
             local focusColorGet = function() return DBColor("focus") end
             local focusColorSet = function(r, g, b)
@@ -7967,7 +7977,7 @@ initFrame:SetScript("OnEvent", function(self)
               order=ovtOrder });  y = y - h
 
         -- Inline Target Texture color swatch
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = textureDualRow._leftRegion
             local targetTexColorGet = function()
                 local c = (DB() and DB().targetOverlayColor) or defaults.targetOverlayColor
@@ -7993,7 +8003,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline Target Texture cog (Opacity + No Tint), to the left of the swatch
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = textureDualRow._leftRegion
             local _, targetTexCogShow = EllesmereUI.BuildCogPopup({
                 title = "Target Texture",
@@ -8049,7 +8059,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline Focus Texture color swatch
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = textureDualRow._rightRegion
             local focusTexColorGet = function()
                 local c = (DB() and DB().focusOverlayColor) or defaults.focusOverlayColor
@@ -8075,7 +8085,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline Focus Texture cog (Opacity + No Tint), to the left of the swatch
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = textureDualRow._rightRegion
             local _, focusTexCogShow = EllesmereUI.BuildCogPopup({
                 title = "Focus Texture",
@@ -8134,6 +8144,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="Target Preview" },
             { type="label", text="Focus Preview" });  y = y - h
 
+        if not EllesmereUI._prebuilding then
         targetPrev = LazyColorPreviewBar(previewDualRow, "health", "target", previewDualRow._leftRegion)
         do
             local function RepositionTargetBar()
@@ -8157,7 +8168,9 @@ initFrame:SetScript("OnEvent", function(self)
         end
         targetPrev.SetDisabled(isTargetColorDisabled())
         targetPrev.UpdateColor()
+        end
 
+        if not EllesmereUI._prebuilding then
         focusPrev = LazyColorPreviewBar(previewDualRow, "health", "focus", previewDualRow._rightRegion)
         do
             local function RepositionFocusBar()
@@ -8181,6 +8194,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
         focusPrev.SetDisabled(isFocusColorDisabled())
         focusPrev.UpdateColor()
+        end
 
         -- Hover Texture (+ Hover Effect opacity slider + color swatch beside it):
         -- the mouseover highlight overlay and its opacity/color. Lives at the
@@ -8240,6 +8254,7 @@ initFrame:SetScript("OnEvent", function(self)
                     ns.RefreshHoverEffect()
                     UpdatePreview()
                   end });  y = y - h
+            if not EllesmereUI._prebuilding then
             -- Inline color swatch on Hover Effect (right region)
             local rightRgn = hoverRow._rightRegion
             local hvColorGet = function()
@@ -8298,6 +8313,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if not isHoverTextureNone() then self:SetAlpha(0.75) end
             end)
             hvCogBtn:SetScript("OnLeave", function(self) UpdateHvCogAlpha() end)
+            end
         end
 
         -----------------------------------------------------------------------
@@ -8399,7 +8415,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline cog on Position dropdown (X/Y offset settings)
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = classResourceRow2._leftRegion
             local cpPosCogBtn = CreateFrame("Button", nil, leftRgn)
             cpPosCogBtn:SetSize(26, 26)
@@ -8480,7 +8496,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline border color swatch + thickness cog on the Border toggle
-        do
+        if not EllesmereUI._prebuilding then
             local rgn = classResourceRow4._rightRegion
             local function borderOff()
                 return classPowerDisabled() or DBVal("classPowerBorder") ~= true
@@ -8621,8 +8637,10 @@ initFrame:SetScript("OnEvent", function(self)
             local durationRow1
             durationRow1, h = W:DualRow(parent, y, DurationDropdown("debuff"), DurationDropdown("buff")); y = y - h
             auraDurPosRow = durationRow1
+            if not EllesmereUI._prebuilding then
             AttachDurationTools(durationRow1._leftRegion, "debuff")
             AttachDurationTools(durationRow1._rightRegion, "buff")
+            end
 
             local durationRow2
             durationRow2, h = W:DualRow(parent, y,
@@ -8636,8 +8654,11 @@ initFrame:SetScript("OnEvent", function(self)
                     UpdatePreview()
                   end, order=timerPosOrder }); y = y - h
             auraTimerStackRow = durationRow2
+            if not EllesmereUI._prebuilding then
             AttachDurationTools(durationRow2._leftRegion, "cc")
+            end
 
+            if not EllesmereUI._prebuilding then
             -- RIGHT: Aura Stacks inline color swatch
             local rightRgn = durationRow2._rightRegion
             local asColorGet = function()
@@ -8715,6 +8736,7 @@ initFrame:SetScript("OnEvent", function(self)
             auraStackCogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
             auraStackCogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
             auraStackCogBtn:SetScript("OnClick", function(self) auraStackCogShow(self) end)
+            end
         end
 
         -- Spell Name | Spell Target -- position dropdowns (None / Left / Right /
@@ -8751,7 +8773,7 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdatePreview()
                 EllesmereUI:RefreshPage()
               end })
-        do
+        if not EllesmereUI._prebuilding then
             -- LEFT: Spell Name inline color swatch
             local leftRgn = spellNameRow._leftRegion
             local snColorGet = function() return DBColor("castNameColor") end
@@ -10027,7 +10049,7 @@ initFrame:SetScript("OnEvent", function(self)
               tooltip="Colors enemy nameplates for quest mobs you still need to kill." });  y = y - h
 
         -- Inline Quest Mob Color swatch
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = enemyTypesRow._rightRegion
             local questColorGet = function()
                 local c = DB().questMobColor or defaults.questMobColor
@@ -10057,7 +10079,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- below; Neutral keeps its own color. Off (default): no effect on
         -- coloring anywhere. Keys keep their original owBasic* names
         -- (formerly "Open World Basic Coloring", which gated on any instance).
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = enemyTypesRow._leftRegion
             local isOWOff = function()
                 local v = DBVal("owBasicColoring")
@@ -10141,7 +10163,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline cog on the "Neutral & Mini Enemies" region: "Mini Coloring M+
         -- Only" toggle. On (default) restricts the Mini Enemies color to 5-man
         -- dungeons; off applies it everywhere.
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = neutralMiniRow._leftRegion
             local _, miniCogShow = EllesmereUI.BuildCogPopup({
                 title = "Mini Enemies",
@@ -10262,7 +10284,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline "No Aggro" color swatch next to left toggle
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = dpsDualFrame._leftRegion
             local dpsNoAggroColorGet = function() return DBColor("dpsNoAggro") end
             local dpsNoAggroColorSet = function(r, g, b)
@@ -10326,7 +10348,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline "Has Aggro" color swatch next to Classic Tank Aggro toggle
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = dpsDualFrame._rightRegion
             local aggroColorGet = function() return DBColor("tankHasAggro") end
             local aggroColorSet = function(r, g, b)
@@ -10375,7 +10397,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
 
         -- Inline "Has Aggro" color swatch next to left toggle
-        do
+        if not EllesmereUI._prebuilding then
             local leftRgn = tankDualFrame._leftRegion
             local tankAggroColorGet = function() return DBColor("tankHasAggro") end
             local tankAggroColorSet = function(r, g, b)
@@ -10438,7 +10460,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Inline "Off-Tank" color swatch next to right toggle
-        do
+        if not EllesmereUI._prebuilding then
             local rightRgn = tankDualFrame._rightRegion
             local otColorGet = function() return DBColor("offTankAggro") end
             local otColorSet = function(r, g, b)

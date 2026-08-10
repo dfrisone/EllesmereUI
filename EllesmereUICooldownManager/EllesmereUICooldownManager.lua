@@ -240,9 +240,10 @@ local StartNativeGlow, StopNativeGlow
 
 -- Keybind cache: built once out-of-combat, looked up per tick
 local _cdmKeybindCache       = {}   -- [spellID] -> formatted key string
-local _cdmKeybindFromMacro   = {}   -- [key] -> true if the cached bind came from a macro
+local _cdmKeybindRank        = {}   -- [key] -> priority rank of the stored bind (lower wins)
 local _keybindCacheReady     = false  -- true after first successful build
 local _keybindDebounceTimer  = nil   -- cancellable timer for debounced keybind updates
+local _bonusScanSeen         = {}   -- [bonus bar offset] -> true once scanned this session
 
 -- Combat state tracked via events (InCombatLockdown() can lag behind PLAYER_REGEN_DISABLED)
 local _inCombat = false
@@ -539,6 +540,11 @@ local DEFAULTS = {
             hideBuffsWhenInactive = true,
             showInactiveBuffIcons = false,
             desaturateInactiveBuffs = true,
+            -- Keep keybind text identical across action bar swaps (stealth,
+            -- druid forms, skyriding). ON by default: the defaults merge
+            -- seeds it into existing profiles at login, and an explicit
+            -- false (user turned it off) survives the logout default-strip.
+            stableKeybinds = true,
             -- The 3 default bars (match Blizzard CDM)
             bars = {
                 {
@@ -1425,6 +1431,30 @@ function ns.RescanChargeCdTextFlag()
     ns.ForEachSavedSettingsBlock(function(ss)
         if ss.chargeHideCdText then
             ns._cdmAnyChargeHideCdText = true
+            return true
+        end
+    end)
+end
+
+-- Charge style gate: set ns._cdmAnyChargeStyle once if any saved spell (any spec)
+-- has Hide Swipe (Charges) or Hide Recharge Edge enabled. Same monotonic,
+-- scanned-once contract as RescanChargeCdTextFlag.
+--
+-- This flag is the one charge gate that had no priming pass: it was set only from
+-- inside the SetSwipeColor hook, i.e. not until the first cooldown re-push after
+-- login, which is already after the rebuild has run RefreshCDMIconAppearance. So
+-- the rebuild's ReapplyChargeStyle was skipped, and ApplyCdmChargeStyle itself
+-- gates its whole Hide Swipe / Hide Recharge Edge block on the flag -- meaning a
+-- charge spell already recharging at login kept its swipe until something pushed
+-- its cooldown again. Priming here closes that window; the reactive hooks then
+-- carry it as before.
+function ns.RescanChargeStyleFlag()
+    if ns._cdmAnyChargeStyle or ns._chargeStyleFlagScanned then return end
+    if not EllesmereUIDB then return end
+    ns._chargeStyleFlagScanned = true
+    ns.ForEachSavedSettingsBlock(function(ss)
+        if ss.chargeHideSwipe or ss.hideRechargeEdge then
+            ns._cdmAnyChargeStyle = true
             return true
         end
     end)
@@ -7523,23 +7553,73 @@ ns.GetBarData = GetBarData
 
 -------------------------------------------------------------------------------
 --  Keybind cache for CDM icons
---  Resolves binding keys per action slot (main bar paged via the EAB bar's
---  actionpage attribute, else client page APIs). Read-only + text writes on
---  our own frames, so it is safe to run in combat (debounced upstream).
+--  Resolves binding keys per action slot. In Stable mode, the main bar is
+--  scanned across home page + bonus pages (forms/stealth/skyriding), so the
+--  cache does not follow bar swaps and a key only changes when the player
+--  moves the ability or rebinds it. Manually-paged pages 2-6 are excluded --
+--  their contents aren't reliably something the player set up on purpose.
+--  Read-only + text writes on our own frames, so it is safe to run in combat
+--  (debounced upstream).
 -------------------------------------------------------------------------------
 
--- Action bar slot -> binding name map. Non-bar-1 entries listed first so that
--- if a spell appears on multiple bars, the more specific bar wins over bar 1.
+-- Forward-declared: everything else in this section lives inside the do-block
+-- below so its locals are freed again. This file is at the Lua 5.1 200-local
+-- ceiling for the main chunk, and the multi-page scan needs several helpers.
+local UpdateCDMKeybinds
+do
+
+-- Action bar slot -> binding name map, with the priority tier each source
+-- feeds into _SetKeybind (lower wins). These bars have fixed slots and never
+-- page, so they outrank every main-bar page: if a spell sits on both, the
+-- dedicated bar's key is the one that always works.
+-- The main bar (ACTIONBUTTON1-12) is not listed here -- it needs per-page slot
+-- math and is scanned separately below.
 local _barBindingDefs = {
-    { prefix = "MULTIACTIONBAR1BUTTON", startSlot = 61  },  -- bar 2 bottom left
-    { prefix = "MULTIACTIONBAR2BUTTON", startSlot = 49  },  -- bar 3 bottom right
-    { prefix = "MULTIACTIONBAR3BUTTON", startSlot = 25  },  -- bar 4 right
-    { prefix = "MULTIACTIONBAR4BUTTON", startSlot = 37  },  -- bar 5 left
-    { prefix = "MULTIACTIONBAR5BUTTON", startSlot = 145 },  -- bar 6
-    { prefix = "MULTIACTIONBAR6BUTTON", startSlot = 157 },  -- bar 7
-    { prefix = "MULTIACTIONBAR7BUTTON", startSlot = 169 },  -- bar 8
-    { prefix = "ACTIONBUTTON",          startSlot = 1   },  -- bar 1 (last = lowest priority)
+    { prefix = "MULTIACTIONBAR1BUTTON", startSlot = 61,  tier = 1 },  -- bar 2 bottom left
+    { prefix = "MULTIACTIONBAR2BUTTON", startSlot = 49,  tier = 2 },  -- bar 3 bottom right
+    { prefix = "MULTIACTIONBAR3BUTTON", startSlot = 25,  tier = 3 },  -- bar 4 right
+    { prefix = "MULTIACTIONBAR4BUTTON", startSlot = 37,  tier = 4 },  -- bar 5 left
+    { prefix = "MULTIACTIONBAR5BUTTON", startSlot = 145, tier = 5 },  -- bar 6
+    { prefix = "MULTIACTIONBAR6BUTTON", startSlot = 157, tier = 6 },  -- bar 7
+    { prefix = "MULTIACTIONBAR7BUTTON", startSlot = 169, tier = 7 },  -- bar 8
+    -- EUI bars 9/10 have no native binding command: their keys are routed
+    -- through the button with SetOverrideBindingClick against the custom
+    -- commands declared in the Action Bars module's Bindings.xml. Because that
+    -- route always reads the button's live "action" attr, resolve the slot from
+    -- the button when it exists and only fall back to the base page slot when
+    -- the Action Bars module is not loaded (handled where this def is consumed).
+    { prefix = "EUI_BAR9_BUTTON",       startSlot = 13,  tier = 8, eabButton = true },  -- bar 9  (action page 2)
+    { prefix = "EUI_BAR10_BUTTON",      startSlot = 109, tier = 9, eabButton = true },  -- bar 10 (action page 10)
 }
+
+-- Main-bar tiers. Page 1 is the "home" state and outranks the form/stealth/
+-- skyriding bonus pages.
+--
+-- Pages 2-6 (manual paging, e.g. Shift+MouseWheel -- a stock WoW binding, not
+-- an EAB-specific feature) are deliberately NOT scanned. Unlike page 1 and the
+-- bonus pages, nothing guarantees their contents are something the player
+-- actually curated: WoW keeps whatever was last placed there (leftovers from
+-- a previous bar addon, a default-populated slot, an accidental scroll) and
+-- GetActionInfo returns it regardless. Root-caused 2026-08-07: a tracked,
+-- genuinely unbound Utility spell showed a phantom "CR" key because slot 11
+-- of page 6 -- never intentionally used -- happened to hold something under
+-- the ACTIONBUTTON11 binding. Since the tracked spell had no other entry,
+-- that stray page-6 read became its only (wrong) answer. Multibars and bonus
+-- pages don't have this problem: multibars are explicit EAB bar assignments,
+-- and bonus pages are gated by real, meaningful game state (stealth/form/
+-- skyriding), not "whatever a stray scroll last revealed."
+-- Tiers 8-9 are taken by EUI_BAR9_BUTTON/EUI_BAR10_BUTTON above (also
+-- non-main-bar, so they outrank the main bar the same way).
+local _TIER_MAINBAR_HOME  = 10   -- page 1        -> slots 1-12
+local _TIER_MAINBAR_BONUS = 11   -- pages 7-11    -> slots 73-132  (+ pg - 7)
+-- A macro-sourced bind is always outranked by a direct one, whatever the bar.
+local _RANK_MACRO_PENALTY = 100
+
+-- Whether this rebuild runs in stable mode. Latched once per rebuild rather
+-- than re-read per slot, and gates BOTH halves of the feature: the multi-page
+-- main bar scan and the macro body scan. With the option off, every path below
+-- must behave exactly as it did before the feature existed.
+local _stableMode = false
 
 local function FormatKeybindKey(key)
     if not key or key == "" then return nil end
@@ -7561,118 +7641,253 @@ local function FormatKeybindKey(key)
     return key ~= "" and key or nil
 end
 
--- Store a keybind under a cache key with macro-deprioritization: a direct
--- (non-macro) bind always wins. If nothing is cached yet we store it; if a
--- macro bind was stored earlier and this one is a direct spell bind, it
--- overrides the macro. Macro binds never overwrite an existing entry. This
--- lets a user who has both a macro and the real spell bound see the real
--- spell's key.
-local function _SetKeybind(cacheKey, formatted, fromMacro)
+-- Store a keybind under a cache key, best-rank-wins. The rank encodes both
+-- which bar/page the bind came from (see the tier constants above) and
+-- macro-deprioritization: a direct (non-macro) bind always beats a macro one,
+-- whatever bar each sits on, so a user who has both a macro and the real spell
+-- bound sees the real spell's key. Equal rank keeps the first writer, which
+-- preserves scan order within a single bar.
+local function _SetKeybind(cacheKey, formatted, rank)
     if not formatted then return end
-    if _cdmKeybindCache[cacheKey] == nil then
+    local cur = _cdmKeybindRank[cacheKey]
+    if cur == nil or rank < cur then
         _cdmKeybindCache[cacheKey] = formatted
-        _cdmKeybindFromMacro[cacheKey] = fromMacro or nil
-    elseif _cdmKeybindFromMacro[cacheKey] and not fromMacro then
-        _cdmKeybindCache[cacheKey] = formatted
-        _cdmKeybindFromMacro[cacheKey] = nil
+        _cdmKeybindRank[cacheKey] = rank
     end
 end
 
-local function RebuildKeybindCache()
-    wipe(_cdmKeybindCache)
-    wipe(_cdmKeybindFromMacro)
-    for _, def in ipairs(_barBindingDefs) do
-        for i = 1, 12 do
-            local bindName = def.prefix .. i
-            local key = GetBindingKey(bindName)
-            if key then
-                local slot = def.startSlot + i - 1
-                if def.prefix == "ACTIONBUTTON" then
-                    -- Main bar pages with forms/vehicles. Prefer the EAB main
-                    -- bar's actionpage attribute (set by its secure page
-                    -- handler, covers override/vehicle pages too). Without it
-                    -- (Action Bars module disabled), derive the page from the
-                    -- client: bonus bars (forms) map to pages 7+, else the
-                    -- manually selected page.
-                    local mbf = _G["EABBar_MainBar"]
-                    local pg = mbf and tonumber(mbf:GetAttribute("actionpage"))
-                    if not pg then
-                        local bonus = GetBonusBarOffset and GetBonusBarOffset() or 0
-                        if bonus > 0 then
-                            pg = 6 + bonus
-                        else
-                            pg = (GetActionBarPage and GetActionBarPage()) or 1
-                        end
+-- Cache a spell under every id an icon might present it as: the id itself,
+-- its name, and its override/base partners. A nil id is a no-op -- callers
+-- hand through whatever GetActionInfo/GetMacroSpell returned, and writing a
+-- nil cache key would be a hard error.
+local function _SetSpellKeybind(spellID, formatted, rank)
+    if not spellID then return end
+    _SetKeybind(spellID, formatted, rank)
+    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+    if name then _SetKeybind(name, formatted, rank) end
+    local ovr = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(spellID)
+    if ovr and ovr ~= spellID then _SetKeybind(ovr, formatted, rank) end
+    local base = C_Spell.GetBaseSpell and C_Spell.GetBaseSpell(spellID)
+    if base and base ~= spellID then _SetKeybind(base, formatted, rank) end
+end
+
+-- Macro commands whose arguments are a list of cast/use targets. English only:
+-- localized aliases (/zauber, ...) exist but the English commands work on every
+-- client and are what the overwhelming majority of macros use.
+local _MACRO_CAST_CMDS = {
+    cast = true, castsequence = true, castrandom = true,
+    use = true, userandom = true,
+}
+
+-- One target token out of a macro's cast list.
+local function _RegisterMacroTarget(token, formatted, rank)
+    -- Drop a leading castsequence reset clause ("reset=combat/5 Spell").
+    token = token:gsub("^reset=%S*%s*", "")
+    if token == "" then return end
+    -- "item:NNNN" is macro-only shorthand for targeting an itemID directly. It
+    -- is NOT a valid GetItemInfoInstant input (that wants a bare itemID, item
+    -- name, or a full item link) -- pull the numeric ID out ourselves instead
+    -- of handing the literal "item:NNNN" string to it.
+    local itemID = token:match("^item:(%d+)")
+    if itemID then
+        _SetKeybind(-tonumber(itemID), formatted, rank)
+        return
+    end
+    local sid = token:match("^spell:(%d+)")
+    if sid then
+        _SetSpellKeybind(tonumber(sid), formatted, rank)
+        return
+    end
+    -- A bare number is ambiguous in macro syntax (inventory slot vs itemID),
+    -- so it is left alone rather than guessed at.
+    if tonumber(token) then return end
+    -- Leftover bracket means the body had an unbalanced [condition] that the
+    -- %b[] strip could not remove. Whatever is left is not a usable name.
+    if token:find("[%[%]]") then return end
+    -- Store the raw name too: ApplyCachedKeybinds falls back to a name lookup,
+    -- which still hits when the spell itself cannot be resolved right now.
+    _SetKeybind(token, formatted, rank)
+    local id = C_Spell.GetSpellIDForSpellIdentifier and C_Spell.GetSpellIDForSpellIdentifier(token)
+    if id then
+        _SetSpellKeybind(id, formatted, rank)
+    else
+        local iid = C_Item and C_Item.GetItemInfoInstant and C_Item.GetItemInfoInstant(token)
+        if iid then _SetKeybind(-iid, formatted, rank) end
+    end
+end
+
+-- Register every branch of a macro body, not just the one that is live now.
+--
+-- This is the second half of the bar-swap problem, and it is independent of
+-- paging: Blizzard's own resolution (GetMacroSpell, and the "smart" macro
+-- subType) evaluates the macro's conditionals against the CURRENT state. So
+--     #showtooltip Shadow Dance
+--     /cast [bonusbar:1] Backstab; Shadow Dance
+-- reports Shadow Dance while unstealthed and Backstab while stealthed -- and
+-- Shadow Dance loses its key the moment the rogue stealths, with the action
+-- slot itself never changing. Parsing the body registers both branches, so
+-- the key sticks to whichever one the CDM icon happens to show.
+local function _RegisterMacroTargets(body, formatted, rank)
+    for line in body:gmatch("[^\r\n]+") do
+        local cmd, args = line:match("^%s*/(%a+)!?%s*(.*)$")
+        if cmd and args ~= "" and _MACRO_CAST_CMDS[cmd:lower()] then
+            -- Each ";"-separated clause is one conditional branch; a
+            -- castsequence packs several targets into one clause via ",".
+            for clause in args:gmatch("[^;]+") do
+                -- Drop the [condition] groups -- every branch counts here.
+                clause = clause:gsub("%b[]", "")
+                for token in clause:gmatch("[^,]+") do
+                    token = token:match("^%s*!?%s*(.-)%s*$")
+                    if token and token ~= "" then
+                        _RegisterMacroTarget(token, formatted, rank)
                     end
-                    slot = i + (pg - 1) * 12
-                end
-                local slotType, id, subType = GetActionInfo(slot)
-                local spellID
-                local fromMacro = false
-                if slotType == "spell" then
-                    spellID = id
-                elseif slotType == "macro" then
-                    fromMacro = true
-                    if subType == "spell" then
-                        -- "Smart" single-spell macro: Blizzard already
-                        -- resolved it, and `id` here IS the spellID, not a
-                        -- macro index -- passing it to GetMacroSpell would
-                        -- look up the wrong thing.
-                        spellID = id
-                    else
-                        -- Everything else (single-item, mount/companion,
-                        -- multi-line/conditional...): `id` from GetActionInfo
-                        -- is NOT a reliable identifier here. Resolve the real
-                        -- macro index via its name instead (same workaround
-                        -- EllesmereUICdmHooks.lua's SlotSpellID already uses).
-                        local macroName = GetActionText(slot)
-                        local macroIndex = macroName and GetMacroIndexByName(macroName)
-                        if macroIndex and macroIndex > 0 then
-                            spellID = GetMacroSpell(macroIndex)
-                            if not spellID then
-                                -- Not a spell-shaped macro: pull the first
-                                -- /use target out of the macro body and
-                                -- resolve it as an item instead.
-                                local body = GetMacroBody and GetMacroBody(macroIndex)
-                                local target = body and body:match("/use!?%s+([^\r\n]+)")
-                                if target then
-                                    target = target:gsub("^%[.-%]%s*", ""):match("^%s*(.-)%s*$")
-                                    -- "item:NNNN" is macro-only shorthand for
-                                    -- targeting an itemID directly. It is NOT
-                                    -- a valid GetItemInfoInstant input (that
-                                    -- wants a bare itemID, item name, or a
-                                    -- full item link) -- pull the numeric ID
-                                    -- out ourselves instead of handing the
-                                    -- literal "item:NNNN" string to it.
-                                    local itemID = target:match("^item:(%d+)")
-                                    itemID = itemID and tonumber(itemID)
-                                    if not itemID and not tonumber(target) then
-                                        itemID = C_Item and C_Item.GetItemInfoInstant and C_Item.GetItemInfoInstant(target)
-                                    end
-                                    if itemID then
-                                        _SetKeybind(-itemID, FormatKeybindKey(key), true)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                elseif slotType == "item" and id then
-                    -- Store under negated itemID (-id) to match the FC
-                    -- convention for item presets/trinkets.
-                    _SetKeybind(-id, FormatKeybindKey(key), false)
-                end
-                if spellID then
-                    local formatted = FormatKeybindKey(key)
-                    _SetKeybind(spellID, formatted, fromMacro)
-                    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-                    if name then _SetKeybind(name, formatted, fromMacro) end
-                    local ovr = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(spellID)
-                    if ovr and ovr ~= spellID then _SetKeybind(ovr, formatted, fromMacro) end
-                    local base = C_Spell.GetBaseSpell and C_Spell.GetBaseSpell(spellID)
-                    if base and base ~= spellID then _SetKeybind(base, formatted, fromMacro) end
                 end
             end
         end
+    end
+end
+
+-- Legacy fallback for a macro that GetMacroSpell could not resolve: pull the
+-- first /use target out of the body and register it as an item. Kept verbatim
+-- so the option-off path stays byte-for-byte the pre-feature behaviour; the
+-- stable path uses the full body scan above instead.
+local function _RegisterLegacyMacroItem(macroIndex, formatted, rank)
+    local body = GetMacroBody and GetMacroBody(macroIndex)
+    local target = body and body:match("/use!?%s+([^\r\n]+)")
+    if not target then return end
+    target = target:gsub("^%[.-%]%s*", ""):match("^%s*(.-)%s*$")
+    local itemID = target:match("^item:(%d+)")
+    itemID = itemID and tonumber(itemID)
+    if not itemID and not tonumber(target) then
+        itemID = C_Item and C_Item.GetItemInfoInstant and C_Item.GetItemInfoInstant(target)
+    end
+    if itemID then _SetKeybind(-itemID, formatted, rank) end
+end
+
+-- Resolve one action slot under one binding key into cache entries, at the
+-- given priority tier. Pure lookups plus writes into the two cache tables.
+local function _ResolveSlotBinding(slot, key, tier)
+    local formatted = FormatKeybindKey(key)
+    if not formatted then return end
+    local macroRank = tier + _RANK_MACRO_PENALTY
+    local slotType, id, subType = GetActionInfo(slot)
+    if slotType == "spell" then
+        _SetSpellKeybind(id, formatted, tier)
+    elseif slotType == "macro" then
+        -- "Smart" single-spell macro: Blizzard already resolved it, and `id`
+        -- here IS the spellID, not a macro index -- passing it to
+        -- GetMacroSpell would look up the wrong thing.
+        if subType == "spell" then
+            _SetSpellKeybind(id, formatted, macroRank)
+            -- Legacy took Blizzard's single answer as final. Stable mode falls
+            -- through to the body scan, which is the whole point: that answer
+            -- is state-dependent and hides the other branches.
+            if not _stableMode then return end
+        end
+        -- For everything else `id` from GetActionInfo is NOT a reliable
+        -- identifier -- resolve the real macro index via its name instead
+        -- (same workaround EllesmereUICdmHooks.lua's SlotSpellID already uses).
+        local macroName = GetActionText(slot)
+        local macroIndex = macroName and GetMacroIndexByName(macroName)
+        if macroIndex and macroIndex > 0 then
+            local live = GetMacroSpell(macroIndex)
+            if live then _SetSpellKeybind(live, formatted, macroRank) end
+            if _stableMode then
+                local body = GetMacroBody and GetMacroBody(macroIndex)
+                if body then _RegisterMacroTargets(body, formatted, macroRank) end
+            elseif not live then
+                _RegisterLegacyMacroItem(macroIndex, formatted, macroRank)
+            end
+        end
+    elseif slotType == "item" and id then
+        -- Store under negated itemID (-id) to match the FC convention for
+        -- item presets/trinkets.
+        _SetKeybind(-id, formatted, tier)
+    end
+end
+
+-- Stable scan: resolve ACTIONBUTTONn against the pages that reliably reflect
+-- something the player actually set up -- home page plus the bonus pages
+-- (forms, stealth, stances, skyriding), not the page that happens to be
+-- active right now. That makes the cache independent of bar swaps, so a
+-- keybind only ever changes when the player actually moves the ability or
+-- rebinds the key.
+--
+-- Deliberately excluded: manually-paged pages 2-6 (see the tier comment
+-- above) and the vehicle/override/temp-shapeshift pages. The latter's
+-- contents are server-pushed and transient rather than a layout the player
+-- configured, and their page indices can overlap the slot ranges of action
+-- bars 6-8 (145-180), which are already scanned via _barBindingDefs.
+local function _ScanMainBarStable(i, key)
+    _ResolveSlotBinding(i, key, _TIER_MAINBAR_HOME)
+    -- Bonus bars 1-5 (forms, stealth, stances, skyriding) = pages 7-11.
+    for pg = 7, 11 do
+        _ResolveSlotBinding(i + (pg - 1) * 12, key, _TIER_MAINBAR_BONUS + pg - 7)
+    end
+end
+
+-- Legacy scan: resolve ACTIONBUTTONn against the currently active page only.
+-- Prefer the EAB main bar's actionpage attribute (set by its secure page
+-- handler, covers override/vehicle pages too). Without it (Action Bars module
+-- disabled), derive the page from the client: bonus bars (forms) map to pages
+-- 7+, but only when page 1 is otherwise active -- a manual page beats the
+-- form/skyriding swap, same priority order the engine itself uses.
+local function _ScanMainBarLive(i, key)
+    local mbf = _G["EABBar_MainBar"]
+    local pg = mbf and tonumber(mbf:GetAttribute("actionpage"))
+    if not pg then
+        local bonus = GetBonusBarOffset and GetBonusBarOffset() or 0
+        local page = (GetActionBarPage and GetActionBarPage()) or 1
+        if bonus > 0 and page == 1 then
+            pg = 6 + bonus
+        else
+            pg = page
+        end
+    end
+    _ResolveSlotBinding(i + (pg - 1) * 12, key, _TIER_MAINBAR_HOME)
+end
+
+-- Global toggle for the stable scan. Default ON via DEFAULTS; the strict
+-- == true read means a pre-merge call (key not seeded yet) falls back to
+-- the legacy live-page scan for that pass.
+local function StableKeybindsEnabled()
+    local p = ECME.db and ECME.db.profile
+    return (p and p.cdmBars and p.cdmBars.stableKeybinds) == true
+end
+ns.CDMStableKeybindsEnabled = StableKeybindsEnabled
+
+local function RebuildKeybindCache()
+    wipe(_cdmKeybindCache)
+    wipe(_cdmKeybindRank)
+    -- Latch the mode for this whole rebuild so the multi-page scan and the
+    -- macro body scan can never disagree about it mid-pass.
+    _stableMode = StableKeybindsEnabled()
+    for _, def in ipairs(_barBindingDefs) do
+        for i = 1, 12 do
+            local key = GetBindingKey(def.prefix .. i)
+            if key then
+                local slot = def.startSlot + i - 1
+                if def.eabButton then
+                    -- EUI bars 9/10 have no native binding command: their keys
+                    -- are routed through the button with SetOverrideBindingClick
+                    -- against the custom commands declared in the Action Bars
+                    -- module's Bindings.xml. That route always reads the
+                    -- button's live "action" attr, so resolve the slot from the
+                    -- button when it exists (custom paging) and only fall back
+                    -- to the base page slot when the Action Bars module isn't
+                    -- loaded.
+                    local btn = _G["EABButton" .. slot]
+                    local live = btn and tonumber(btn:GetAttribute("action"))
+                    if live then slot = live end
+                end
+                _ResolveSlotBinding(slot, key, def.tier)
+            end
+        end
+    end
+    local scanMainBar = _stableMode and _ScanMainBarStable or _ScanMainBarLive
+    for i = 1, 12 do
+        local key = GetBindingKey("ACTIONBUTTON" .. i)
+        if key then scanMainBar(i, key) end
     end
 end
 
@@ -7731,7 +7946,7 @@ local function ApplyCachedKeybinds()
     end
 end
 
-local function UpdateCDMKeybinds()
+UpdateCDMKeybinds = function()
     RebuildKeybindCache()
     _keybindCacheReady = true
     -- Defer apply by one frame so the Blizzard tick has populated FC(icon).spellID
@@ -7741,6 +7956,8 @@ ns.UpdateCDMKeybinds = UpdateCDMKeybinds
 -- Expose apply-only for the tick loop (new spellID assigned to an icon mid-session)
 ns.ApplyCachedKeybinds = ApplyCachedKeybinds
 ns.CDMKeybindCache = _cdmKeybindCache
+
+end -- keybind cache block
 
 BuildAllCDMBars = function()
     ns._spellOrderDirty = true  -- force spell order cache rebuild
@@ -7769,6 +7986,7 @@ BuildAllCDMBars = function()
     EnsureFocusKickBar()
     ns.RescanMaxStacksGlowFlag()  -- set the Max Stacks Glow gate (once) before refresh
     ns.RescanChargeCdTextFlag()   -- set the Hide CD Text (Charges) gate (once) before refresh
+    ns.RescanChargeStyleFlag()    -- set the Hide Swipe (Charges) gate (once) before refresh
     ns.RescanBuffSoundFlag()      -- set the Audio on Buff Gain/Loss gate (once) before refresh
     ns.RescanCdReadySoundFlag()   -- set the Audio Effect on CD Ready gate (once) before refresh
     ns.RescanCustomItemFlag()     -- set the custom-item buff-injection gate (once)
@@ -8151,10 +8369,21 @@ function ns.FullCDMRebuild(reason)
                         chfc.isChargeSpell = nil
                         chfc.maxCharges = nil
                         chfc.sortOrder = nil
+                        -- NOT chfc.barKey: CollectAndReanchor reads it as
+                        -- "we have claimed this frame before" and refuses to
+                        -- park it while identification is transiently failing.
+                        -- Clearing it here would hand the next pass a frame it
+                        -- cannot identify AND cannot vouch for.
                     end
                 end
             end
         end
+        -- A memo wipe is the START of a fresh transient-failure window, so
+        -- hand the reanchor below a full retry budget instead of whatever an
+        -- earlier transition left behind. Matters for cooldowns that are new
+        -- to the spec being swapped TO: those have no barKey to vouch for
+        -- them, so the budget is all they have.
+        ns._cdmUnresolvedRetries = 0
         -- Cancel the reanchor BuildAllCDMBars queued -- we run our own
         -- direct one immediately below. Without this, the queued reanchor
         -- would fire ~200ms later and run the entire reanchor pipeline
@@ -9446,6 +9675,7 @@ local function ScheduleTalentRebuild()
                 end
             end
         end
+        ns._cdmUnresolvedRetries = 0  -- fresh window; see FullCDMRebuild
         -- Rebuild keybind cache (talent swap may change action slot contents)
         UpdateCDMKeybinds()
         -- Invalidate TBB frame cache + spell caches, then reanchor so
@@ -9494,6 +9724,27 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
     if event == "UPDATE_BINDINGS" or event == "ACTIONBAR_SLOT_CHANGED"
        or event == "ACTIONBAR_PAGE_CHANGED" or event == "UPDATE_BONUS_ACTIONBAR"
        or event == "UPDATE_OVERRIDE_ACTIONBAR" or event == "UPDATE_VEHICLE_ACTIONBAR" then
+        -- A page/bonus/override/vehicle swap only changes which page is
+        -- active, not the contents of the slots the stable scan reads -- so it
+        -- cannot change the cache. Drop it, and with it the rebuild storm a
+        -- stealthing rogue or shapeshifting druid used to cause. Only
+        -- UPDATE_BINDINGS and ACTIONBAR_SLOT_CHANGED are real edits.
+        --
+        -- Exception, as insurance: let the first sighting of each bonus bar
+        -- through, in case that form's slots (73-132) are only populated when
+        -- the player first shifts into it rather than at login.
+        if event ~= "UPDATE_BINDINGS" and event ~= "ACTIONBAR_SLOT_CHANGED"
+           and ns.CDMStableKeybindsEnabled and ns.CDMStableKeybindsEnabled() then
+            local firstSighting = false
+            if event == "UPDATE_BONUS_ACTIONBAR" then
+                local offset = GetBonusBarOffset and GetBonusBarOffset() or 0
+                if offset > 0 and not _bonusScanSeen[offset] then
+                    _bonusScanSeen[offset] = true
+                    firstSighting = true
+                end
+            end
+            if not firstSighting then return end
+        end
         -- Debounce: one-button rotation addons fire ACTIONBAR_SLOT_CHANGED
         -- on every GCD. Cancel the previous timer so rapid-fire events
         -- coalesce into a single update 0.5s after the last event.

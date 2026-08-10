@@ -903,8 +903,13 @@ local function WriteDefaultValues()
             if not BlacklistedFKey(fkey) and not MatchOwnedFKey(fkey) then
                 local v = def
                 if v == NIL_SENT then v = nil end
-                -- Same defaults-backed nil-poison skip as WriteSpecValues.
-                if not ((v == nil) and HasRegisteredDefault(fkey)) and ReadLive(fkey) ~= v then
+                -- Same defaults-backed nil-poison skip as WriteSpecValues,
+                -- plus its table guards: a stored table reference never
+                -- equals live, so comparing/writing one registers a phantom
+                -- change and forces a full module refresh on every apply.
+                local nilPoison = (v == nil) and HasRegisteredDefault(fkey)
+                local cur = ReadLive(fkey)
+                if not nilPoison and type(v) ~= "table" and type(cur) ~= "table" and cur ~= v then
                     if WriteLive(fkey, v) then
                         local folder = SplitFKey(fkey)
                         if folder then

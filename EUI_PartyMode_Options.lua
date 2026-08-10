@@ -44,7 +44,7 @@ do
             end
         );  y = y - h
         -- Grab the label FontString from the button child
-        do
+        if not EllesmereUI._prebuilding then
             local btn = select(1, activateBtnFrame:GetChildren())
             if btn then
                 for i = 1, btn:GetNumRegions() do
@@ -264,7 +264,7 @@ do
                 end,
                 "Slowly orbits your action bar buttons around each bar's centre while Party Mode is active. The buttons stay upright, so clicking, cooldowns and keybinds are unaffected. Pauses in combat, where moving a button is blocked."
             );  y = y - h
-            do
+            if not EllesmereUI._prebuilding then
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title = "Spin",
                     rows = {
@@ -450,7 +450,7 @@ do
             );  y = y - h
 
             -- Add "(seconds)" suffix in smaller, dimmer text
-            do
+            if not EllesmereUI._prebuilding then
                 local suffix = durFrame:CreateFontString(nil, "OVERLAY")
                 suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
                 suffix:SetTextColor(1, 1, 1, 0.35)
@@ -482,7 +482,7 @@ do
             EllesmereUI.RegisterWidgetRefresh(RefreshDurDisabled)
 
             -- Disabled tooltip for duration slider (split: label zone + control zone)
-            do
+            if not EllesmereUI._prebuilding then
                 -- Find the label and slider control regions
                 local durLabel, durControl
                 for i = 1, durFrame:GetNumRegions() do
@@ -549,7 +549,7 @@ do
             );  y = y - h
 
             -- Add "(minutes)" suffix in smaller, dimmer text
-            do
+            if not EllesmereUI._prebuilding then
                 local suffix = cdFrame:CreateFontString(nil, "OVERLAY")
                 suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
                 suffix:SetTextColor(1, 1, 1, 0.35)
@@ -579,7 +579,7 @@ do
             EllesmereUI.RegisterWidgetRefresh(RefreshCdDisabled)
 
             -- Disabled tooltip for cooldown slider (split: label zone + control zone)
-            do
+            if not EllesmereUI._prebuilding then
                 local cdLabel
                 for i = 1, cdFrame:GetNumRegions() do
                     local reg = select(i, cdFrame:GetRegions())

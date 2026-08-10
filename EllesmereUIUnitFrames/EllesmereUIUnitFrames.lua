@@ -412,7 +412,11 @@ local defaults = {
             castDurationX = 0,
             castDurationY = 0,
             showCastDuration = true,
-            showCastTarget = true,
+            -- Player-only: the spell target never rendered here before the
+            -- display fix, so it defaults OFF to keep the frame unchanged;
+            -- users opt in via the Spell Target side dropdown. Existing
+            -- profiles are pinned to None by uf_player_cast_target_none_v1.
+            showCastTarget = false,
             castbarFillColor = { r = 0.863, g = 0.820, b = 0.639 },
             castbarClassColored = false,
             showClassPowerBar = false,
@@ -1355,6 +1359,15 @@ end
 -- tint. Fully inert at 100: nothing is touched unless previously applied
 -- (_fillOpApplied). Value-blind (relational anchors + plain alphas only),
 -- so secret cast states render identically.
+-- castbar._castTintOn mirrors "the last alpha we wrote to castTintLayer was
+-- above zero". It exists because castTintLayer:GetAlpha() cannot be trusted to
+-- return a plain number: this castbar also drives _shieldedTint's alpha from
+-- the SECRET notInterruptible flag (SetAlphaFromBoolean), and once secrecy is
+-- in a castbar's render state an alpha read comes back secret. Comparing that
+-- inside our own (tainted) execution throws "attempt to compare a secret number
+-- value", which aborts the whole styling pass mid-way and leaves the cast bar
+-- unanchored at screen centre. We write every one of these alphas ourselves, so
+-- owning the state costs one boolean and removes the comparison entirely.
 ns.ApplyCastFillOpacity = function(castbar, settings)
     local op = (settings and settings.castFillOpacity) or 100
     local bgHost = castbar:GetParent()
@@ -1367,9 +1380,9 @@ ns.ApplyCastFillOpacity = function(castbar, settings)
                 bgTex:ClearAllPoints()
                 bgTex:SetAllPoints(bgHost)
             end
-            -- Mid-cast restore: the tint's alpha is its active/idle state, so
-            -- only lift it back to full when it is currently active.
-            if castbar.castTintLayer and castbar.castTintLayer:GetAlpha() > 0 then
+            -- Mid-cast restore: the tint's active/idle state comes from our own
+            -- flag, never from reading the widget back (see _castTintOn).
+            if castbar.castTintLayer and castbar._castTintOn then
                 castbar.castTintLayer:SetAlpha(1)
             end
         end
@@ -1389,7 +1402,7 @@ ns.ApplyCastFillOpacity = function(castbar, settings)
         end
     end
     -- Mid-cast application: retune the tint if it is currently active.
-    if castbar.castTintLayer and castbar.castTintLayer:GetAlpha() > 0 then
+    if castbar.castTintLayer and castbar._castTintOn then
         castbar.castTintLayer:SetAlpha(op / 100)
     end
 end
@@ -5792,6 +5805,7 @@ local function CreateCastBar(frame, unit, settings)
     castTintLayer:SetVertexColor(c.r, c.g, c.b)
     castTintLayer:SetAlpha(0)
     castbar.castTintLayer = castTintLayer
+    castbar._castTintOn = nil
 
     local shieldedTint = castbar:CreateTexture(nil, "ARTWORK", nil, 2)
     shieldedTint:SetPoint("TOPLEFT", castbar:GetStatusBarTexture(), "TOPLEFT")
@@ -5810,6 +5824,7 @@ local function CreateCastBar(frame, unit, settings)
             -- _fillOp is nil unless Fill Opacity is below 100 (see
             -- ns.ApplyCastFillOpacity), so the default path is unchanged.
             self.castTintLayer:SetAlpha(self._fillOp or 1)
+            self._castTintOn = true
             ApplyUnitFrameCastColor(self)
         end
     end
@@ -6002,7 +6017,7 @@ local function SetupShowOnCastBar(frame, unit)
         if self.Target then
             local spellTarget, spellTargetClass
             local ownerUnit = self.__owner and self.__owner.unit
-            if ownerUnit and ownerUnit ~= "player"
+            if ownerUnit
                and UnitShouldDisplaySpellTargetName and UnitShouldDisplaySpellTargetName(ownerUnit) then
                 local rawTarget = UnitSpellTargetName and UnitSpellTargetName(ownerUnit)
                 if rawTarget then
@@ -9710,14 +9725,11 @@ local function ReloadFrames()
                                 local tsC = settings.castSpellTargetColor or { r=1, g=1, b=1 }
                                 frame.Castbar.Target:SetTextColor(tsC.r, tsC.g, tsC.b)
                                 frame.Castbar._showTarget = settings.showCastTarget ~= false
-                                frame.Castbar._nameSide = settings.castSpellNameSide or "left"
-                                frame.Castbar._tgtSide  = settings.castSpellTargetSide or "right"
-                                frame.Castbar._durSide  = settings.castDurationSide or "right"
                                 if not frame.Castbar._showTarget then
                                     frame.Castbar.Target:Hide()
                                 end
-                                if frame.Castbar._layoutTextZones then
-                                    frame.Castbar:_layoutTextZones()
+                                if frame.Castbar._syncOffsetsAndLayout then
+                                    frame.Castbar:_syncOffsetsAndLayout(settings)
                                 end
                             end
                         else
@@ -11751,7 +11763,12 @@ function InitializeFrames()
     RegisterStylesOnce()
 
     local function SetupUnitMenu(frame, unit)
-        frame:RegisterForClicks("AnyUp")
+        -- Left and right only, matching Blizzard's own unit frames: a
+        -- registered click is CONSUMED and never reaches the binding system,
+        -- and these frames bind nothing to middle/thumb buttons themselves.
+        -- The click-cast engine sets its own RegisterForClicks when it takes
+        -- a frame over. Left and right still cover target and the menu.
+        frame:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         -- 12.0.7 gates SecureUnitButton's togglemenu; route right-click securely
         -- through a SecureActionButton proxy so the menu (and its protected items
         -- like Set Focus) work without taint.
@@ -12178,6 +12195,13 @@ function InitializeFrames()
         end)
     end
 
+    -- Seed the built-style marker so the first reload does not mistake a nil
+    -- marker for a change. Written ONLY at build sites (here and the toggle):
+    -- PositionClassPowerBar is repositioning, called by ReassertClassPower from
+    -- Blizzard's SetParent/Hide hooks with no rebuild behind it, and stamping
+    -- there would suppress the rebuild this exists to trigger. frames.player
+    -- guard matches _toggleClassPower.
+    if frames.player then frames._classPowerBuiltStyle = classPowerStyle end
     if classPowerStyle ~= "none" and frames.player then
         if classPowerStyle == "blizzard" then
             if savedClassPowerBar then
@@ -12208,6 +12232,10 @@ function InitializeFrames()
         -- default frame (or hidden), there is no EUI frame to attach it to.
         if not frames.player then return end
         style = style or db.profile.player.classPowerStyle or "none"
+        -- What is actually BUILT right now. Read by the reload pass below to
+        -- notice a style that changed through a path which never calls this
+        -- function (see the reload hook).
+        frames._classPowerBuiltStyle = style
         -- Keep showClassPowerBar in sync with style
         db.profile.player.showClassPowerBar = (style ~= "none")
         db.profile.player.classPowerStyle = style
@@ -13526,6 +13554,29 @@ function SetupOptionsPanel()
     local reloadPending = false
     local reloadThrottle = CreateFrame("Frame")
     reloadThrottle:Hide()
+    -- Realise a classPowerStyle that changed through a path which never calls
+    -- _toggleClassPower (a Spec Override applying at login, a profile switch, an
+    -- import). Gated on an actual change because the toggle is a full teardown
+    -- and rebuild; running it every reload would thrash the bar.
+    local cpRegen = CreateFrame("Frame")
+    local function RealiseClassPowerStyle()
+        if not frames._toggleClassPower then return end
+        local wantCP = db.profile.player.classPowerStyle or "none"
+        if wantCP == frames._classPowerBuiltStyle then return end
+        -- The toggle reparents Blizzard's class power frame and re-anchors the
+        -- health bar. The throttle body keeps running after ReloadFrames()'s
+        -- lockdown return (same shape as the UpdateFrameVisibility note above),
+        -- so this needs its own guard plus a regen re-run to re-arm the pass.
+        if InCombatLockdown() then
+            cpRegen:RegisterEvent("PLAYER_REGEN_ENABLED")
+            return
+        end
+        frames._toggleClassPower(wantCP)
+    end
+    cpRegen:SetScript("OnEvent", function(self)
+        self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+        RealiseClassPowerStyle()
+    end)
     reloadThrottle:SetScript("OnUpdate", function(self)
         self:Hide()
         reloadPending = false
@@ -13555,6 +13606,11 @@ function SetupOptionsPanel()
         -- Player private auras re-register with fresh geometry (one boolean
         -- check + return when disabled).
         if ns.PlayerPA_Apply then ns.PlayerPA_Apply() end
+        -- Class power: _toggleClassPower is the only thing that honours a
+        -- classPowerStyle change, and options + the spec watcher are its only
+        -- other callers -- styles changed by overrides, profile switch, or
+        -- import land here.
+        RealiseClassPowerStyle()
     end)
     ns.ReloadFrames = function()
         if not reloadPending then
@@ -13867,7 +13923,10 @@ function SetupOptionsPanel()
         local castbar = frame.Castbar
         local castbarBg = castbar and castbar:GetParent()
         if castbar then
-            if castbar.castTintLayer then castbar.castTintLayer:SetAlpha(0) end
+            if castbar.castTintLayer then
+                castbar.castTintLayer:SetAlpha(0)
+                castbar._castTintOn = nil
+            end
             castbar:Hide()
         end
         if castbarBg then castbarBg:Hide() end
@@ -13905,6 +13964,7 @@ function SetupOptionsPanel()
         -- Active-cast tint -- same path a real cast uses.
         if castbar.castTintLayer then
             castbar.castTintLayer:SetAlpha(castbar._fillOp or 1)
+            castbar._castTintOn = true
             ApplyUnitFrameCastColor(castbar)
         end
         castbarBg:Show()
