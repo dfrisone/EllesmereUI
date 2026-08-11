@@ -864,6 +864,32 @@ local function ForceCooldownPaint(btn)
 end
 ns.ForceCooldownPaint = ForceCooldownPaint
 
+-- Paint a button's cooldown from an explicit SPELL rather than from its action
+-- slot. Only the One Button Assist button uses this, and it exists because that
+-- button draws two things from two different places: the icon is the SUGGESTED
+-- spell (sampled on the assist ticker) while the slot's own cooldown is
+-- whatever the engine is mirroring at the instant it is read. The suggestion
+-- can move faster than the 5 Hz tick, so consecutive reads land on different
+-- spells and the countdown jumps between their remaining times -- a number that
+-- ticks UP, which is the reported OBA cooldown flicker. Feeding the icon and
+-- the swipe from ONE sampled spell per tick keeps them describing the same
+-- ability. isActive is a plain bool; the duration object carries the timing, so
+-- nothing here reads a secret number.
+-- On the ns table, not a local: this file's main chunk is at the 200-local cap.
+ns.PaintCooldownFromSpell = function(btn, spellID)
+    local cd = btn and btn.cooldown
+    if not cd then return end
+    local info = spellID and C_Spell and C_Spell.GetSpellCooldown
+        and C_Spell.GetSpellCooldown(spellID)
+    local durObj = info and info.isActive and C_Spell.GetSpellCooldownDuration
+        and C_Spell.GetSpellCooldownDuration(spellID)
+    if durObj then
+        cd:SetCooldownFromDurationObject(durObj)
+    else
+        cd:Clear()
+    end
+end
+
 -- Stock bar frames to disable. Each entry carries flags for how to handle it:
 --   retainEvents  = true  -> do NOT unregister events (needed for override state)
 local STOCK_BAR_DISPOSAL = {
@@ -3120,10 +3146,16 @@ end
 -- entirely). The assist ticker below is now the driver. Buttons are found
 -- via the spinner registry -- the slot spam's id never matched our buttons'
 -- action attribute anyway.
-function ns.RepaintAssistIcons()
+-- suggestedSpell (optional): the ticker's ONE sample for this pass, so the icon
+-- and the swipe below describe the same ability. Callers without a sample read
+-- it themselves, unchanged.
+function ns.RepaintAssistIcons(suggestedSpell)
     local found = 0
-    local nextSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell
-        and C_AssistedCombat.GetNextCastSpell()
+    local nextSpell = suggestedSpell
+    if nextSpell == nil then
+        nextSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell
+            and C_AssistedCombat.GetNextCastSpell()
+    end
     local tex = nextSpell and C_Spell and C_Spell.GetSpellTexture
         and C_Spell.GetSpellTexture(nextSpell)
     for _, info in ipairs(BAR_CONFIG) do
@@ -3153,8 +3185,10 @@ function ns.RepaintAssistIcons()
                             -- natural push-through walk reconciles
                             -- charges/desat. Never a bar-wide invalidation
                             -- or a forced full walk for a one-button change
-                            -- (see ns._ArmAssistTicker).
-                            ns.ForceCooldownPaint(btn)
+                            -- (see ns._ArmAssistTicker). Painted from the SAME
+                            -- spell whose texture just went on the icon, not
+                            -- from the slot -- see PaintCooldownFromSpell.
+                            ns.PaintCooldownFromSpell(btn, nextSpell)
                         end
                     end
                 end
@@ -3178,15 +3212,19 @@ function ns._ArmAssistTicker()
         local Tick = EllesmereUI and EllesmereUI.Tick
         if not (Tick and Tick.NewAnimTicker) then return end
         t = Tick.NewAnimTicker(CreateFrame("Frame"), function()
+            -- ONE sample per tick, shared by the swipe and the icon. Reading
+            -- the suggestion here and the slot's cooldown separately let the
+            -- two land on different abilities whenever the engine moved the
+            -- suggestion between the reads, which is the cooldown flicker.
+            local nextSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell
+                and C_AssistedCombat.GetNextCastSpell()
             -- Every tick, not just on a suggestion change: the suggested spell's
             -- own cooldown can end or be shortened while the suggestion holds
             -- steady, and nothing else repaints this button for that.
-            ns.RefreshAssistCooldowns()
-            local nextSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell
-                and C_AssistedCombat.GetNextCastSpell()
+            ns.RefreshAssistCooldowns(nextSpell)
             if nextSpell ~= ns._assistLastSuggest then
                 ns._assistLastSuggest = nextSpell
-                local n = ns.RepaintAssistIcons()
+                local n = ns.RepaintAssistIcons(nextSpell)
                 -- Suggestion moved: the shine may need to follow it too.
                 if ns.QueueAssistRescan then ns.QueueAssistRescan() end
                 -- The assist slot's cooldown mirrors the SUGGESTED spell, so
@@ -3224,7 +3262,9 @@ end
 -- at one tick. Deliberately NOT a walk, a memo drop or a dirty bump: the whole
 -- point of the assist path is that a one-button change never invalidates
 -- bar-wide (see ns._ArmAssistTicker).
-function ns.RefreshAssistCooldowns()
+-- suggestedSpell (optional): paint from this spell instead of the slot, so the
+-- per-tick refresh cannot land on a different ability than the icon is showing.
+function ns.RefreshAssistCooldowns(suggestedSpell)
     for _, info in ipairs(BAR_CONFIG) do
         if not info.isStance and not info.isPetBar then
             local buttons = barButtons[info.key]
@@ -3237,7 +3277,11 @@ function ns.RefreshAssistCooldowns()
                         if action and HasAction(action) and C_ActionBar
                            and C_ActionBar.IsAssistedCombatAction
                            and C_ActionBar.IsAssistedCombatAction(action) then
-                            ns.ForceCooldownPaint(btn)
+                            if suggestedSpell then
+                                ns.PaintCooldownFromSpell(btn, suggestedSpell)
+                            else
+                                ns.ForceCooldownPaint(btn)
+                            end
                         end
                     end
                 end
