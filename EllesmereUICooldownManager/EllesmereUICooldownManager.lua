@@ -9592,6 +9592,11 @@ eventFrame:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
 eventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 eventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
 eventFrame:RegisterEvent("PLAYER_PVP_TALENT_UPDATE")
+-- Solo Shuffle rounds reset cooldowns without any talent or zone event, and
+-- Blizzard re-evaluates the viewer across that boundary. A reanchor (not a
+-- rebuild) is the right weight: the tracked SET is unchanged, only the pool
+-- frames behind it may have been released and re-acquired.
+eventFrame:RegisterEvent("PVP_MATCH_STATE_CHANGED")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 -- Cinematic/cutscene end: Blizzard restores hidden frames, so re-hide ours
 eventFrame:RegisterEvent("CINEMATIC_STOP")
@@ -9753,6 +9758,10 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
             _keybindDebounceTimer = nil
             UpdateCDMKeybinds()
         end)
+        return
+    end
+    if event == "PVP_MATCH_STATE_CHANGED" then
+        if ns.QueueReanchor then ns.QueueReanchor() end
         return
     end
     if event == "TRAIT_CONFIG_UPDATED" or event == "PLAYER_TALENT_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED"

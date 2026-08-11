@@ -8098,9 +8098,22 @@ function ns.SetupViewerHooks()
                 if isBarViewer and ns.QueueTBBAutoAdd then
                     ns.QueueTBBAutoAdd()
                 end
-                -- Only buff viewers need real-time reanchors on Acquire.
-                -- CD/utility spell sets are static (rebuilt by FullCDMRebuild).
-                if isBuff then QueueReanchor() end
+                -- Every viewer reanchors on Acquire, buff or not. The CD/utility
+                -- spell SET is static (rebuilt by FullCDMRebuild on spec/talent/
+                -- equip), which is why this used to skip them -- but the FRAMES
+                -- are not: CooldownViewerMixin:RefreshLayout begins with
+                -- itemFramePool:ReleaseAll() and re-Acquires the lot, so every
+                -- claim we hold is handed back out fresh. Blizzard runs that from
+                -- its own OnShow and from CooldownViewerSettings.OnDataChanged,
+                -- and ShouldBeShown tracks C_CooldownViewer.IsCooldownViewerAvailable,
+                -- which flips mid-match in PvP -- the reported "CDM disappears in a
+                -- battleground", with no stable trigger because it follows the
+                -- viewer's shown state rather than any zone event. Acquire is the
+                -- moment Blizzard announces the re-stock; claiming on it beats
+                -- racing a loading screen with a retry budget. QueueReanchor only
+                -- sets a dirty flag, and the queue throttles, so a 12-icon rebuild
+                -- collapses into one pass.
+                QueueReanchor()
             end)
             -- Hook existing frames too
             if isBuff then InstallBuffFrameHooks(v) end
@@ -8165,10 +8178,11 @@ function ns.SetupViewerHooks()
     for viewerName, barKey in pairs(SYNC_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
-            -- No reanchor from RefreshLayout or Layout on CD/utility viewers.
-            -- CD/utility spell sets are static -- rebuilt by FullCDMRebuild
-            -- on spec/talent/equip events only. SetPoint hook on each icon
-            -- handles positioning when Blizzard calls Layout.
+            -- Geometry only: this keeps the viewer sitting on our container.
+            -- Re-CLAIMING after a Blizzard rebuild is the pool Acquire hook's
+            -- job (see the note there), not Layout's -- Layout runs far more
+            -- often than the pool changes, and the SetPoint hook on each icon
+            -- already handles positioning when Blizzard calls Layout.
             local function SyncViewerToBar()
                 if InCombatLockdown() then return end
                 local container = cdmBarFrames[barKey]
@@ -8185,6 +8199,33 @@ function ns.SetupViewerHooks()
                 SyncViewerToBar()
             end)
             SyncViewerToBar()
+        end
+    end
+
+    -- 3a. UpdateShownState on every viewer. Blizzard hides a viewer whenever
+    -- ShouldBeShown flips (it reads C_CooldownViewer.IsCooldownViewerAvailable,
+    -- which goes false and back during a PvP match) and re-shows it later; the
+    -- re-show runs OnShow -> RefreshLayout -> itemFramePool:ReleaseAll, so our
+    -- claims are gone by the time anything else notices. The Acquire hook above
+    -- catches the re-stock, and this catches the flip itself, including the case
+    -- where the pool comes back the same size and Acquire fires before our own
+    -- state has caught up. Queued, never inline: CollectAndReanchor walks
+    -- Blizzard pools, and running that nested inside the secure call that
+    -- triggered us is the taint shape this file exists to avoid.
+    -- Track the shown state ourselves: Blizzard's UpdateShownState early-returns
+    -- when nothing changed, but a post-hook still runs, and it is driven by
+    -- PLAYER_IN_COMBAT_CHANGED among others. Only a real flip queues work.
+    local _viewerWasShown = {}
+    for _, viewerName in ipairs(VIEWER_NAMES) do
+        local viewer = _G[viewerName]
+        if viewer and viewer.UpdateShownState then
+            _viewerWasShown[viewerName] = viewer:IsShown()
+            hooksecurefunc(viewer, "UpdateShownState", function(self)
+                local shown = self:IsShown()
+                if _viewerWasShown[viewerName] == shown then return end
+                _viewerWasShown[viewerName] = shown
+                QueueReanchor()
+            end)
         end
     end
 
