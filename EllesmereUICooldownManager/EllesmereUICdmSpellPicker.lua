@@ -467,6 +467,19 @@ function ns.EnumerateCDMSettingsCatalog(wantSet)
     if not okP or type(provider) ~= "table" then return nil end
     if type(provider.GetOrderedCooldownIDs) ~= "function"
        or type(provider.GetCooldownInfoForID) ~= "function" then return nil end
+    -- Never let Blizzard's shared display data get REBUILT on our stack. Both
+    -- getters below call CheckBuildDisplayData first, which rebuilds the shared
+    -- cooldownInfoByID / orderedCooldownIDs tables whenever the provider is
+    -- dirty. Reading tables the client already built is fine; BUILDING them
+    -- inside addon execution poisons that shared state for the client's own
+    -- later use, and the provider is marked dirty by exactly the things that
+    -- change in a match (PvP talents activating on entry, deactivating on exit),
+    -- so the cost lands as the CDM bricking in PvP long after the picker that
+    -- triggered it was closed. Dirty -> bail, and callers fall back to the
+    -- live-pool path exactly as they do when the provider is missing.
+    if type(provider.IsDirty) ~= "function" then return nil end
+    local okD, dirty = pcall(provider.IsDirty, provider)
+    if not okD or dirty then return nil end
     local okO, ordered = pcall(provider.GetOrderedCooldownIDs, provider)
     if not okO or type(ordered) ~= "table" then return nil end
     local gci = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
