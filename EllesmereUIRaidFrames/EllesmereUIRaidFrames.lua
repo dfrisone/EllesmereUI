@@ -16786,3 +16786,38 @@ function ERF:OnEnable()
 end
 
 -- Slash command registered in EUI_RaidFrames_Options.lua
+
+-- TEMPORARY PROBE -- remove before the PR. /erfxf dumps the Extra Frames group
+-- so the "6th slot is blank" report names its own cause: how many units the
+-- selection resolved, how many buttons exist, and for each SLOT whether it was
+-- built, what unit it carries, whether it is shown, its size, and whether the
+-- name/health regions actually have geometry and text. Slot 6 is the first one
+-- built on demand (the base is 5), so a difference between slots 1-5 and 6 here
+-- is the bug.
+SLASH_ERFXF1 = "/erfxf"
+SlashCmdList.ERFXF = function()
+    local set = XF.Settings and XF.Settings()
+    local okU, units = pcall(function() return XF.ResolveUnits and XF.ResolveUnits() or {} end)
+    print(("|cff33ff99[erfxf]|r built=%s active=%s buttons=%s resolved=%s configured=%s pos=%s"):format(
+        tostring(XF.built), tostring(XF.activeCount), tostring(XF.buttons and #XF.buttons),
+        tostring(okU and units and #units), tostring(set and set.players and #set.players),
+        tostring(set and set.position)))
+    if okU and units then
+        for i = 1, #units do print(("   unit[%d]=%s"):format(i, tostring(units[i]))) end
+    end
+    for i = 1, (XF.buttons and #XF.buttons or 0) do
+        local b = XF.buttons[i]
+        local d = b and ns.GetFFD and ns.GetFFD(b)
+        local nm = d and d.nameText
+        local hp = d and d.health
+        print(("   slot %d unit=%s shown=%s vis=%s size=%.0fx%.0f styled=%s isExtra=%s name=[%s] nameShown=%s nameW=%.0f hpW=%.0f hpShown=%s"):format(
+            i,
+            tostring(b and b:GetAttribute("unit")),
+            tostring(b and b:IsShown()), tostring(b and b:IsVisible()),
+            (b and b:GetWidth() or 0), (b and b:GetHeight() or 0),
+            tostring(d and d.styled), tostring(d and d._isExtra),
+            tostring(nm and nm:GetText()), tostring(nm and nm:IsShown()),
+            (nm and nm:GetWidth() or 0),
+            (hp and hp:GetWidth() or 0), tostring(hp and hp:IsShown())))
+    end
+end
