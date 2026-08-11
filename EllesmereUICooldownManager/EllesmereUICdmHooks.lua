@@ -8133,13 +8133,15 @@ function ns.SetupViewerHooks()
                         local pp = ECME.db and ECME.db.profile
                         if pp and pp.cdmBars and pp.cdmBars.useBlizzardBuffBars then return end
                     end
-                    -- CD/utility viewers: spell set is static (rebuilt only by
-                    -- FullCDMRebuild on spec/talent/equip). Pool churn from
-                    -- spell transforms (e.g. Monk Empty Barrel -> Keg Smash)
-                    -- re-acquires frames but does NOT queue a reanchor, so
-                    -- blanking here leaves icons invisible with nothing to
-                    -- restore them. The SetPoint hook already handles
-                    -- repositioning for these viewers.
+                    -- CD/utility viewers are not blanked on acquire. Pool churn
+                    -- from spell transforms (e.g. Monk Empty Barrel -> Keg
+                    -- Smash) re-acquires frames constantly, and blanking each
+                    -- one costs a visible flicker for no gain: the SetPoint
+                    -- hook already repositions them, and the Acquire hook above
+                    -- queues the reanchor that re-claims them. (That queue is
+                    -- why this comment no longer says "nothing would restore
+                    -- them" -- it used to be true, and dropping this guard on
+                    -- that basis would reintroduce the flicker, not fix it.)
                     if not isBuff then return end
                     if itemFrame then
                         -- Only blank frames we haven't seen before. During
