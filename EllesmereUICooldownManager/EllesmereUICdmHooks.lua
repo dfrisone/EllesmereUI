@@ -152,6 +152,26 @@ local function FD(f)
 end
 ns.FD = FD
 
+--- Drop the alpha-owning flags when a POOLED Blizzard frame is reclaimed for a
+--- different spell. FC data is keyed by the frame OBJECT, so it outlives the
+--- tenant that wrote it; Blizzard releases and reacquires these frames freely
+--- (RefreshLayout does itemFramePool:ReleaseAll). Every alpha applier reads
+--- _cdStateHidden as "cd-state owns this icon's alpha" and skips the restore, so
+--- a flag inherited from a previous tenant leaves the new spell SHOWN at alpha 0
+--- for the rest of the session -- the icon holds its layout slot and draws
+--- nothing. The paths that set these flags only clear them for icons that still
+--- have the effect, so the tenant swap is the one moment that must. Called
+--- before fc.spellID is overwritten; a same-spell reclaim (the normal case) is a
+--- single compare and changes nothing, so a legitimately hidden icon never
+--- flashes visible on a reanchor.
+--- On ns, not a file local: this file sits at the 200-local cap.
+function ns.ClearPooledTenantFlags(fc, newSid)
+    if fc.spellID == newSid then return end
+    fc._cdStateHidden = nil
+    fc._missingActiveHidden = nil
+    if ns.SetCdStateShiftHidden then ns.SetCdStateShiftHidden(fc, false) end
+end
+
 -------------------------------------------------------------------------------
 --  Resource verification for the CD Ready Glow.
 --
@@ -3503,6 +3523,12 @@ local function DecorateFrame(frame, barData)
                     if fc2 and fc2._cdStateHidden
                        and not (ns.PresetHasCdState and ns.PresetHasCdState(frame)) then
                         fc2._cdStateHidden = false
+                        -- Restore with the clear, exactly like the non-hidden-effect
+                        -- branch below: the flag was the ONLY thing telling the alpha
+                        -- appliers to leave this icon alone, so clearing it without
+                        -- putting the alpha back strands the icon invisible until
+                        -- some unrelated relayout happens to run.
+                        frame:SetAlpha(ns.IconShownAlpha(fc2, barDataByKey and barDataByKey[bk2]))
                     end
                     if fc2 and fc2._cdStateShiftHidden
                        and not (ns.PresetHasCdState and ns.PresetHasCdState(frame))
@@ -6199,6 +6225,7 @@ local function CollectAndReanchor()
                                     frames[#frames + 1] = frame
                                     local fc = FC(frame)
                                     fc.barKey = barKey
+                                    ns.ClearPooledTenantFlags(fc, baseSID or displaySID)
                                     fc.spellID = baseSID or displaySID
                                     fc.isHostedBuff = nil
                                 else
@@ -6230,6 +6257,7 @@ local function CollectAndReanchor()
                                         -- and outside every other marker band
                                         -- (item presets are small negatives, hosted
                                         -- markers start at -2000000000).
+                                        ns.ClearPooledTenantFlags(fc, -(1000000000 + cdID))
                                         fc.spellID = -(1000000000 + cdID)
                                         fc.isHostedBuff = nil
                                     else
