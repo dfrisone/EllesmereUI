@@ -15275,6 +15275,11 @@ do
                     Try(C_Secrets and C_Secrets.CanCompareUnitTokens, U, u),
                     Try(C_Secrets and C_Secrets.ShouldUnitComparisonBeSecret, U, u),
                     Try(UnitIsUnit, U, u)))
+            -- Both argument orders: the predicate may be asymmetric, and a tester round trip
+            -- costs far more than two extra lines of output.
+            Say(("    reversed: canCompare=%s UnitIsUnit=%s")
+                :format(Try(C_Secrets and C_Secrets.CanCompareUnitTokens, u, U),
+                    Try(UnitIsUnit, u, U)))
         end
         Say("resolver answered: " .. Try(function() return (EllesmereUI.GetClassColorForRestrictedUnit(U, totToken)) end))
     end
