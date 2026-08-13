@@ -4626,10 +4626,36 @@ local function GetOrCreateCustomBuffFrame(barKey, sid)
         local cd = CreateFrame("Cooldown", nil, f, "CooldownFrameTemplate")
         cd:SetAllPoints(); cd:SetDrawEdge(false); cd:SetDrawBling(false)
         cd:SetReverse(true)
+        cd:EnableMouse(false)
+        if cd.SetMouseClickEnabled then cd:SetMouseClickEnabled(false) end
+        if cd.SetMouseMotionEnabled then cd:SetMouseMotionEnabled(false) end
         f.Cooldown = cd; f._cooldown = cd
         f._isCustomSpellFrame = true
         f._isCustomBuffFrame = true
         f.cooldownID = nil; f.cooldownInfo = nil
+        f._customBuffSpellID = sid
+        -- Show Tooltip on Hover: a custom buff renders on our own frame, so it
+        -- needs the same explicit tooltip the placeholder/racial/custom-spell
+        -- frames carry -- a Blizzard buff icon gets one from the viewer's own
+        -- OnEnter, which is why only the natively tracked buffs on the bar
+        -- showed a tip. Mouse capture is armed per bar at the injection site.
+        f:SetScript("OnEnter", function(self)
+            local ffc = _ecmeFC[self]
+            local bd2 = ffc and ffc.barKey and barDataByKey[ffc.barKey]
+            if not bd2 or not bd2.showTooltip then return end
+            local spid = (ffc and ffc.spellID) or self._customBuffSpellID
+            if not spid or spid <= 0 then return end
+            -- Honor the global "Show Tooltips" visibility mode (Blizzard Skin).
+            if EllesmereUI and EllesmereUI._tooltipSuppressedByMode
+               and EllesmereUI._tooltipSuppressedByMode(GameTooltip) then return end
+            GameTooltip_SetDefaultAnchor(GameTooltip, self)
+            GameTooltip:SetSpellByID(spid)
+            if EllesmereUI and EllesmereUI._repointTooltipAtCursor then
+                EllesmereUI._repointTooltipAtCursor(GameTooltip)
+            end
+            GameTooltip:Show()
+        end)
+        f:SetScript("OnLeave", GameTooltip_Hide)
         cd:HookScript("OnCooldownDone", function()
             -- Re-lay-out the bar so the expired buff is removed. Also poke the
             -- legacy custom_buff updater (harmless for buff bars).
@@ -6253,6 +6279,20 @@ local function CollectAndReanchor()
                                 local fc = FC(f)
                                 fc.barKey = injKey
                                 fc.spellID = sid
+                                -- Mouse motion (OnEnter) only while this bar's tooltips are
+                                -- on: a motion-enabled icon with no unit steals mouseover
+                                -- focus from unit frames underneath. Clicks always pass
+                                -- through, and cursor-anchored bars stay fully mouse-through.
+                                local ctn = cdmBarFrames[injKey]
+                                if bd.showTooltip and ctn
+                                   and not ctn._mouseTrack and not ctn._visHidden then
+                                    f:EnableMouse(true)
+                                    if f.SetMouseClickEnabled then f:SetMouseClickEnabled(false) end
+                                    if f.EnableMouseMotion then f:EnableMouseMotion(true) end
+                                else
+                                    f:EnableMouse(false)
+                                    if f.EnableMouseMotion then f:EnableMouseMotion(false) end
+                                end
                                 if not barLists[injKey] then barLists[injKey] = {} end
                                 barLists[injKey][#barLists[injKey] + 1] =
                                     AcquireEntry(f, sid, sid, f.layoutIndex)
