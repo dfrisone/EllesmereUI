@@ -18603,6 +18603,18 @@ initFrame:SetScript("OnEvent", function(self)
                       BD().hideZeroChargeText = v and true or nil
                       ns.BuildAllCDMBars(); Refresh()
                   end });  y = y - h
+
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="Hide Out of Range Tint",
+                  tooltip="Stop Blizzard from painting this bar's icons red while it considers the spell out of range. Useful for abilities whose range check reads backwards, such as shouts that hit everything around you.",
+                  getValue=function() return BD().hideOutOfRangeTint == true end,
+                  setValue=function(v)
+                      BD().hideOutOfRangeTint = v and true or nil
+                      ns.BuildAllCDMBars()
+                      if ns.RefreshCdmRangeTint then ns.RefreshCdmRangeTint() end
+                      Refresh()
+                  end },
+                { type="label", text="" });  y = y - h
         end
 
         _, h = W:Spacer(parent, y, 8);  y = y - h

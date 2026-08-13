@@ -2135,6 +2135,77 @@ local function TryHookSwiftmend(frame, fd)
     if SwiftmendEnabled() then iconWidget:SetVertexColor(1, 1, 1) end
 end
 
+-------------------------------------------------------------------------------
+--  Hide Out of Range Tint (per bar, opt-in)
+--  Blizzard's RefreshIconColor paints ITEM_NOT_IN_RANGE_COLOR over the icon and
+--  shows the OORshadow overlay whenever its own range watcher answers
+--  out-of-range. The answer is the client's, not ours -- for a self-cast AoE it
+--  can read backwards (red while a mob is next to you) -- and Blizzard exposes no
+--  setting, so this repaints the icon in the color the same function would have
+--  chosen without its range branch. Post-hook per frame, installed ONLY while a
+--  bar has the toggle on, so a user who leaves it off pays nothing; the hook
+--  re-reads the bar live, so turning it back off restores Blizzard's tint on the
+--  next repaint (RefreshCdmRangeTint forces one immediately).
+-------------------------------------------------------------------------------
+-- do-block, and the entry points hang off ns: this file sits at the 200-local cap.
+do
+local _oorTintFrames = setmetatable({}, { __mode = "k" })
+
+local function RangeTintHidden(frame)
+    local fc = _ecmeFC[frame]
+    local bk = fc and fc.barKey
+    local bd = bk and barDataByKey and barDataByKey[bk]
+    return (bd and bd.hideOutOfRangeTint) and true or false
+end
+
+local function ClearRangeTint(self)
+    if not RangeTintHidden(self) then return end
+    -- spellOutOfRange is Blizzard's own cached flag (checksRange and not inRange).
+    -- It rides an event payload, so treat a secret as "leave Blizzard's paint alone".
+    -- Secrecy tested BEFORE truthiness: `not oor` on a secret boolean is itself a raise.
+    local oor = self.spellOutOfRange
+    if issecretvalue and issecretvalue(oor) then return end
+    if not oor then return end
+    if self.OutOfRange then self.OutOfRange:Hide() end
+    local tex = self.GetIconTexture and self:GetIconTexture() or self.Icon
+    if not (tex and tex.SetVertexColor) then return end
+    -- Same three colors RefreshIconColor picks from once the range branch is out
+    -- of the way; an unreadable usable state falls back to the usable color rather
+    -- than leaving the red the user asked us to remove.
+    local r, g, b = 1, 1, 1
+    local sid = self.GetSpellID and self:GetSpellID()
+    if issecretvalue and issecretvalue(sid) then sid = nil end
+    if sid and C_Spell.IsSpellUsable then
+        local usable, noMana = C_Spell.IsSpellUsable(sid)
+        if not (issecretvalue and (issecretvalue(usable) or issecretvalue(noMana))) then
+            if noMana then r, g, b = 0.5, 0.5, 1.0
+            elseif not usable then r, g, b = 0.4, 0.4, 0.4 end
+        end
+    end
+    tex:SetVertexColor(r, g, b, 1)
+end
+
+function ns.CdmTryHookRangeTint(frame, fd, barData)
+    if fd._oorTintHooked then return end
+    if not (barData and barData.hideOutOfRangeTint) then return end
+    -- Cooldown item frames only: the buff viewers' mixin has no range check.
+    if not frame.RefreshIconColor then return end
+    fd._oorTintHooked = true
+    _oorTintFrames[frame] = true
+    hooksecurefunc(frame, "RefreshIconColor", ClearRangeTint)
+    ClearRangeTint(frame)
+end
+
+-- Repaint every hooked icon after the toggle flips: turning the option ON clears
+-- a tint already on screen, turning it OFF hands the icon back to Blizzard
+-- (out of combat nothing else would call RefreshIconColor for minutes).
+function ns.RefreshCdmRangeTint()
+    for f in pairs(_oorTintFrames) do
+        if f.RefreshIconColor then pcall(f.RefreshIconColor, f) end
+    end
+end
+end
+
 
 -------------------------------------------------------------------------------
 --  Per-spell Custom Icon
@@ -2375,6 +2446,7 @@ local function DecorateFrame(frame, barData)
     if fd.decorated then
         -- Late retry: the style block already ran; skip one-time decoration.
         TryHookSwiftmend(frame, fd)
+        ns.CdmTryHookRangeTint(frame, fd, barData)
         ApplyCustomIcon(frame, fd)
         ApplyOnlyNumbers(frame, fd, barData)
         return fd
@@ -2397,6 +2469,7 @@ local function DecorateFrame(frame, barData)
 
     -- Swiftmend brightness (druid only; retried from the decorated early-return).
     TryHookSwiftmend(frame, fd)
+    ns.CdmTryHookRangeTint(frame, fd, barData)
 
     -- First decoration: fd.tex is now available, so Custom Icon can stamp.
     ApplyCustomIcon(frame, fd)

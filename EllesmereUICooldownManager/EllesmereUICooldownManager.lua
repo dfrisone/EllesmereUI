@@ -5749,6 +5749,7 @@ local function EnsureFocusKickBar()
         barVisibility = "always",
         showStackCount = false, stackCountSize = 11, stackCountPosition = "bottomright",
         outOfRangeOverlay = false,
+        hideOutOfRangeTint = false,
         pandemicGlow = false,
         -- FocusKick-specific: nameplate side + offsets
         nameplateAnchorSide = "LEFT",
