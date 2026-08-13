@@ -111,9 +111,21 @@ local GROW_ORDER = { "RIGHT", "LEFT", "UP", "DOWN", "CENTER" }
 local ORIENT_VALUES = { HORIZONTAL = "Horizontal", VERTICAL = "Vertical" }
 local ORIENT_ORDER = { "HORIZONTAL", "VERTICAL" }
 
--- Show when mode (for frame effects)
+-- Show when mode (for frame effects). Only "When Any Present" survives the aura
+-- container: the engine shows a slot's button when a matching aura exists and never
+-- reports how many of the tracked buffs are up, so the counting/negating modes have no
+-- equivalent and BuildBmSlots gives them no slot at all. They stay listed so existing
+-- indicators still display their stored value, but are unselectable with the reason on
+-- hover (both in the menu and on the closed control, which is the only hint an already
+-- stored mode gives that the indicator renders nothing).
 local SHOW_WHEN_VALUES = { present = "When Any Present", allPresent = "When All Present", anyMissing = "When Any Missing", missing = "When All Missing" }
 local SHOW_WHEN_ORDER = { "present", "allPresent", "anyMissing", "missing" }
+local function ShowWhenRemoved(v) return v ~= "present" end
+local function ShowWhenRemovedTip(v)
+    if ShowWhenRemoved(v) then
+        return "Removed in 12.1 Unless API Changes: buff presence is secret, so only When Any Present can be evaluated."
+    end
+end
 
 -- Indicator frame level, relative to the unit button. Icon/Square: own border at base+1, count/duration text carrier pinned at +18 regardless of mode; bars use the base only (no sub-frames).
 local FRAMELVL_VALUES = {
@@ -4582,6 +4594,8 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
 
                 local swRow = SettingsRow(
                     { type="dropdown", text="Show When", values=SHOW_WHEN_VALUES, order=SHOW_WHEN_ORDER,
+                      itemDisabled=ShowWhenRemoved, itemDisabledTooltip=ShowWhenRemovedTip,
+                      tooltip=ShowWhenRemovedTip(ind.showWhen or "present"),
                       getValue=function() return ind.showWhen or "present" end,
                       setValue=function(v) ind.showWhen = v; ReloadAndUpdate() end },
                     { type="toggle", text="Own Only",
@@ -4667,6 +4681,8 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
 
                 local hcSwRow = SettingsRow(
                     { type="dropdown", text="Show When", values=SHOW_WHEN_VALUES, order=SHOW_WHEN_ORDER,
+                      itemDisabled=ShowWhenRemoved, itemDisabledTooltip=ShowWhenRemovedTip,
+                      tooltip=ShowWhenRemovedTip(ind.showWhen or "present"),
                       getValue=function() return ind.showWhen or "present" end,
                       setValue=function(v) ind.showWhen = v; ReloadAndUpdate() end },
                     { type="toggle", text="Own Only",
@@ -4704,6 +4720,8 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
 
                 local faSwRow = SettingsRow(
                     { type="dropdown", text="Show When", values=SHOW_WHEN_VALUES, order=SHOW_WHEN_ORDER,
+                      itemDisabled=ShowWhenRemoved, itemDisabledTooltip=ShowWhenRemovedTip,
+                      tooltip=ShowWhenRemovedTip(ind.showWhen or "present"),
                       getValue=function() return ind.showWhen or "present" end,
                       setValue=function(v) ind.showWhen = v; ReloadAndUpdate() end },
                     { type="toggle", text="Own Only",
