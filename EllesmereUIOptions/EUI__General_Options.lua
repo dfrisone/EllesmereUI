@@ -1302,7 +1302,7 @@ EllesmereUI._WHATSNEW_PATCHES = {
                 module = "Nameplates",
                 title  = "Near Aggro Glow",
                 desc   = "Warning glow while close to pulling aggro",
-                nav    = { module = "EllesmereUINameplates", page = "Colors", section = "THREAT COLORS (INSTANCES ONLY)", highlight = "Non-Tank Threat" },
+                nav    = { module = "EllesmereUINameplates", page = "Colors", section = "THREAT COLORS", highlight = "Non-Tank Threat" },
             },
             {
                 module = "Nameplates",

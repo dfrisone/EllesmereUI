@@ -26,7 +26,7 @@ local SECTION_AURA      = "EXTRA AURA OPTIONS"
 
 local SECTION_ENEMY     = "ENEMY COLORS"
 local SECTION_CASTBAR   = "CAST COLORS AND EFFECTS"
-local SECTION_THREAT    = "THREAT COLORS (INSTANCES ONLY)"
+local SECTION_THREAT    = "THREAT COLORS"
 local SECTION_OTHER     = "OTHER COLORS"
 
 -- Wait for EllesmereUI to exist
@@ -10058,7 +10058,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:Spacer(parent, y, 20);  y = y - h
 
         -----------------------------------------------------------------------
-        --  THREAT COLORS (INSTANCES ONLY)
+        --  THREAT COLORS
         -----------------------------------------------------------------------
         _, h = W:SectionHeader(parent, SECTION_THREAT, y);  y = y - h
 
@@ -10373,6 +10373,22 @@ initFrame:SetScript("OnEvent", function(self)
             swatch:SetAlpha(off and 0.15 or 1)
             swatch:EnableMouse(not off)
         end
+
+        -- Row 4 (last of the section): scope. Everything above is dungeon/raid/delve only
+        -- unless this is on.
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Threat Colors Outside Instances",
+              tooltip="Also applies the threat colors above out in the open world. Only takes effect while you are in a party or raid: on your own you always hold aggro, so every nameplate would sit on a threat color.",
+              getValue=function()
+                local db = DB()
+                if db and db.threatOutsideInstances ~= nil then return db.threatOutsideInstances end
+                return defaults.threatOutsideInstances
+              end,
+              setValue=function(v)
+                DB().threatOutsideInstances = v and true or false
+                RefreshAllPlates()
+              end },
+            { type="label", text="" });  y = y - h
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
 

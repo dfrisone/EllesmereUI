@@ -107,6 +107,7 @@ function ns._appendDisplayPresetKeys(t)
         "tankHasAggroOverrideBoss",
         "dpsHasAggro", "dpsNearAggro", "offTankAggroEnabled", "offTankAggro",
         "dpsNoAggroEnabled", "dpsNoAggro", "dpsNoAggroOverrideMiniBoss", "dpsNoAggroOverrideCaster",
+        "threatOutsideInstances",
         "targetArrowDouble", "targetArrowStyle", "targetArrowColor", "targetArrowClassColor",
         "auraStackTextSize", "auraStackTextColor",
         "auraStackTextPosition", "auraStackTextX", "auraStackTextY",
@@ -193,6 +194,7 @@ local defaults = {
     dpsNoAggroEnabled = false,
     dpsNoAggroOverrideMiniBoss = false,  -- on: overrides Mini-Boss (above priority step 7); off = stays low
     dpsNoAggroOverrideCaster = false,  -- on: overrides Caster (above priority step 8); off = Casters keep own color
+    threatOutsideInstances = false,  -- on: threat colors also apply in the open world while grouped
     interruptReady = { r = 0.92, g = 0.35, b = 0.20 },  
     castBar = { r = 0.70, g = 0.40, b = 0.90 },
     interruptMidCastEnabled = false,
@@ -4709,7 +4711,17 @@ local function GetReactionColor(unit)
     -- Non-tank: has aggro, near aggro Tank: losing aggro, no aggro
     local isThreatUnit = false   -- set true when threat data exists
     local threatStatus = 0
-    if InRealInstancedContent() then
+    -- Threat colors are instanced-content-only by default. UnitThreatSituation carries no such
+    -- restriction (Blizzard's own plates gate on party membership alone), so "Show Outside
+    -- Instances" lifts it -- but only while grouped: solo you always hold aggro, and every plate
+    -- would sit on a threat color permanently.
+    local threatScope = InRealInstancedContent()
+    if not threatScope then
+        local ow = db.threatOutsideInstances
+        if ow == nil then ow = defaults.threatOutsideInstances end
+        threatScope = ow and IsInGroup()
+    end
+    if threatScope then
         local status = UnitThreatSituation("player", unit)
         if status then
             isThreatUnit = true
