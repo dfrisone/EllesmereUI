@@ -753,6 +753,47 @@ function ns.GetBarSpellData(barKey)
     return bs
 end
 
+-- Shift Icons When Untalented: is this frame's spell one the player has NOT talented? Only
+-- consulted for bars that opted in (barData.untalentedShift).
+--
+-- Gated on IsPlayerSpell, deliberately NOT on frame presence. A CDM frame is absent for several
+-- reasons that are not a talent change -- pet dismissed, choice node mid-swap, a spell whose
+-- viewer frame has not rebuilt yet -- and reflowing the bar on any of those would shuffle icons
+-- under the player during normal play. IsFrameIncluded keeps those frames (hidden, but carrying
+-- cooldownInfo) precisely so their slot survives; this only releases the slot when the spell is
+-- genuinely untalented.
+--
+-- Custom, racial and item-backed entries are EXEMPT. Their ids are arbitrary (an item preset
+-- stores -itemID, a racial is not a talent), so IsPlayerSpell cannot vouch for them and a false
+-- answer there means "unknown", not "untalented". Without this exemption every custom-added icon
+-- would vanish from an opted-in bar. Mirrors the options-side unlearned test.
+function ns.IsSpellUntalented(barKey, displaySID, baseSID)
+    if not IsPlayerSpell then return false end
+    if displaySID and IsPlayerSpell(displaySID) then return false end
+    if baseSID and IsPlayerSpell(baseSID) then return false end
+
+    local racials = ns._myRacialsSet
+    if racials and ((displaySID and racials[displaySID])
+                    or (baseSID and racials[baseSID])) then
+        return false
+    end
+
+    local sd = ns.GetBarSpellData(barKey)
+    if sd then
+        local c, cd, sdur, g = sd.customSpellIDs, sd.customSpellDurations,
+                               sd.spellDurations, sd.customSpellGroups
+        if displaySID and ((c and c[displaySID]) or (cd and cd[displaySID])
+                           or (sdur and sdur[displaySID]) or (g and g[displaySID])) then
+            return false
+        end
+        if baseSID and ((c and c[baseSID]) or (cd and cd[baseSID])
+                        or (sdur and sdur[baseSID]) or (g and g[baseSID])) then
+            return false
+        end
+    end
+    return true
+end
+
 -- Variant that accepts an explicit specKey (for validation, migration, etc.)
 function ns.GetBarSpellDataForSpec(barKey, specKey)
     if not specKey or specKey == "0" then return nil end
@@ -4039,14 +4080,20 @@ LayoutCDMBar = function(barKey)
     -- Shift-Icons cd-state modes: shift-hidden icons are dropped from the layout entirely, so
     -- later icons close the gap and the bar resizes as if the icon were removed. Everything
     -- below (sizing, match math, slot positions) derives from this one array, so the filter IS
-    -- the whole feature. Flags set by the cd-state evaluators (ns.SetCdStateShiftHidden) and by
-    -- the buff route's Show When Missing active-hide (_missingActiveHidden);
-    -- bars without either pay one field read per icon and never build the filtered table. Skipped frames keep their last point at alpha 0.
+    -- the whole feature. Flags set by the cd-state evaluators (ns.SetCdStateShiftHidden), by
+    -- the buff route's Show When Missing active-hide (_missingActiveHidden), and by the per-bar
+    -- Shift Icons When Untalented toggle (_untalentedShiftHidden, set during collection);
+    -- bars without any pay one field read per icon and never build the filtered table. Skipped frames keep their last point at alpha 0.
+    -- The three stay on SEPARATE flags on purpose: the cd-state evaluators own
+    -- _cdStateShiftHidden and reset it to false on several paths, so a second feature riding on
+    -- it would be cleared out from under itself. Untalenting needs no deferred relayout of its
+    -- own -- a talent change already fires FullCDMRebuild("talent_reconcile").
     do
         local filtered
         for i = 1, #icons do
             local sfc = _ecmeFC[icons[i]]
-            if sfc and (sfc._cdStateShiftHidden or sfc._missingActiveHidden) then
+            if sfc and (sfc._cdStateShiftHidden or sfc._missingActiveHidden
+                        or sfc._untalentedShiftHidden) then
                 if not filtered then
                     filtered = {}
                     for j = 1, i - 1 do filtered[j] = icons[j] end
