@@ -15208,3 +15208,74 @@ do
         EnsureReloadHook()
     end)
 end
+
+--------------------------------------------------------------------------------
+--  TEMPORARY DIAGNOSTIC -- branch uf-tot-probe only, never ship this.
+--  /euitot reports which secret-value gate stops a target-of-target from
+--  resolving its custom class colour. Every read is guarded: the point is to
+--  tell a REFUSED comparison apart from a SECRET one, so it must survive both.
+--------------------------------------------------------------------------------
+do
+    local function Say(msg)
+        print("|cff33ff99[EUI ToT]|r " .. msg)
+    end
+    -- Never compares to nil and never tostring()s a secret: both throw.
+    local function Show(v)
+        if issecretvalue(v) then return "SECRET " .. type(v) end
+        local t = type(v)
+        if t == "nil" then return "nil" end
+        if t == "boolean" then return v and "true" or "false" end
+        if t == "string" then return v end
+        return tostring(v)
+    end
+    local function Try(fn, a, b)
+        if type(fn) ~= "function" then return "missing" end
+        local ok, r = pcall(fn, a, b)
+        if not ok then return "REFUSED" end
+        return Show(r)
+    end
+
+    SLASH_EUITOTPROBE1 = "/euitot"
+    SlashCmdList.EUITOTPROBE = function()
+        local U = "targettarget"
+        Say("---- probe ----")
+        Say("secret restrictions: " .. Try(C_Secrets and C_Secrets.HasSecretRestrictions))
+        if not UnitExists(U) then
+            Say("no target-of-target. Target an enemy that is attacking someone, then retry.")
+            return
+        end
+        Say("identity secret: " .. Try(C_Secrets and C_Secrets.ShouldUnitIdentityBeSecret, U))
+        local _, totToken = UnitClass(U)
+        Say("UnitClass(targettarget): " .. Show(totToken))
+
+        if EllesmereUI._colorCacheDirty then EllesmereUI._RebuildColorCache() end
+        local customized, count, names = EllesmereUI._colorCache.classCustomized, 0, ""
+        for k in pairs(customized) do count = count + 1; names = names .. k .. " " end
+        Say("customised classes (" .. count .. "): " .. names)
+
+        EllesmereUI._EnsureRestrictedRosterWatcher()
+        EllesmereUI._RebuildRestrictedCandidates()
+        local cands = EllesmereUI._restrictedCandidates
+        Say("candidates built: " .. (#cands / 2))
+
+        local units = { "player" }
+        local members = GetNumGroupMembers() or 0
+        if IsInRaid() then
+            for i = 1, members do units[#units + 1] = "raid" .. i end
+        else
+            for i = 1, members - 1 do units[#units + 1] = "party" .. i end
+        end
+        for i = 1, #units do
+            local u = units[i]
+            local _, uToken = UnitClass(u)
+            local isCand = false
+            for j = 1, #cands, 2 do if cands[j] == u then isCand = true end end
+            Say(("  %s class=%s candidate=%s canCompare=%s compSecret=%s UnitIsUnit=%s")
+                :format(u, Show(uToken), isCand and "yes" or "NO",
+                    Try(C_Secrets and C_Secrets.CanCompareUnitTokens, U, u),
+                    Try(C_Secrets and C_Secrets.ShouldUnitComparisonBeSecret, U, u),
+                    Try(UnitIsUnit, U, u)))
+        end
+        Say("resolver answered: " .. Try(function() return (EllesmereUI.GetClassColorForRestrictedUnit(U, totToken)) end))
+    end
+end
