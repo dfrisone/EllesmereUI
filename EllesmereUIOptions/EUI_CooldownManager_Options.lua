@@ -15755,7 +15755,7 @@ initFrame:SetScript("OnEvent", function(self)
             function()
                 EllesmereUI:ShowConfirmPopup({
                     title = "Repopulate Bars",
-                    message = "Rebuilds this spec's default bars to match Blizzard's CDM layout. Use this if an icon is stuck after you removed it on Blizzard's side, or left over from a spec change: anything Blizzard no longer tracks is cleared out. Spells you added yourself (presets, custom IDs and racials) are kept. Only affects the spec you are on. Continue?",
+                    message = "Rebuilds this spec's default bars to match Blizzard's CDM layout, restoring anything Blizzard currently tracks. Spells you added yourself (presets, custom IDs and racials) are kept. Only affects the spec you are on. Continue?",
                     confirmText = "Repopulate",
                     cancelText = "Cancel",
                     onConfirm = function()
