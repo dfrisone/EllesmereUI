@@ -543,6 +543,27 @@ local CJK_FILES = {
     simplifiedchinese  = "Fonts\\ARKai_T.ttf",
     traditionalchinese = "Fonts\\blei00d.TTF",
 }
+-- The +2 below is a legibility nudge for CJK dropped INTO a western-locale
+-- chat. On a CJK client it is not a nudge, it is the whole window: every line
+-- is that alphabet, so a user asking for 17 read 19 and the glyphs outgrew the
+-- line box the roman height sizes (the "spacing got tighter" half of the same
+-- report). Blizzard's per-alphabet heights vary family by family, but their
+-- CHAT font is the one that matters here and it bumps nothing upward:
+-- ChatFontNormal inherits NumberFont_Shadow_Med, whose members are roman 14,
+-- simplifiedchinese 14, traditionalchinese 14, korean 13. Their tab-menu size
+-- control then bypasses the family entirely (FCF_SetChatWindowFontSize raw
+-- SetFonts the active alphabet's file at the chosen number), so a size the
+-- user picked renders literally. Ours does the same: the client's own
+-- alphabet takes the size unmodified.
+local CJK_CLIENT_ALPHABET = ({
+    koKR = "korean",
+    zhCN = "simplifiedchinese",
+    zhTW = "traditionalchinese",
+})[GetLocale()]
+local function CJKHeight(alphabet, size)
+    if alphabet == CJK_CLIENT_ALPHABET then return size end
+    return size + 2
+end
 function ECHAT.EngineFontFamily(id, font, size, flags)
     flags = flags or ""
     local fam = FAMS[id]
@@ -554,9 +575,10 @@ function ECHAT.EngineFontFamily(id, font, size, flags)
             { alphabet = "russian", file = font, height = size, flags = flags },
         }
         -- CJK renders +2px: ideographs at latin point sizes read visibly
-        -- smaller (dense glyphs, no ascender/descender whitespace).
+        -- smaller (dense glyphs, no ascender/descender whitespace). Not on the
+        -- client's own alphabet -- see CJKHeight.
         for alphabet, file in pairs(CJK_FILES) do
-            members[#members + 1] = { alphabet = alphabet, file = file, height = size + 2, flags = flags }
+            members[#members + 1] = { alphabet = alphabet, file = file, height = CJKHeight(alphabet, size), flags = flags }
         end
         local ok, created = pcall(CreateFontFamily, "EUIChatFontFamily" .. id, members)
         if not ok or not created then FAMS[id] = false; return nil end
@@ -567,7 +589,7 @@ function ECHAT.EngineFontFamily(id, font, size, flags)
         fam:GetFontObjectForAlphabet("roman"):SetFont(font, size, flags)
         fam:GetFontObjectForAlphabet("russian"):SetFont(font, size, flags)
         for alphabet, file in pairs(CJK_FILES) do
-            fam:GetFontObjectForAlphabet(alphabet):SetFont(file, size + 2, flags)
+            fam:GetFontObjectForAlphabet(alphabet):SetFont(file, CJKHeight(alphabet, size), flags)
         end
     end)
     if not ok then return nil end

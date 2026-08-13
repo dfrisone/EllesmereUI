@@ -2393,10 +2393,24 @@ do
         -- Degenerate PARENT-scale guard, OPT-IN via container._scaleGuard (nameplates, see
         -- PP.CreateBorder): those containers are scale-DECOUPLED so their own es pins to 1
         -- and onePixel cannot explode, but the plate they anchor to hits near-zero scale during
-        -- recycle/hide/PEW (SetScale(0.001)) -- snapping against that rect is churn, skip it (the next valid pass re-asserts); UIParent-based borders leave the flag unset.
+        -- recycle/hide/PEW (SetScale(0.001)) -- snapping against that rect is churn, skip it (the skipped state is re-asserted via ArmPendingSnap below -- do NOT assume some later pass comes on its own, pooled plates get none); UIParent-based borders leave the flag unset.
         if container._scaleGuard then
             local pok, pes = pcall(frame.GetEffectiveScale, frame)
-            if pok and pes and pes < 0.1 then return end
+            if pok and pes and pes < 0.1 then
+                -- Skipping the snap is right (the rect is collapsed, snapping against it is
+                -- churn), but the CALLER'S INTENT MUST NOT BE LOST. A state change that lands
+                -- in this window is otherwise dropped for good: the nameplate cast-bar wrap
+                -- clears its hidden-bottom seam when the cast ends, which for a dying/despawning
+                -- unit happens exactly while the plate is collapsed -- and since plates are
+                -- POOLED and the paths that would re-snap on re-use are appearance-generation
+                -- cached, the bottom strip then stays hidden for every unit that plate is
+                -- recycled onto. Drop the geometry key so the next pass cannot match it as
+                -- identical and skip, and arm a one-shot re-snap for when the container is
+                -- visible again.
+                container._snapEdge = nil
+                PP.ArmPendingSnap(container, frame)
+                return
+            end
         end
         local onePixel = es > 0 and (PP.perfect / es) or PP.mult
         local bs = borderSize or 1
@@ -2482,6 +2496,34 @@ do
             l:SetVertexColor(bc[1], bc[2], bc[3], bc[4])
             r:SetVertexColor(bc[1], bc[2], bc[3], bc[4])
         end
+    end
+
+    --  Deferred re-snap for a guarded container whose snap was swallowed at degenerate parent
+    --  scale (rationale at the guard in SnapBorderTextures). OnShow is the trigger because it is
+    --  exactly the moment the plate un-collapses, costs nothing while idle, and needs no ticker.
+    --  Nothing else scripts OnShow on a border container, so SetScript is safe here; the handler
+    --  is shared, NOT a per-container closure (these arm on pooled nameplate borders).
+    --  Two further nets catch a container whose OnShow never fires: the cleared _snapEdge means
+    --  no later snap can skip it as unchanged, and PP.ResnapAllBorders re-snaps it wholesale.
+    function PP._pendingSnapOnShow(container)
+        local frame = container._pendingSnap
+        if not frame then
+            container:SetScript("OnShow", nil)
+            return
+        end
+        local pok, pes = pcall(frame.GetEffectiveScale, frame)
+        -- Still collapsed (shown inside a hidden/zero-scale ancestor): stay armed for the next show.
+        if not pok or not pes or pes < 0.1 then return end
+        container._pendingSnap = nil
+        container:SetScript("OnShow", nil)
+        local bd = _ppBorderData[frame]
+        SnapBorderTextures(container, frame, bd and bd.borderSize or 1)
+    end
+
+    function PP.ArmPendingSnap(container, frame)
+        if container._pendingSnap then return end
+        container._pendingSnap = frame
+        container:SetScript("OnShow", PP._pendingSnapOnShow)
     end
 
     ---------------------------------------------------------------------------

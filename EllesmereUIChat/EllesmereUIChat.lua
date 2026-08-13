@@ -4512,7 +4512,15 @@ initFrame:SetScript("OnEvent", function(self)
             if cf and _skinned[cf] then
                 local curFont = cf:GetFont()
                 if curFont and curFont ~= wantFont then
-                    local _, sz = cf:GetFont()
+                    -- Size from Blizzard's stored per-window setting, NEVER read
+                    -- back off the widget: under a font family cf:GetFont()
+                    -- answers for the ACTIVE alphabet, so on a CJK client it
+                    -- returns the CJK member -- a file that never equals
+                    -- wantFont, at that member's own height. Feeding it back in
+                    -- re-seeded the family from its own output, and this pass
+                    -- runs on UPDATE_(FLOATING_)CHAT_WINDOWS, so chat text grew
+                    -- on every login, reload and tab switch.
+                    local sz = GetFrameFontSize(cf:GetID())
                     local fam = ECHAT.EngineFontFamily
                         and ECHAT.EngineFontFamily(cf:GetID(), wantFont, sz, wantOutline)
                     if fam then
