@@ -11796,6 +11796,12 @@ local function ReloadFrames()
     -- re-skin of the default and custom bars, both change-guarded no-ops when nothing changed.
     if ns.PAB_Restyle then ns.PAB_Restyle() end
     if ns.PAB_ReloadAllCustomBars then ns.PAB_ReloadAllCustomBars() end
+    -- A re-skin alone is not a profile apply. This tail is also the ONLY entry point
+    -- RefreshAllAddons and Spec Overrides / conditional groups have into this module
+    -- (REFRESH_FNS in EllesmereUI_SpecOverrides.lua), and those paths can replace every
+    -- default-bar field at once -- position, grid, growth, filters, enable. Idempotent
+    -- and change-guarded, so ordinary settings changes cost one grid recompute.
+    if ns.PAB_RefreshProfile then ns.PAB_RefreshProfile() end
 end
 
 -- Toggle a frame's oUF Castbar element without rewriting Blizzard's cast bar event

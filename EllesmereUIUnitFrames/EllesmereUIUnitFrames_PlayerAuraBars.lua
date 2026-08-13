@@ -4352,11 +4352,16 @@ local function TryCreateBars()
     -- would spam every login for users who simply disabled the module.
     if not ns._eufEnabled then return end
     if PAB() then
+        -- Stamped BEFORE the build: ns.PAB_RefreshProfile refuses to build until the
+        -- login attempt has resolved, and CreateBars' own tail can re-enter this file
+        -- through the options/unlock registration.
+        ns._pabLoginBuildDone = true
         CreateBars()
         return
     end
     retryCount = retryCount + 1
     if retryCount > RETRY_CAP then
+        ns._pabLoginBuildDone = true
         geterrorhandler()("EllesmereUIUnitFrames_PlayerAuraBars: ns.db never became "
             .. "available after " .. RETRY_CAP .. " retries -- Player Aura Bars did not load.")
         return
@@ -4365,6 +4370,52 @@ local function TryCreateBars()
 end
 
 ns.PAB_CreateBars = CreateBars
+
+-- Whole-profile re-apply, called from EllesmereUIUnitFrames.lua's ReloadFrames tail.
+-- A profile switch, an import, and every Spec Override / conditional-group write reach
+-- this module through ONE entry point (_EUF_ReloadFrames -- see RefreshAllAddons and
+-- SpecOverrides' REFRESH_FNS), and that tail only re-skinned the bars. Position, grid
+-- geometry, growth direction, filters and the enable flag kept the OUTGOING profile's
+-- values until the next /reload, so an instance-triggered conditional flip left the
+-- default Buffs/Debuffs bars stale (or, when the outgoing profile had PAB off, absent
+-- entirely -- Blizzard's own BuffFrame/DebuffFrame were never hidden).
+-- No live disable path, matching ns.PAB_SetEnabled: the Blizzard corner-frame hide
+-- latches for the session, so a profile that turns PAB off takes effect on reload.
+function ns.PAB_RefreshProfile()
+    local s = PAB()
+    if not (AK and s and s.enabled == true) then return end
+    if not (buffsParent and debuffsParent) then
+        -- Never built this session. CreateBars does the whole job from scratch,
+        -- Blizzard-frame hide and unlock registration included; ApplyLiveConfig below
+        -- would no-op with no container to configure.
+        -- Gated on the login attempt having resolved: this tail runs from
+        -- InitializeFrames inside the SAME PLAYER_LOGIN dispatch that the login build
+        -- handler drains a step later, and AK.RequestContainer always creates a NEW
+        -- container -- an ungated call would build the default bars twice and strand
+        -- the first pair.
+        if ns._pabLoginBuildDone then CreateBars() end
+        return
+    end
+    -- ApplyLiveConfig's fixed-edge compensation corrects a size change WITHIN one
+    -- profile. Across a switch the outgoing size is meaningless, and the CENTER-anchor
+    -- branch WRITES the shifted coordinate back, so an uncorrected baseline would walk
+    -- the incoming profile's saved position every flip. Re-baseline to the incoming
+    -- grid first, making that delta zero.
+    local buffGrid = ComputeGrid(true, DefaultBuffsCfg(s))
+    local debuffGrid = ComputeGrid(false, DefaultDebuffsCfg(s))
+    lastSize.buffs = { w = buffGrid.width, h = buffGrid.height }
+    lastSize.debuffs = { w = debuffGrid.width, h = debuffGrid.height }
+    ApplyLiveConfig(true)
+    ApplyLiveConfig(false)
+    -- After ApplyLiveConfig: it sizes the parent, and SnapBarPos snaps against the
+    -- frame's live dimensions.
+    ApplyBarPosition(buffsParent, true)
+    ApplyBarPosition(debuffsParent, false)
+    -- The Buffs mover label is baked in at registration and is content-derived
+    -- (ns.PAB_DefaultBuffsName), so a Filters change carried by the new profile needs
+    -- the same re-registration ApplyLiveConfig does for in-profile edits.
+    RegisterPABUnlock()
+end
 
 function ns.PAB_Enabled()
     local s = PAB()
