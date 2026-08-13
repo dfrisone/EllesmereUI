@@ -4462,6 +4462,28 @@ local function RefreshThreatCache()
         if spec then role = GetSpecializationRole(spec) or "NONE" end
     end
     _isTankRole = (role == "TANK")
+    -- The OTHER tanks, by unit token. Off-tank detection cannot read the role off the mob's
+    -- target in instanced content (identity-restricted -> secret), so it compares that target
+    -- against units whose role IS readable. Rebuilt on the same roster/role events that bring
+    -- us here. On ns (module file is at the 200-local cap).
+    local tanks = ns._groupTankUnits
+    if not tanks then tanks = {}; ns._groupTankUnits = tanks end
+    wipe(tanks)
+    if IsInGroup() then
+        local inRaid = IsInRaid()
+        local members = GetNumGroupMembers() or 0
+        for i = 1, (inRaid and members or members - 1) do
+            local u = (inRaid and "raid" or "party") .. i
+            if UnitExists(u) then
+                local isSelf = UnitIsUnit(u, "player")
+                local r = UnitGroupRolesAssigned(u)
+                if type(isSelf) == "boolean" and not isSelf
+                   and not issecretvalue(r) and r == "TANK" then
+                    tanks[#tanks + 1] = u
+                end
+            end
+        end
+    end
 end
 
 local function InRealInstancedContent()
@@ -4631,6 +4653,35 @@ function ns.GetBlizzardBarColor(frame)
     if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" then return false end
     return true, r, g, b
 end
+-- Off-tank color for a tank who is not holding this mob, when the mob's target role came back
+-- redacted. Group ROLES are readable, so ask the reverse question: is that target one of the
+-- other tanks? UnitIsUnit runs the compare in C (its answer stays secret when the comparison is
+-- restricted) and C_CurveUtil picks the component from that boolean, also in C, so Lua never
+-- learns who the mob is on. Returns a PLAIN "have it" boolean plus three numbers that may be
+-- secret: never branch on the numbers, only ever hand them to a setter.
+-- On ns (module file is at the 200-local cap).
+function ns.PickOffTankColor(mobTarget, offTank, noAggro)
+    local pick = C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean
+    if not pick then return false end
+    local tanks = ns._groupTankUnits
+    local count = tanks and #tanks or 0
+    if count == 0 then return false end
+    local canCompare = C_Secrets and C_Secrets.CanCompareUnitTokens
+    local r, g, b = noAggro.r, noAggro.g, noAggro.b
+    for i = 1, count do
+        local u = tanks[i]
+        -- CanCompareUnitTokens false means UnitIsUnit would fail outright, not go secret.
+        if (not canCompare) or canCompare(mobTarget, u) then
+            local isSameUnit = UnitIsUnit(mobTarget, u)
+            if type(isSameUnit) == "boolean" then
+                r = pick(isSameUnit, offTank.r, r)
+                g = pick(isSameUnit, offTank.g, g)
+                b = pick(isSameUnit, offTank.b, b)
+            end
+        end
+    end
+    return true, r, g, b
+end
 local function GetReactionColor(unit)
     -- Per-call marker read SYNCHRONOUSLY by UpdateHealthColor right after this
     -- returns: true only when this resolution landed on the non-tank Near
@@ -4640,6 +4691,9 @@ local function GetReactionColor(unit)
     -- Same idiom, for the enemy player class color at step 6: set when the class token
     -- came back redacted, so UpdateHealthColor knows to mirror Blizzard's bar instead.
     ns._reactionMirrorClass = false
+    -- Same idiom again, for the off-tank color: set when the color had to be resolved in C
+    -- from a redacted role, with the resolved (secret) components in ns._reactionSecretR/G/B.
+    ns._reactionSecret = false
     local db = p or defaults
     -- 1. Tapped always highest
     if UnitIsTapDenied(unit) then
@@ -4682,23 +4736,44 @@ local function GetReactionColor(unit)
                     -- Only show no-aggro warning if a non-tank has it.
                     -- If another tank holds aggro, this is normal offtank positioning.
                     local unitTarget = unit .. "target"
-                    -- Role reads on identity-restricted units return SECRET values: never
-                    -- truthiness-chain or compare one. Unreadable role reads as non-tank.
-                    local targetRole = "NONE"
-                    if UnitExists(unitTarget) then
-                        local r = UnitGroupRolesAssigned(unitTarget)
-                        if not issecretvalue(r) and r then targetRole = r end
-                    end
-                    if targetRole ~= "TANK" then
-                        local c = _C("tankNoAggro")
-                        return c.r, c.g, c.b
-                    end
-                    -- Another tank has aggro -- show off-tank color if enabled
                     local otEnabled = db.offTankAggroEnabled
                     if otEnabled == nil then otEnabled = defaults.offTankAggroEnabled end
-                    if otEnabled then
-                        local c = _C("offTankAggro")
-                        return c.r, c.g, c.b
+                    local noAggro = _C("tankNoAggro")
+                    -- Role reads on identity-restricted units return SECRET values: never
+                    -- truthiness-chain or compare one.
+                    local targetRole, roleReadable = "NONE", false
+                    if UnitExists(unitTarget) then
+                        local r = UnitGroupRolesAssigned(unitTarget)
+                        if not issecretvalue(r) and r then targetRole = r; roleReadable = true end
+                    end
+                    if roleReadable then
+                        if targetRole ~= "TANK" then
+                            return noAggro.r, noAggro.g, noAggro.b
+                        end
+                        -- Another tank has aggro -- show off-tank color if enabled
+                        if otEnabled then
+                            local c = _C("offTankAggro")
+                            return c.r, c.g, c.b
+                        end
+                        -- Off-tank color disabled: fall through to the mob-type colors.
+                    else
+                        -- Redacted role, which is EVERY mob in instanced content. Reading it as
+                        -- non-tank made the off-tank color unreachable there, so resolve the
+                        -- same question in C instead. The secret result rides ns._reactionSecret
+                        -- (UpdateHealthColor applies it straight to the bar); the plain no-aggro
+                        -- color is still returned so every downstream consumer of this function
+                        -- keeps plain numbers.
+                        if otEnabled then
+                            local ok, r, g, b = ns.PickOffTankColor(unitTarget,
+                                _C("offTankAggro"), noAggro)
+                            if ok then
+                                ns._reactionSecret = true
+                                ns._reactionSecretR = r
+                                ns._reactionSecretG = g
+                                ns._reactionSecretB = b
+                            end
+                        end
+                        return noAggro.r, noAggro.g, noAggro.b
                     end
                 end
                 -- Classic tank aggro: has-aggro overrides all mob-type colors
@@ -6236,6 +6311,11 @@ function NameplateFrame:UpdateHealthColor()
         self._mirrorPending = not mirrored or nil
     else
         self._mirrorPending = nil
+    end
+    -- Off-tank color resolved in C from a redacted role. Same no-latch rule as the mirror
+    -- above: a secret can never enter the skip-if-unchanged cache, so it reapplies each pass.
+    if not mirrored and ns._reactionSecret then
+        mirrored, mr, mg, mb = true, ns._reactionSecretR, ns._reactionSecretG, ns._reactionSecretB
     end
     if mirrored then
         -- Cache invalidated, never written with a secret: the next plain colour must reapply.
