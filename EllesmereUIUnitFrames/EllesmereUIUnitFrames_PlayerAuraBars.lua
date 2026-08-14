@@ -1702,18 +1702,35 @@ end
 -- Show() again. hooksecurefunc runs AFTER Blizzard's secure call completes, not from
 -- inside it, so nothing is tainted. Neither frame is protected/secure, so plain Hide()
 -- is safe with no lockdown concern.
+-- The re-hide is gated on ns._pabBlizzSuppressed rather than latching for the whole
+-- session: a live disable (profile switch / spec override that turns PAB off) must be
+-- able to hand the corner frames back. Hooks install once; the flag carries the state.
 local blizzardAurasHidden = false
 local function HideBlizzardPlayerAuras()
-    if blizzardAurasHidden then return end
+    ns._pabBlizzSuppressed = true
+    if blizzardAurasHidden then
+        if BuffFrame then BuffFrame:Hide() end
+        if DebuffFrame then DebuffFrame:Hide() end
+        return
+    end
     blizzardAurasHidden = true
     if BuffFrame then
         BuffFrame:Hide()
-        hooksecurefunc(BuffFrame, "Show", function() BuffFrame:Hide() end)
+        hooksecurefunc(BuffFrame, "Show", function() if ns._pabBlizzSuppressed then BuffFrame:Hide() end end)
     end
     if DebuffFrame then
         DebuffFrame:Hide()
-        hooksecurefunc(DebuffFrame, "Show", function() DebuffFrame:Hide() end)
+        hooksecurefunc(DebuffFrame, "Show", function() if ns._pabBlizzSuppressed then DebuffFrame:Hide() end end)
     end
+end
+
+-- Live-disable counterpart: drop the suppression and Show() the frames back. Blizzard
+-- manages their visibility from here (the hooks stay installed but pass through).
+local function ReleaseBlizzardPlayerAuras()
+    if not ns._pabBlizzSuppressed then return end
+    ns._pabBlizzSuppressed = false
+    if BuffFrame then BuffFrame:Show() end
+    if DebuffFrame then DebuffFrame:Show() end
 end
 
 -- Shifts the default Buffs container inward by the active weapon-enchant
@@ -1839,6 +1856,10 @@ local function CreateBars()
     -- "Externals" preset filter by id.
     EnsureExtDefCustomBar(s)
 
+    -- Enablement confirmed: a stale live-disable flag from a pre-build disabled
+    -- profile must not survive into the fresh (default-shown) parents, or the next
+    -- suppression re-apply would hide the bars it just built.
+    ns._pabLiveDisabled = false
     HideBlizzardPlayerAuras()
 
     local buffCfg, debuffCfg = DefaultBuffsCfg(s), DefaultDebuffsCfg(s)
@@ -4379,11 +4400,18 @@ ns.PAB_CreateBars = CreateBars
 -- values until the next /reload, so an instance-triggered conditional flip left the
 -- default Buffs/Debuffs bars stale (or, when the outgoing profile had PAB off, absent
 -- entirely -- Blizzard's own BuffFrame/DebuffFrame were never hidden).
--- No live disable path, matching ns.PAB_SetEnabled: the Blizzard corner-frame hide
--- latches for the session, so a profile that turns PAB off takes effect on reload.
+-- Both directions render live: an incoming profile with PAB on rebuilds or re-applies,
+-- one with PAB off hides the bars and hands Blizzard's corner frames back
+-- (ns.PAB_SetLiveDisabled, defined with the suppression block below). "Off" can arrive
+-- mid-session without any user action: spec overrides treat s.enabled as a
+-- no-registered-default key, so their key-removal markers write nil straight into the
+-- live profile on a transition.
 function ns.PAB_RefreshProfile()
     local s = PAB()
-    if not (AK and s and s.enabled == true) then return end
+    if not (AK and s and s.enabled == true) then
+        ns.PAB_SetLiveDisabled(true)
+        return
+    end
     if not (buffsParent and debuffsParent) then
         -- Never built this session. CreateBars does the whole job from scratch,
         -- Blizzard-frame hide and unlock registration included; ApplyLiveConfig below
@@ -4396,6 +4424,9 @@ function ns.PAB_RefreshProfile()
         if ns._pabLoginBuildDone then CreateBars() end
         return
     end
+    -- Built but possibly live-disabled by an earlier flip: re-show the parents and
+    -- re-suppress Blizzard's frames before re-applying config to visible bars.
+    ns.PAB_SetLiveDisabled(false)
     -- ApplyLiveConfig's fixed-edge compensation corrects a size change WITHIN one
     -- profile. Across a switch the outgoing size is meaningless, and the CENTER-anchor
     -- branch WRITES the shifted coordinate back, so an uncorrected baseline would walk
@@ -4424,14 +4455,21 @@ end
 
 -- Called by the options page's activation overlay. Enabling builds the bars live
 -- (CreateBars guards its own re-entry; AK.RequestContainer self-defers to
--- PLAYER_REGEN_ENABLED in combat). There is no live disable path -- the Blizzard
--- corner-frame hide latches for the session, so turning PAB off is a settings write
--- that takes effect on reload.
+-- PLAYER_REGEN_ENABLED in combat). Disabling is live too, via the same
+-- PAB_RefreshProfile branch profile flips use -- containers are kept (releasing
+-- leaks an engine batch, see the ReleaseContainer note near the file top), only
+-- hidden, and Blizzard's corner frames come back.
 function ns.PAB_SetEnabled(v)
     local s = PAB()
     if not s then return end
     s.enabled = v and true or nil
-    if v then CreateBars() end
+    if v and not (buffsParent and debuffsParent) then
+        -- First enable this session: full build, no login-resolve gate needed
+        -- (the overlay cannot be clicked before PLAYER_LOGIN has drained).
+        CreateBars()
+        return
+    end
+    ns.PAB_RefreshProfile()
 end
 
 -- Cinematic / faction-flip recovery. Two triggers, one degradation class:
@@ -4458,16 +4496,36 @@ end
 local vehicleHidden = false
 -- Bare apply, no state guard: the recovery lane re-asserts the CURRENT
 -- state after its reload paths (which Show() the parents as a side effect).
-local function ApplyVehicleHidden(hidden)
-    if buffsParent then buffsParent:SetShown(not hidden) end
-    if debuffsParent then debuffsParent:SetShown(not hidden) end
-    for _, parent in pairs(customBuffParents) do parent:SetShown(not hidden) end
-    for _, parent in pairs(customDebuffParents) do parent:SetShown(not hidden) end
+-- ONE writer for parent visibility, computing the union of both hide reasons
+-- (vehicle ride, live disable) so neither path can undo the other.
+local function ApplyBarsSuppressed()
+    local shown = not (vehicleHidden or ns._pabLiveDisabled)
+    if buffsParent then buffsParent:SetShown(shown) end
+    if debuffsParent then debuffsParent:SetShown(shown) end
+    for _, parent in pairs(customBuffParents) do parent:SetShown(shown) end
+    for _, parent in pairs(customDebuffParents) do parent:SetShown(shown) end
 end
 local function SetVehicleHidden(hidden)
     if vehicleHidden == hidden then return end
     vehicleHidden = hidden
-    ApplyVehicleHidden(hidden)
+    ApplyBarsSuppressed()
+end
+
+-- Live enable/disable rendering, the second half of ns.PAB_RefreshProfile: a profile
+-- switch or spec-override write can flip s.enabled in EITHER direction mid-session,
+-- and "takes effect on reload" leaves whichever bars are on screen wrong until then.
+-- Deliberately no same-state guard, matching ApplyBarsSuppressed's bare-apply note:
+-- the ReloadFrames tail's restyle/custom-bar passes run BEFORE the profile refresh
+-- and Show() parents as a side effect, so the disabled state must re-assert even
+-- when the flag did not change. All constituent calls are cheap and idempotent.
+function ns.PAB_SetLiveDisabled(disabled)
+    ns._pabLiveDisabled = disabled and true or false
+    ApplyBarsSuppressed()
+    if disabled then
+        ReleaseBlizzardPlayerAuras()
+    else
+        HideBlizzardPlayerAuras()
+    end
 end
 
 local cineFixPending = false
@@ -4477,14 +4535,14 @@ local function ReapplyAllAfterCinematic()
     cineFixPending = true
     C_Timer.After(0, function()
         cineFixPending = false
-        -- Suppressed ride: a re-drive is pointless (the parents are hidden;
-        -- the exit edge re-drives for real) AND actively harmful -- the
-        -- reload paths Show() the parents, silently undoing the vehicle
-        -- suppression (field: bars reappeared with degraded content moments
-        -- after boarding, because UNIT_FACTION fires on the same transition
-        -- and funnels here). Re-assert the hide and stop.
-        if vehicleHidden then
-            ApplyVehicleHidden(true)
+        -- Suppressed ride OR live-disabled module: a re-drive is pointless (the
+        -- parents are hidden; the exit edge / re-enable re-drives for real) AND
+        -- actively harmful -- the reload paths Show() the parents, silently
+        -- undoing the suppression (field: bars reappeared with degraded content
+        -- moments after boarding, because UNIT_FACTION fires on the same
+        -- transition and funnels here). Re-assert the hide and stop.
+        if vehicleHidden or ns._pabLiveDisabled then
+            ApplyBarsSuppressed()
             return
         end
         ApplyLiveConfig(true)
