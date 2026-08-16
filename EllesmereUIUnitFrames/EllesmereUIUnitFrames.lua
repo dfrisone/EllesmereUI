@@ -4408,16 +4408,20 @@ end
 -- Each cap is instead drawn at the bar's own height, so the arc is the same size on
 -- a wide player bar and a narrow boss bar.
 --
--- barcap-mask.tga is a 64x1024 atlas of eight 64x128 left caps, each a rounded
--- RECTANGLE at a different corner radius (8 through 64 of the 128px cell). A rounded
--- rect, not a capsule: a capsule tapers across the bar's entire height and reads as
--- barely rounded rather than as a corner. Roundness picks the cell. The portrait
+-- media/textures/barcaps holds sixteen 32x64 caps: eight corner radii, each with a
+-- pre-mirrored -l and -r. They are separate files, and the right cap is a real
+-- mirrored asset rather than a flipped SetTexCoord, because SetTexCoord does NOT
+-- take on a MaskTexture. An atlas selected by tex coords renders every cell squashed
+-- into the cap instead of the one cell, which leaves the bar a thin horizontal band.
+--
+-- Each cap is a rounded RECTANGLE, not a capsule. A capsule tapers across the bar's
+-- entire height and reads as barely rounded rather than as a corner. The portrait
 -- masks cannot stand in either, their shape is inset ~17px from the border and would
 -- eat a few pixels off each end of the bar.
 --
--- The cap is ALWAYS half the bar height wide. The cell is 64x128, so that is the one
+-- The cap is ALWAYS half the bar height wide. The asset is 32x64, so that is the one
 -- width that scales both axes equally and keeps the arc circular; the radius lands at
--- cellRadius * barHeight / 128, identical on a wide player bar and a narrow boss bar.
+-- capRadius * barHeight / 64, identical on a wide player bar and a narrow boss bar.
 -- Never vary this width to change roundness, that is what re-introduces the ellipse.
 --
 -- The middle of the bar survives because of the DEFAULT wrap mode, which clamps each
@@ -4427,7 +4431,7 @@ end
 --
 -- The pair is shared by the fill, the background and every absorb overlay, so no
 -- texture climbs past 2 of the engine's 3-mask cap (the 4th add throws).
-local BAR_CORNER_TEX = "Interface\\AddOns\\EllesmereUI\\media\\textures\\barcap-mask.tga"
+local BAR_CAP_DIR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\barcaps\\cap-"
 
 local function BuildCornerCap(bar, key, side, flip)
     local m = bar[key]
@@ -4437,16 +4441,13 @@ local function BuildCornerCap(bar, key, side, flip)
     end
     local h = bar:GetHeight() or 0
     if h < 2 then h = 2 end
-    local cell = db.profile.barCornerRoundness or 5
-    if cell < 1 then cell = 1 elseif cell > 8 then cell = 8 end
-    local v0, v1 = (cell - 1) / 8, cell / 8
+    local cap = db.profile.barCornerRoundness or 5
+    if cap < 1 then cap = 1 elseif cap > 8 then cap = 8 end
     m:ClearAllPoints()
     m:SetPoint("TOP" .. side, bar, "TOP" .. side, 0, 0)
     m:SetPoint("BOTTOM" .. side, bar, "BOTTOM" .. side, 0, 0)
     m:SetWidth(math.max(1, math.floor(h * 0.5 + 0.5)))
-    m:SetTexture(BAR_CORNER_TEX)
-    -- One asset serves both ends; the right cap samples its cell mirrored.
-    if flip then m:SetTexCoord(1, 0, v0, v1) else m:SetTexCoord(0, 1, v0, v1) end
+    m:SetTexture(BAR_CAP_DIR .. cap .. (flip and "-r" or "-l") .. ".tga")
     return m
 end
 
