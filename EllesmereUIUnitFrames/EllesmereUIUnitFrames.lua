@@ -219,8 +219,8 @@ local defaults = {
         -- Rounded corners on the health/power bars and their absorb overlays.
         -- Global, default off: costs nothing until enabled (see ns.ApplyBarCornerMask).
         roundedBarCorners = false,
-        -- 0 = square, 100 = fully rounded pill ends. Scales the cap mask width.
-        barCornerRoundness = 60,
+        -- Which cap-atlas cell to use, 1 (tightest corner) to 8 (fully rounded ends).
+        barCornerRoundness = 5,
         -- One decimal on abbreviated values (240.5k) and percents (77.3%); global, read by text tags via _G flags.
         showDecimalOnText = false,
         -- With decimals on, boss frames use two (240.55k / 77.30%); inline cog on "Show Decimal on Health Text".
@@ -4408,15 +4408,17 @@ end
 -- Each cap is instead drawn at the bar's own height, so the arc is the same size on
 -- a wide player bar and a narrow boss bar.
 --
--- barcap-mask.tga is a 64x128 left half-capsule authored for this: its right edge
--- column is fully opaque and the shape runs to the texture edge. The portrait masks
--- cannot stand in, their shape is inset ~17px from the border and would eat a few
--- pixels off each end of the bar.
+-- barcap-mask.tga is a 64x1024 atlas of eight 64x128 left caps, each a rounded
+-- RECTANGLE at a different corner radius (8 through 64 of the 128px cell). A rounded
+-- rect, not a capsule: a capsule tapers across the bar's entire height and reads as
+-- barely rounded rather than as a corner. Roundness picks the cell. The portrait
+-- masks cannot stand in either, their shape is inset ~17px from the border and would
+-- eat a few pixels off each end of the bar.
 --
--- Roundness scales the cap WIDTH. At 100 the cap is half the bar height and the arc
--- is a true semicircle (pill end); lower values compress it into a shallower ellipse,
--- which is the intended "less round" look. It never distorts badly because the
--- vertical semi-axis is always half the bar height, whatever the bar's width.
+-- The cap is ALWAYS half the bar height wide. The cell is 64x128, so that is the one
+-- width that scales both axes equally and keeps the arc circular; the radius lands at
+-- cellRadius * barHeight / 128, identical on a wide player bar and a narrow boss bar.
+-- Never vary this width to change roundness, that is what re-introduces the ellipse.
 --
 -- The middle of the bar survives because of the DEFAULT wrap mode, which clamps each
 -- cap's opaque inner edge column outward. Do NOT pass CLAMPTOBLACKADDITIVE here:
@@ -4435,15 +4437,16 @@ local function BuildCornerCap(bar, key, side, flip)
     end
     local h = bar:GetHeight() or 0
     if h < 2 then h = 2 end
-    local pct = db.profile.barCornerRoundness or 60
-    if pct < 0 then pct = 0 elseif pct > 100 then pct = 100 end
+    local cell = db.profile.barCornerRoundness or 5
+    if cell < 1 then cell = 1 elseif cell > 8 then cell = 8 end
+    local v0, v1 = (cell - 1) / 8, cell / 8
     m:ClearAllPoints()
     m:SetPoint("TOP" .. side, bar, "TOP" .. side, 0, 0)
     m:SetPoint("BOTTOM" .. side, bar, "BOTTOM" .. side, 0, 0)
-    m:SetWidth(math.max(1, math.floor(h * 0.5 * pct / 100 + 0.5)))
+    m:SetWidth(math.max(1, math.floor(h * 0.5 + 0.5)))
     m:SetTexture(BAR_CORNER_TEX)
-    -- One asset serves both ends; the right cap samples it mirrored.
-    if flip then m:SetTexCoord(1, 0, 0, 1) else m:SetTexCoord(0, 1, 0, 1) end
+    -- One asset serves both ends; the right cap samples its cell mirrored.
+    if flip then m:SetTexCoord(1, 0, v0, v1) else m:SetTexCoord(0, 1, v0, v1) end
     return m
 end
 

@@ -5308,8 +5308,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Show Nicknames: ONE global toggle for all main frames (default OFF, not
         -- per-frame). Gates ns.ResolveUnitNickname: off = raw names, on = provider nicknames.
-        local nicknamesRow
-        nicknamesRow, h = W:DualRow(parent, y,
+        _, h = W:DualRow(parent, y,
             { type="toggle", text="Show Nicknames",
               tooltip="Show player nicknames from supported addons instead of character names on your main frames.",
               getValue=function() return db.profile.showNicknames or false end,
@@ -5327,25 +5326,18 @@ initFrame:SetScript("OnEvent", function(self)
                   ReloadAndUpdate(); UpdatePreview(); EllesmereUI:RefreshPage()
               end });  y = y - h
 
-        -- Inline cog: corner roundness. Greyed out while the toggle is off.
-        if not EllesmereUI._prebuilding then
-            local rgn = nicknamesRow and nicknamesRow._rightRegion
-            local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Rounded Bar Corners",
-                rows = {
-                    { type="slider", label="Roundness", min=0, max=100, step=5,
-                      get=function() return db.profile.barCornerRoundness or 60 end,
-                      set=function(v)
-                          db.profile.barCornerRoundness = v
-                          ReloadAndUpdate(); UpdatePreview()
-                      end },
-                },
-            })
-            if rgn then
-                MakeCogBtn(rgn, cogShow, nil, nil,
-                    function() return not db.profile.roundedBarCorners end)
-            end
-        end
+        -- Corner Roundness: picks the cap-atlas cell, 1 (tightest) to 8 (fully rounded).
+        -- A plain row rather than an inline cog on the toggle, so it stays reachable.
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Corner Roundness", min=1, max=8, step=1,
+              disabled=function() return not db.profile.roundedBarCorners end,
+              disabledTooltip="Rounded Bar Corners", requireState="disabled",
+              getValue=function() return db.profile.barCornerRoundness or 5 end,
+              setValue=function(v)
+                  db.profile.barCornerRoundness = v
+                  ReloadAndUpdate(); UpdatePreview()
+              end },
+            { type="label", text="" });  y = y - h
 
         _, h = W:Spacer(parent, y, 20); y = y - h
 
