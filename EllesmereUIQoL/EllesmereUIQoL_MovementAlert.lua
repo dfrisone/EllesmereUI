@@ -743,12 +743,26 @@ local function SafeGetChargeInfo(spellId)
     end
     local m = chargeInfo.maxCharges or 1
     local r = chargeInfo.cooldownDuration or 0
-    if IsSecret(m) or IsSecret(r) then
+    -- The two fields have DIFFERENT secrecy, so they cannot share a guard.
+    -- SpellChargeInfo (verified 12.1.0.69299) marks maxCharges and isActive
+    -- NeverSecret; currentCharges, cooldownStartTime, cooldownDuration and
+    -- chargeModRate carry no such mark and come back secret on some spells even
+    -- out of combat (field-verified on Devourer's Shift). Discarding the whole
+    -- record over the secret sibling cached a real 3-charge spell as a 1-charge
+    -- cooldown, and that one wrong flag then sent CheckMovementCooldown to
+    -- GetSpellCooldownDuration instead of GetSpellChargeDuration -- so the real
+    -- recharge was never tracked at all, and only the GCD after each cast was.
+    -- An unreadable recharge is an UNKNOWN duration, never "not a charge spell".
+    if IsSecret(r) then r = 0 end
+    if IsSecret(m) then
         local cached = knownChargeSpells[spellId]
         if cached then return true, cached.maxCh, cached.rechDur end
         return false, 1, 0
     end
     if m > 1 then
+        -- Never let a secret-derived 0 overwrite a recharge we once read plainly.
+        local cached = knownChargeSpells[spellId]
+        if r <= 0 and cached and cached.rechDur > 0 then r = cached.rechDur end
         knownChargeSpells[spellId] = { maxCh = m, rechDur = r }
         return true, m, r
     end
@@ -1498,10 +1512,12 @@ end
 
 local function ApplyChargeVisibility(slot, spellId, chargeInfo, entry, duration)
     if not slot then return end
-    -- maxCharges stays PLAIN even when the rest of the charge record is secret,
-    -- so this branch is safe (and is why the entry's cached isChargeSpell flag
-    -- is not consulted -- SafeGetChargeInfo throws the whole record away when
-    -- cooldownDuration is secret, leaving Shift cached as a 1-charge cooldown).
+    -- maxCharges stays PLAIN even when the rest of the charge record is secret
+    -- (NeverSecret in SpellChargeInfo), so this branch is safe. Still read LIVE
+    -- rather than off the entry: this runs per pass and the live record is the
+    -- one the curve below is classifying. SafeGetChargeInfo used to discard that
+    -- plain field whenever cooldownDuration came back secret, which is what left
+    -- Shift cached as a 1-charge cooldown; it now keeps it.
     local mc = chargeInfo and chargeInfo.maxCharges
     -- Non-charge: the only thing that hides the slot is a cross-ability lockout,
     -- and when its window is secret the engine-side compare in LockoutAlpha is
