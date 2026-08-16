@@ -4400,43 +4400,84 @@ function ns.ApplyHealthOrientation(bar, settings)
     return vert
 end
 
--- Rounded bar corners (opt-in, global). ONE mask object per bar is shared by the
--- fill, the background and every absorb overlay, so no texture ever carries more
--- than one mask: the engine caps a texture at 3 and the 4th AddMaskTexture throws
--- rather than no-opping, which would abort whoever was mid-layout.
+-- Rounded bar corners (opt-in, global). TWO edge-anchored cap masks, not one
+-- stretched mask. A single mask scaled across the whole bar gives an ellipse whose
+-- horizontal radius grows with bar width: the 128px rounded square has a ~13%
+-- corner, which on a 250x30 bar is a 33px horizontal arc against a 4px vertical
+-- one, i.e. a lozenge. Each cap instead samples half the square and is drawn at the
+-- bar's own height, so the arc stays circular and the radius is the same few pixels
+-- on a wide player bar and a narrow boss bar.
 --
--- The wrap arguments are load-bearing. A mask left on the default wrap clamps its
--- edge texel outward, so a white mask smaller than its target clips nothing at all.
+-- The middle of the bar survives because of the DEFAULT wrap mode, which clamps
+-- each cap's opaque inner edge column outward. Do NOT pass CLAMPTOBLACKADDITIVE
+-- here: each cap would then hide everything outside itself and the two caps would
+-- intersect to nothing.
+--
+-- The pair is shared by the fill, the background and every absorb overlay, so no
+-- texture climbs past 2 of the engine's 3-mask cap (the 4th add throws).
+local BAR_CORNER_TEX = "Interface\\AddOns\\EllesmereUI\\media\\portraits\\csquare_mask.tga"
+
+local function BuildCornerCap(bar, key, side, uMin, uMax)
+    local m = bar[key]
+    if not m then
+        m = bar:CreateMaskTexture()
+        bar[key] = m
+    end
+    local h = bar:GetHeight() or 0
+    if h < 2 then h = 2 end
+    m:ClearAllPoints()
+    m:SetPoint("TOP" .. side, bar, "TOP" .. side, 0, 0)
+    m:SetPoint("BOTTOM" .. side, bar, "BOTTOM" .. side, 0, 0)
+    m:SetWidth(math.max(1, math.floor(h / 2 + 0.5)))
+    m:SetTexture(BAR_CORNER_TEX)
+    m:SetTexCoord(uMin, uMax, 0, 1)
+    return m
+end
+
+-- Attach (or detach) the pair on one texture. Remove before add: AddMaskTexture is
+-- additive, so re-running this would otherwise climb toward the cap and throw.
+-- Never gate on GetNumMaskTextures, it returns a secret for the Hierarchy aspect.
+function ns.ApplyBarCornerTexture(bar, tex)
+    if not bar or not tex then return end
+    local l, r = bar._barMaskL, bar._barMaskR
+    if l then pcall(tex.RemoveMaskTexture, tex, l) end
+    if r then pcall(tex.RemoveMaskTexture, tex, r) end
+    if not db.profile.roundedBarCorners then return end
+    if l then tex:AddMaskTexture(l) end
+    if r then tex:AddMaskTexture(r) end
+end
+
+-- Register a texture that should follow this bar's corners (absorb overlays call
+-- this; their fills are rebuilt on every style change).
+function ns.TrackBarCornerTexture(bar, tex)
+    if not bar or not tex then return end
+    local list = bar._cornerTextures
+    if not list then list = {}; bar._cornerTextures = list end
+    for i = 1, #list do
+        if list[i] == tex then
+            ns.ApplyBarCornerTexture(bar, tex)
+            return
+        end
+    end
+    list[#list + 1] = tex
+    ns.ApplyBarCornerTexture(bar, tex)
+end
+
 function ns.ApplyBarCornerMask(bar)
     if not bar then return end
     local on = db.profile.roundedBarCorners and true or false
-    local mask = bar._barMask
-    if not mask then
-        -- Nothing is created while the option is off, so a disabled profile pays
-        -- nothing. CreateAbsorbBar makes its own no-op mask when it gets there first.
-        if not on then return end
-        mask = bar:CreateMaskTexture()
-        mask:SetAllPoints(bar)
-        bar._barMask = mask
-    end
+    -- Nothing is built while the option is off, so a disabled profile pays nothing.
+    if not on and not bar._barMaskL then return end
     if on then
-        mask:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\portraits\\csquare_mask.tga",
-            "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    else
-        -- White + default wrap is a no-op mask, which is what the absorb overlays
-        -- have always run with; leaving it attached keeps their setup untouched.
-        mask:SetTexture("Interface\\Buttons\\WHITE8X8")
+        BuildCornerCap(bar, "_barMaskL", "LEFT",  0,   0.5)
+        BuildCornerCap(bar, "_barMaskR", "RIGHT", 0.5, 1)
     end
-    -- Remove before add, AddMaskTexture is additive. Never gate this on
-    -- GetNumMaskTextures: it returns a secret for the Hierarchy aspect.
     local fill = bar:GetStatusBarTexture()
-    if fill then
-        pcall(fill.RemoveMaskTexture, fill, mask)
-        if on then fill:AddMaskTexture(mask) end
-    end
-    if bar.bg then
-        pcall(bar.bg.RemoveMaskTexture, bar.bg, mask)
-        if on then bar.bg:AddMaskTexture(mask) end
+    if fill then ns.ApplyBarCornerTexture(bar, fill) end
+    if bar.bg then ns.ApplyBarCornerTexture(bar, bar.bg) end
+    local list = bar._cornerTextures
+    if list then
+        for i = 1, #list do ns.ApplyBarCornerTexture(bar, list[i]) end
     end
 end
 
@@ -4543,7 +4584,7 @@ local function ApplyAbsorbStyle(absorbBar, style, settings)
     -- These styles are repeating tiles; striped3 is a stretch texture (do NOT
     -- change how it renders).
     local tiled = (style == "stripedReversed" or style == "stripedThick" or style == "stripedThickR" or style == "largeStripes" or style == "largeStripesR" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR")
-    local mask = absorbBar._absorbMask
+    local host = absorbBar._maskHost
     absorbBar:SetStatusBarTexture(tex)
     absorbBar:SetStatusBarColor(ac.r, ac.g, ac.b, alpha)
     local fill = absorbBar:GetStatusBarTexture()
@@ -4551,7 +4592,7 @@ local function ApplyAbsorbStyle(absorbBar, style, settings)
         fill:SetDrawLayer("ARTWORK", 1)
         fill:SetHorizTile(tiled)
         fill:SetVertTile(tiled)
-        if mask then fill:AddMaskTexture(mask) end
+        ns.TrackBarCornerTexture(host, fill)
     end
     -- New fill object + tiling state: re-derive rotation (stretch styles rotate
     -- on a vertical bar, tiled ones must not).
@@ -4565,7 +4606,7 @@ local function ApplyAbsorbStyle(absorbBar, style, settings)
             fwFill:SetDrawLayer("ARTWORK", 1)
             fwFill:SetHorizTile(tiled)
             fwFill:SetVertTile(tiled)
-            if mask then fwFill:AddMaskTexture(mask) end
+            ns.TrackBarCornerTexture(host, fwFill)
         end
         ns.ApplyFillRotation(fw)
     end
@@ -4581,7 +4622,7 @@ local function ApplyHealAbsorbStyle(haBar, style, settings)
     -- The "Large Outlined Stripes" styles are pre-colored; render them untinted.
     if style == "largeOutlinedStripes" or style == "largeOutlinedStripesR" then hc = { r = 1, g = 1, b = 1 } end
     local tiled = (style == "stripedReversed" or style == "stripedThick" or style == "stripedThickR" or style == "largeStripes" or style == "largeStripesR" or style == "largeOutlinedStripes" or style == "largeOutlinedStripesR")
-    local mask = haBar._absorbMask
+    local host = haBar._maskHost
     haBar:SetStatusBarTexture(tex)
     haBar:SetStatusBarColor(hc.r, hc.g, hc.b, alpha)
     local fill = haBar:GetStatusBarTexture()
@@ -4589,7 +4630,7 @@ local function ApplyHealAbsorbStyle(haBar, style, settings)
         fill:SetDrawLayer("ARTWORK", 2)
         fill:SetHorizTile(tiled)
         fill:SetVertTile(tiled)
-        if mask then fill:AddMaskTexture(mask) end
+        ns.TrackBarCornerTexture(host, fill)
     end
     ns.ApplyFillRotation(haBar)
 end
@@ -4969,18 +5010,13 @@ local function CreateAbsorbBar(frame, unit, settings)
 
     local hpBar = frame.Health
 
-    -- Shared with the health fill and background (ns.ApplyBarCornerMask): one mask
-    -- object across every texture keeps each one at 1 of the engine's 3-mask cap,
-    -- and lets Rounded Bar Corners round the absorb overlays at no extra cost.
-    -- On WHITE8X8 with the default wrap this mask is a no-op; what actually holds
-    -- the absorbs inside the bar is curClip/missClip below.
-    local absorbMask = hpBar._barMask
-    if not absorbMask then
-        absorbMask = hpBar:CreateMaskTexture()
-        absorbMask:SetAllPoints(hpBar)
-        absorbMask:SetTexture("Interface\\Buttons\\WHITE8X8")
-        hpBar._barMask = absorbMask
-    end
+    -- These overlays used to carry a WHITE8X8 mask on the default wrap, which clamps
+    -- outward instead of clipping and so masked nothing at all. What actually holds
+    -- the absorbs inside the bar is curClip/missClip below. It is gone rather than
+    -- kept: it would have cost a slot of the engine's 3-mask-per-texture cap that
+    -- Rounded Bar Corners needs for its two cap masks.
+    -- ns.TrackBarCornerTexture registers each fill against the health bar so the
+    -- corners follow it, including across absorb style swaps.
 
     -- Reverse fill: when health fills right-to-left, mirror all absorb anchors.
     local isReversed = settings.healthReverseFill and true or false
@@ -5011,7 +5047,7 @@ local function CreateAbsorbBar(frame, unit, settings)
     local backfillBar = CreateFrame("StatusBar", nil, curClip)
     backfillBar:SetStatusBarTexture(ABSORB_SHIELD_TEX)
     local bfFill = backfillBar:GetStatusBarTexture()
-    if bfFill then bfFill:SetDrawLayer("ARTWORK", 1); bfFill:AddMaskTexture(absorbMask) end
+    if bfFill then bfFill:SetDrawLayer("ARTWORK", 1); ns.TrackBarCornerTexture(hpBar, bfFill) end
     backfillBar:SetStatusBarColor(1, 1, 1, 0.8)
     backfillBar:SetReverseFill(not isReversed)
     if isReversed then
@@ -5030,7 +5066,7 @@ local function CreateAbsorbBar(frame, unit, settings)
     local forwardBar = CreateFrame("StatusBar", nil, missClip)
     forwardBar:SetStatusBarTexture(ABSORB_SHIELD_TEX)
     local fwFill = forwardBar:GetStatusBarTexture()
-    if fwFill then fwFill:SetDrawLayer("ARTWORK", 1); fwFill:AddMaskTexture(absorbMask) end
+    if fwFill then fwFill:SetDrawLayer("ARTWORK", 1); ns.TrackBarCornerTexture(hpBar, fwFill) end
     forwardBar:SetStatusBarColor(1, 1, 1, 0.8)
     forwardBar:SetReverseFill(isReversed)
     if isReversed then
@@ -5071,9 +5107,9 @@ local function CreateAbsorbBar(frame, unit, settings)
     healClip:SetClipsChildren(true)
     local healAbsorbBar = CreateFrame("StatusBar", nil, healClip)
     healAbsorbBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-    healAbsorbBar._absorbMask = absorbMask
+    healAbsorbBar._maskHost = hpBar
     local haFill = healAbsorbBar:GetStatusBarTexture()
-    if haFill then haFill:SetDrawLayer("ARTWORK", 2); haFill:AddMaskTexture(absorbMask) end
+    if haFill then haFill:SetDrawLayer("ARTWORK", 2); ns.TrackBarCornerTexture(hpBar, haFill) end
     healAbsorbBar:SetStatusBarColor(0.8, 0.15, 0.15, 0.65)
     healAbsorbBar:SetReverseFill(not isReversed)
     if isReversed then
@@ -5093,7 +5129,7 @@ local function CreateAbsorbBar(frame, unit, settings)
     -- the fill rect each update so it tracks the secret heal-absorb amount.
     local haBg = healAbsorbBar:CreateTexture(nil, "ARTWORK", nil, 1)
     haBg:SetColorTexture(0, 0, 0, 0.15)
-    if absorbMask then haBg:AddMaskTexture(absorbMask) end
+    ns.TrackBarCornerTexture(hpBar, haBg)
     haBg:Hide()
     healAbsorbBar._bg = haBg
 
@@ -5131,7 +5167,7 @@ local function CreateAbsorbBar(frame, unit, settings)
     backfillBar._curClip      = curClip
     backfillBar._healClip     = healClip
     backfillBar._missClip     = missClip
-    backfillBar._absorbMask   = absorbMask
+    backfillBar._maskHost     = hpBar
     backfillBar._isReversed   = isReversed
 
     -- Raise the power bar above the absorb overlay.
