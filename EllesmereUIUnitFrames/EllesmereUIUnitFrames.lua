@@ -219,6 +219,8 @@ local defaults = {
         -- Rounded corners on the health/power bars and their absorb overlays.
         -- Global, default off: costs nothing until enabled (see ns.ApplyBarCornerMask).
         roundedBarCorners = false,
+        -- 0 = square, 100 = fully rounded pill ends. Scales the cap mask width.
+        barCornerRoundness = 60,
         -- One decimal on abbreviated values (240.5k) and percents (77.3%); global, read by text tags via _G flags.
         showDecimalOnText = false,
         -- With decimals on, boss frames use two (240.55k / 77.30%); inline cog on "Show Decimal on Health Text".
@@ -4402,22 +4404,30 @@ end
 
 -- Rounded bar corners (opt-in, global). TWO edge-anchored cap masks, not one
 -- stretched mask. A single mask scaled across the whole bar gives an ellipse whose
--- horizontal radius grows with bar width: the 128px rounded square has a ~13%
--- corner, which on a 250x30 bar is a 33px horizontal arc against a 4px vertical
--- one, i.e. a lozenge. Each cap instead samples half the square and is drawn at the
--- bar's own height, so the arc stays circular and the radius is the same few pixels
--- on a wide player bar and a narrow boss bar.
+-- horizontal radius grows with bar width, so a 250x30 bar comes out lozenge shaped.
+-- Each cap is instead drawn at the bar's own height, so the arc is the same size on
+-- a wide player bar and a narrow boss bar.
 --
--- The middle of the bar survives because of the DEFAULT wrap mode, which clamps
--- each cap's opaque inner edge column outward. Do NOT pass CLAMPTOBLACKADDITIVE
--- here: each cap would then hide everything outside itself and the two caps would
--- intersect to nothing.
+-- barcap-mask.tga is a 64x128 left half-capsule authored for this: its right edge
+-- column is fully opaque and the shape runs to the texture edge. The portrait masks
+-- cannot stand in, their shape is inset ~17px from the border and would eat a few
+-- pixels off each end of the bar.
+--
+-- Roundness scales the cap WIDTH. At 100 the cap is half the bar height and the arc
+-- is a true semicircle (pill end); lower values compress it into a shallower ellipse,
+-- which is the intended "less round" look. It never distorts badly because the
+-- vertical semi-axis is always half the bar height, whatever the bar's width.
+--
+-- The middle of the bar survives because of the DEFAULT wrap mode, which clamps each
+-- cap's opaque inner edge column outward. Do NOT pass CLAMPTOBLACKADDITIVE here:
+-- each cap would then hide everything outside itself and the two would intersect to
+-- nothing.
 --
 -- The pair is shared by the fill, the background and every absorb overlay, so no
 -- texture climbs past 2 of the engine's 3-mask cap (the 4th add throws).
-local BAR_CORNER_TEX = "Interface\\AddOns\\EllesmereUI\\media\\portraits\\csquare_mask.tga"
+local BAR_CORNER_TEX = "Interface\\AddOns\\EllesmereUI\\media\\textures\\barcap-mask.tga"
 
-local function BuildCornerCap(bar, key, side, uMin, uMax)
+local function BuildCornerCap(bar, key, side, flip)
     local m = bar[key]
     if not m then
         m = bar:CreateMaskTexture()
@@ -4425,12 +4435,15 @@ local function BuildCornerCap(bar, key, side, uMin, uMax)
     end
     local h = bar:GetHeight() or 0
     if h < 2 then h = 2 end
+    local pct = db.profile.barCornerRoundness or 60
+    if pct < 0 then pct = 0 elseif pct > 100 then pct = 100 end
     m:ClearAllPoints()
     m:SetPoint("TOP" .. side, bar, "TOP" .. side, 0, 0)
     m:SetPoint("BOTTOM" .. side, bar, "BOTTOM" .. side, 0, 0)
-    m:SetWidth(math.max(1, math.floor(h / 2 + 0.5)))
+    m:SetWidth(math.max(1, math.floor(h * 0.5 * pct / 100 + 0.5)))
     m:SetTexture(BAR_CORNER_TEX)
-    m:SetTexCoord(uMin, uMax, 0, 1)
+    -- One asset serves both ends; the right cap samples it mirrored.
+    if flip then m:SetTexCoord(1, 0, 0, 1) else m:SetTexCoord(0, 1, 0, 1) end
     return m
 end
 
@@ -4469,8 +4482,8 @@ function ns.ApplyBarCornerMask(bar)
     -- Nothing is built while the option is off, so a disabled profile pays nothing.
     if not on and not bar._barMaskL then return end
     if on then
-        BuildCornerCap(bar, "_barMaskL", "LEFT",  0,   0.5)
-        BuildCornerCap(bar, "_barMaskR", "RIGHT", 0.5, 1)
+        BuildCornerCap(bar, "_barMaskL", "LEFT",  false)
+        BuildCornerCap(bar, "_barMaskR", "RIGHT", true)
     end
     local fill = bar:GetStatusBarTexture()
     if fill then ns.ApplyBarCornerTexture(bar, fill) end
