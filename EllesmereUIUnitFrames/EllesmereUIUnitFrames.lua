@@ -1254,6 +1254,7 @@ local function ApplyHealthBarTexture(health, unitKey, texKeyOverride)
     if hFill then UnsnapTex(hFill) end
     -- The swap replaced the fill object; re-derive rotation for the bar's axis.
     ns.ApplyFillRotation(health)
+    if hFill then ns.TrackBarCornerTexture(health, hFill) end
     ns.ApplyBarCornerMask(health)
 
     -- Power bar: same texture. Walk up from health to find the oUF frame
@@ -1271,6 +1272,7 @@ local function ApplyHealthBarTexture(health, unitKey, texKeyOverride)
         end
         local pFill = power:GetStatusBarTexture()
         if pFill then UnsnapTex(pFill) end
+        if pFill then ns.TrackBarCornerTexture(power, pFill) end
         ns.ApplyBarCornerMask(power)
     end
 end
@@ -3895,6 +3897,10 @@ local function CreateBottomTextBar(frame, unit, settings, anchorFrame, xOffset, 
     bg:SetAllPoints()
     bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bga)
     btb.bg = bg
+    -- Only an ATTACHED bar is part of the frame silhouette. A detached one sits outside
+    -- the frame rect, where the caps clamp their rounded outer row across it and carve a
+    -- curve into a bar that should stay square.
+    if not isDetached then ns.TrackBarCornerTexture(frame, bg) end
 
     -- Text overlay, above the unified border at frame+10.
     local textOvr = CreateFrame("Frame", nil, btb)
@@ -4402,11 +4408,15 @@ function ns.ApplyHealthOrientation(bar, settings)
     return vert
 end
 
--- Rounded bar corners (opt-in, global). TWO edge-anchored cap masks, not one
--- stretched mask. A single mask scaled across the whole bar gives an ellipse whose
--- horizontal radius grows with bar width, so a 250x30 bar comes out lozenge shaped.
--- Each cap is instead drawn at the bar's own height, so the arc is the same size on
--- a wide player bar and a narrow boss bar.
+-- Rounded frame corners (opt-in, global). TWO edge-anchored cap masks anchored to the
+-- UNIT FRAME, not to each bar, so the health bar, the power bar, the text bar and their
+-- backgrounds are all clipped to ONE rounded silhouette instead of each becoming its own
+-- rounded pill. Textures sitting in the middle of the frame are untouched: the caps are
+-- fully opaque there.
+--
+-- Not one stretched mask: a single mask scaled across the whole frame gives an ellipse
+-- whose horizontal radius grows with frame width, so a wide frame comes out lozenge
+-- shaped.
 --
 -- media/textures/barcaps holds sixteen 32x64 caps: eight corner radii, each with a
 -- pre-mirrored -l and -r. They are separate files, and the right cap is a real
@@ -4419,44 +4429,50 @@ end
 -- masks cannot stand in either, their shape is inset ~17px from the border and would
 -- eat a few pixels off each end of the bar.
 --
--- The cap is ALWAYS half the bar height wide. The asset is 32x64, so that is the one
+-- The cap is ALWAYS half the frame height wide. The asset is 32x64, so that is the one
 -- width that scales both axes equally and keeps the arc circular; the radius lands at
--- capRadius * barHeight / 64, identical on a wide player bar and a narrow boss bar.
--- Never vary this width to change roundness, that is what re-introduces the ellipse.
+-- capRadius * frameHeight / 64. Never vary this width to change roundness, that is what
+-- re-introduces the ellipse.
 --
--- The middle of the bar survives because of the DEFAULT wrap mode, which clamps each
--- cap's opaque inner edge column outward. Do NOT pass CLAMPTOBLACKADDITIVE here:
--- each cap would then hide everything outside itself and the two would intersect to
--- nothing.
+-- The middle survives because of the DEFAULT wrap mode, which clamps each cap's opaque
+-- inner edge column outward. Do NOT pass CLAMPTOBLACKADDITIVE here: each cap would then
+-- hide everything outside itself and the two would intersect to nothing.
 --
--- The pair is shared by the fill, the background and every absorb overlay, so no
--- texture climbs past 2 of the engine's 3-mask cap (the 4th add throws).
+-- One pair per frame is shared by every texture on it, so nothing climbs past 2 of the
+-- engine's 3-mask cap (the 4th add throws).
 local BAR_CAP_DIR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\barcaps\\cap-"
 
-local function BuildCornerCap(bar, key, side, flip)
-    local m = bar[key]
+local function BuildCornerCap(owner, key, side, flip)
+    local m = owner[key]
     if not m then
-        m = bar:CreateMaskTexture()
-        bar[key] = m
+        m = owner:CreateMaskTexture()
+        owner[key] = m
     end
-    local h = bar:GetHeight() or 0
+    local h = owner:GetHeight() or 0
     if h < 2 then h = 2 end
     local cap = db.profile.barCornerRoundness or 5
     if cap < 1 then cap = 1 elseif cap > 8 then cap = 8 end
     m:ClearAllPoints()
-    m:SetPoint("TOP" .. side, bar, "TOP" .. side, 0, 0)
-    m:SetPoint("BOTTOM" .. side, bar, "BOTTOM" .. side, 0, 0)
+    m:SetPoint("TOP" .. side, owner, "TOP" .. side, 0, 0)
+    m:SetPoint("BOTTOM" .. side, owner, "BOTTOM" .. side, 0, 0)
     m:SetWidth(math.max(1, math.floor(h * 0.5 + 0.5)))
     m:SetTexture(BAR_CAP_DIR .. cap .. (flip and "-r" or "-l") .. ".tga")
     return m
 end
 
--- Attach (or detach) the pair on one texture. Remove before add: AddMaskTexture is
--- additive, so re-running this would otherwise climb toward the cap and throw.
--- Never gate on GetNumMaskTextures, it returns a secret for the Hierarchy aspect.
-function ns.ApplyBarCornerTexture(bar, tex)
-    if not bar or not tex then return end
-    local l, r = bar._barMaskL, bar._barMaskR
+-- Bars carry _euiOwner so a caller holding only a bar resolves to the frame that owns
+-- the silhouette, without guessing at the parent chain.
+local function CornerOwner(o)
+    if o and o._euiOwner then return o._euiOwner end
+    return o
+end
+
+-- Attach (or detach) the frame's pair on one texture. Remove before add: AddMaskTexture
+-- is additive. Never gate this on GetNumMaskTextures, it returns a secret for the
+-- Hierarchy aspect.
+function ns.ApplyBarCornerTexture(owner, tex)
+    if not owner or not tex then return end
+    local l, r = owner._barMaskL, owner._barMaskR
     if l then pcall(tex.RemoveMaskTexture, tex, l) end
     if r then pcall(tex.RemoveMaskTexture, tex, r) end
     if not db.profile.roundedBarCorners then return end
@@ -4464,37 +4480,38 @@ function ns.ApplyBarCornerTexture(bar, tex)
     if r then tex:AddMaskTexture(r) end
 end
 
--- Register a texture that should follow this bar's corners (absorb overlays call
--- this; their fills are rebuilt on every style change).
-function ns.TrackBarCornerTexture(bar, tex)
-    if not bar or not tex then return end
-    local list = bar._cornerTextures
-    if not list then list = {}; bar._cornerTextures = list end
+-- Register a texture that should follow the frame's silhouette. Bar fills are replaced on
+-- every texture or style swap, so callers re-register instead of assuming the list is live.
+function ns.TrackBarCornerTexture(owner, tex)
+    -- Elements flagged out of the silhouette (detached bars) never join the list.
+    if owner and owner._euiNoCorners then return end
+    owner = CornerOwner(owner)
+    if not owner or not tex then return end
+    local list = owner._cornerTextures
+    if not list then list = {}; owner._cornerTextures = list end
     for i = 1, #list do
         if list[i] == tex then
-            ns.ApplyBarCornerTexture(bar, tex)
+            ns.ApplyBarCornerTexture(owner, tex)
             return
         end
     end
     list[#list + 1] = tex
-    ns.ApplyBarCornerTexture(bar, tex)
+    ns.ApplyBarCornerTexture(owner, tex)
 end
 
-function ns.ApplyBarCornerMask(bar)
-    if not bar then return end
+function ns.ApplyBarCornerMask(owner)
+    owner = CornerOwner(owner)
+    if not owner then return end
     local on = db.profile.roundedBarCorners and true or false
     -- Nothing is built while the option is off, so a disabled profile pays nothing.
-    if not on and not bar._barMaskL then return end
+    if not on and not owner._barMaskL then return end
     if on then
-        BuildCornerCap(bar, "_barMaskL", "LEFT",  false)
-        BuildCornerCap(bar, "_barMaskR", "RIGHT", true)
+        BuildCornerCap(owner, "_barMaskL", "LEFT",  false)
+        BuildCornerCap(owner, "_barMaskR", "RIGHT", true)
     end
-    local fill = bar:GetStatusBarTexture()
-    if fill then ns.ApplyBarCornerTexture(bar, fill) end
-    if bar.bg then ns.ApplyBarCornerTexture(bar, bar.bg) end
-    local list = bar._cornerTextures
+    local list = owner._cornerTextures
     if list then
-        for i = 1, #list do ns.ApplyBarCornerTexture(bar, list[i]) end
+        for i = 1, #list do ns.ApplyBarCornerTexture(owner, list[i]) end
     end
 end
 
@@ -4526,6 +4543,10 @@ local function CreateHealthBar(frame, unit, height, xOffset, settings, rightInse
     PP.Point(bg, "BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
     bg:SetColorTexture(0, 0, 0, 0.5)
     health.bg = bg
+    -- Rounded corners are a FRAME silhouette, so every texture registers against the
+    -- owning unit frame rather than against its own bar.
+    health._euiOwner = frame
+    ns.TrackBarCornerTexture(frame, bg)
 
     health.colorClass = true
     health.colorReaction = true
@@ -5557,7 +5578,13 @@ local function CreatePowerBar(frame, unit, settings)
     end
     UnsnapTex(bg)
     power.bg = bg
-    ns.ApplyBarCornerMask(power)
+    power._euiOwner = frame
+    -- Detached power bars are outside the frame rect; see CreateBottomTextBar. The owner
+    -- still points at the frame so a texture swap resolves normally, the flag is what
+    -- keeps this bar's own textures out of the silhouette.
+    power._euiNoCorners = isDetached or nil
+    ns.TrackBarCornerTexture(power, bg)
+    ns.ApplyBarCornerMask(frame)
 
     -- Fill color is driven by the powerPercentPowerColor toggle; the gradient
     -- layers additively on top of the resolved custom/power-type color.
@@ -8389,6 +8416,10 @@ local function StyleSimpleFrame(frame, unit)
     PP.Point(bg, "BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
     bg:SetColorTexture(0, 0, 0, 0.5)
     health.bg = bg
+    -- Rounded corners are a FRAME silhouette, so every texture registers against the
+    -- owning unit frame rather than against its own bar.
+    health._euiOwner = frame
+    ns.TrackBarCornerTexture(frame, bg)
 
     health.colorClass = true
     health.colorReaction = true
@@ -8625,6 +8656,10 @@ local function StylePetFrame(frame, unit)
     PP.Point(bg, "BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
     bg:SetColorTexture(0, 0, 0, 0.5)
     health.bg = bg
+    -- Rounded corners are a FRAME silhouette, so every texture registers against the
+    -- owning unit frame rather than against its own bar.
+    health._euiOwner = frame
+    ns.TrackBarCornerTexture(frame, bg)
 
     health.colorReaction = true
     health.colorTapped = true
