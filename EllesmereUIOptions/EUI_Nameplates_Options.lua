@@ -10055,6 +10055,66 @@ initFrame:SetScript("OnEvent", function(self)
             darkenCogBtn:SetScript("OnClick", function(s) darkenCogShow(s) end)
         end
 
+        -- Enemy Name Text Reaction Color: colors the enemy nameplate NAME TEXT (not the
+        -- health bar) Hostile or Neutral to match the unit's reaction. Off by default. The
+        -- two inline swatches fall back to the Hostile/Neutral defaults until the player sets
+        -- their own, and are dimmed/mouse-disabled while the toggle is off -- same pattern as
+        -- the "Enable Quest Mob Color" inline swatch above.
+        local nameReactionRow
+        nameReactionRow, h = W:DualRow(parent, y,
+            { type="toggle", text="Color Name by Reaction",
+              getValue=function() return DBVal("enemyNameTextReactionColor") == true end,
+              setValue=function(v)
+                DB().enemyNameTextReactionColor = v
+                RefreshAllPlates()
+                EllesmereUI:RefreshPage()
+              end,
+              tooltip="Colors the enemy nameplate name text to match the unit's reaction (Hostile or Neutral) instead of the Enemy Name Text color." },
+            { type="label", text="" });  y = y - h
+
+        -- Inline Neutral/Hostile swatches next to the toggle, dimmed and mouse-disabled while off.
+        if not EllesmereUI._prebuilding then
+            local leftRgn = nameReactionRow._leftRegion
+            local isReactionOff = function() return DBVal("enemyNameTextReactionColor") ~= true end
+
+            local hostileGet = function()
+                local c = (DB() and DB().enemyNameHostileColor) or defaults.hostile
+                return c.r, c.g, c.b
+            end
+            local hostileSet = function(r, g, b)
+                DB().enemyNameHostileColor = { r = r, g = g, b = b }
+                RefreshAllPlates()
+            end
+            local hostileSwatch, updateHostileSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, hostileGet, hostileSet, nil, 20)
+            PP.Point(hostileSwatch, "RIGHT", leftRgn._control, "LEFT", -12, 0)
+
+            local neutralGet = function()
+                local c = (DB() and DB().enemyNameNeutralColor) or defaults.neutral
+                return c.r, c.g, c.b
+            end
+            local neutralSet = function(r, g, b)
+                DB().enemyNameNeutralColor = { r = r, g = g, b = b }
+                RefreshAllPlates()
+            end
+            local neutralSwatch, updateNeutralSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, neutralGet, neutralSet, nil, 20)
+            PP.Point(neutralSwatch, "RIGHT", hostileSwatch, "LEFT", -8, 0)
+
+            EllesmereUI.RegisterWidgetRefresh(function()
+                local off = isReactionOff()
+                hostileSwatch:SetAlpha(off and 0.15 or 1)
+                hostileSwatch:EnableMouse(not off)
+                updateHostileSwatch()
+                neutralSwatch:SetAlpha(off and 0.15 or 1)
+                neutralSwatch:EnableMouse(not off)
+                updateNeutralSwatch()
+            end)
+            local off = isReactionOff()
+            hostileSwatch:SetAlpha(off and 0.15 or 1)
+            hostileSwatch:EnableMouse(not off)
+            neutralSwatch:SetAlpha(off and 0.15 or 1)
+            neutralSwatch:EnableMouse(not off)
+        end
+
         _, h = W:Spacer(parent, y, 20);  y = y - h
 
         -----------------------------------------------------------------------

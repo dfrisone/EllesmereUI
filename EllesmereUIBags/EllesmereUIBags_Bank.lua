@@ -145,7 +145,7 @@ local function GetCharacterBankTabs()
                 if numSlots > 0 then
                     local icon = td.icon
                     if not icon or icon == 134400 then icon = GetFallbackIcon(bagID) end
-                    tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = td.name or ("Bank Tab " .. i), icon = icon, depositFlags = td.depositFlags or 0 }
+                    tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = td.name or EUI.Lf("Bank Tab %1$d", i), icon = icon, depositFlags = td.depositFlags or 0 }
                 end
             end
         end
@@ -153,7 +153,7 @@ local function GetCharacterBankTabs()
         for i, bagID in ipairs(CHARACTER_BANK_BAGS) do
             local numSlots = C_Container.GetContainerNumSlots(bagID)
             if numSlots > 0 then
-                tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = "Bank Tab " .. #tabs + 1, icon = GetFallbackIcon(bagID), depositFlags = 0 }
+                tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = EUI.Lf("Bank Tab %1$d", #tabs + 1), icon = GetFallbackIcon(bagID), depositFlags = 0 }
             end
         end
     end
@@ -178,7 +178,7 @@ local function GetWarbandBankTabs()
             if bagID then
                 local numSlots = C_Container.GetContainerNumSlots(bagID)
                 if numSlots > 0 then
-                    local name = td.name or ("Tab " .. i)
+                    local name = td.name or EUI.Lf("Tab %1$d", i)
                     local icon = td.icon
                     if not icon or icon == 134400 then icon = GetFallbackIcon(bagID) end
                     tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = EUI.L("Warbank") .. " " .. name, icon = icon, depositFlags = td.depositFlags or 0 }
@@ -189,7 +189,7 @@ local function GetWarbandBankTabs()
         for i, bagID in ipairs(WARBAND_BANK_BAGS) do
             local numSlots = C_Container.GetContainerNumSlots(bagID)
             if numSlots > 0 then
-                tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = EUI.L("Warbank") .. " Tab " .. #tabs + 1, icon = GetFallbackIcon(bagID), depositFlags = 0 }
+                tabs[#tabs + 1] = { bagID = bagID, numSlots = numSlots, name = EUI.L("Warbank") .. " " .. EUI.Lf("Tab %1$d", #tabs + 1), icon = GetFallbackIcon(bagID), depositFlags = 0 }
             end
         end
     end
@@ -796,7 +796,7 @@ local function EnsureBankTabConfigFrame()
         if parent.bankType and parent.tabId then
             local newName = bankTabNameEditBox:GetText()
             if not newName or newName == "" then
-                newName = parent.fallbackName or ("Tab " .. tostring(parent.tabId))
+                newName = parent.fallbackName or EUI.Lf("Tab %1$d", parent.tabId)
             end
 
             C_Bank.UpdateBankTabSettings(parent.bankType, parent.tabId, newName, parent.icon, parent.depositFlags or 0)

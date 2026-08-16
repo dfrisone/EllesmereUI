@@ -6089,7 +6089,7 @@ function EUI_BagsWindow:RefreshBags()
                 else
                     local bInvID = C_Container.ContainerIDToInventoryID(bagIdx)
                     local bLink = GetInventoryItemLink("player", bInvID)
-                    bName = bLink and GetItemInfo(bLink) or ("Bag " .. bagIdx)
+                    bName = bLink and GetItemInfo(bLink) or EUI.Lf("Bag %1$d", bagIdx)
                 end
                 local bTotal = C_Container.GetContainerNumSlots(bagIdx)
                 local bFree = C_Container.GetContainerNumFreeSlots(bagIdx)

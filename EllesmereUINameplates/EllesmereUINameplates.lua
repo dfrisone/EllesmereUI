@@ -259,6 +259,7 @@ local defaults = {
     hitboxScaleY = 100,
     nameplateYOffset = 0,
     enemyNameTextSize = 11,
+    enemyNameTextReactionColor = false,
     debuffTimerColor = { r = 1, g = 1, b = 1 },
     auraTextPosition = "topleft",
     debuffTimerPosition = "topleft",
@@ -4613,6 +4614,25 @@ local function ResolveNeutralColor(unit)
     local c = _C("neutral")
     return c.r, c.g, c.b
 end
+-- Enemy Name Text "Reaction Color" (EXTRAS toggle, default off): colors the name text
+-- Hostile or Neutral to match the unit's reaction, independent of the health-bar palette.
+-- Every NameplateFrame unit is an enemy (HideBlizzardFrame only suppresses Blizzard's frame
+-- on UnitCanAttack units), so only these two reactions are ever relevant here. Same
+-- reaction/UnitCanAttack idiom as the health-bar Neutral check below (GetReactionColor step 5)
+-- so a secret reaction read (identity-restricted units) falls through safely instead of erroring.
+local function GetEnemyNameReactionColor(unit)
+    local reaction = UnitReaction(unit, "player")
+    local isNeutral = (reaction and reaction == 4)
+        or (UnitCanAttack("player", unit) and not UnitIsEnemy(unit, "player"))
+    local db = p or defaults
+    local c
+    if isNeutral then
+        c = db.enemyNameNeutralColor or defaults.neutral
+    else
+        c = db.enemyNameHostileColor or defaults.hostile
+    end
+    return c.r, c.g, c.b
+end
 -- Blizzard's own plate for this unit, colored by untainted code. Under HideBlizzardFrame the
 -- UnitFrame keeps its unit and its events (only castBar is silenced), so its health bar still
 -- carries whatever CompactUnitFrame_UpdateHealthColor last resolved -- including the class
@@ -5330,6 +5350,12 @@ function NameplateFrame:ApplyAppearance()
         local nr, ng, nb = GetTextSlotColor(nameSlotKey)
         self.name:SetTextColor(nr, ng, nb, 1)
     end
+    -- Enemy Name Text "Reaction Color" cache: ApplyAppearance is a second writer of
+    -- self.name's color (the slot-color line above), so invalidate the skip-if-unchanged
+    -- cache here too -- otherwise a stale cache can wrongly skip re-applying the reaction
+    -- color on the very next UpdateHealthColor call (which always runs immediately after
+    -- this, from the same SetUnit), leaving the plate showing this slot color instead.
+    self._lastNameReactR, self._lastNameReactG, self._lastNameReactB = nil, nil, nil
     self:RefreshNamePosition()
     -- Cast text sizes, colors, and offsets
     local cns = (p and p.castNameSize) or defaults.castNameSize
@@ -6286,6 +6312,26 @@ function NameplateFrame:UpdateHealthColor()
     elseif hr ~= self._lastHCr or hg ~= self._lastHCg or hb ~= self._lastHCb then
         self._lastHCr, self._lastHCg, self._lastHCb = hr, hg, hb
         self.health:SetStatusBarColor(hr, hg, hb)
+    end
+    -- Enemy Name Text "Reaction Color" (EXTRAS toggle): zero cost while off (one field read),
+    -- other than the one-time restore below for a plate that was previously colored by this
+    -- feature. Piggybacks on this function's existing event-driven calls rather than
+    -- registering anything of its own.
+    if p and p.enemyNameTextReactionColor then
+        local nnr, nng, nnb = GetEnemyNameReactionColor(unit)
+        if nnr ~= self._lastNameReactR or nng ~= self._lastNameReactG or nnb ~= self._lastNameReactB then
+            self._lastNameReactR, self._lastNameReactG, self._lastNameReactB = nnr, nng, nnb
+            self.name:SetTextColor(nnr, nng, nnb, 1)
+        end
+    elseif self._lastNameReactR then
+        -- Toggled off after having been applied to this plate: restore the slot color
+        -- directly here rather than depending on ApplyAppearance re-running elsewhere.
+        self._lastNameReactR, self._lastNameReactG, self._lastNameReactB = nil, nil, nil
+        local nameSlotKey = ns.FindNameSlot()
+        if nameSlotKey then
+            local nr, ng, nb = GetTextSlotColor(nameSlotKey)
+            self.name:SetTextColor(nr, ng, nb, 1)
+        end
     end
     -- Near-aggro glow (Non-Tank Threat cog): ns._reactionNearAggro was written
     -- by the GetReactionColor call ABOVE (same decision that picked the color).

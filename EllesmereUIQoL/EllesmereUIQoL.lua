@@ -709,9 +709,10 @@ qolFrame:SetScript("OnEvent", function(self)
             trainBtn:SetScript("OnEnter", function(self)
                 local n, gold = TrainableSummary()
                 if n <= 0 then return end
-                local msg = string.format("Learn %d skill%s for %s",
-                    n, n == 1 and "" or "s",
-                    C_CurrencyInfo.GetCoinTextureString(gold))
+                local goldStr = C_CurrencyInfo.GetCoinTextureString(gold)
+                local msg = (n == 1)
+                    and EllesmereUI.Lf("Learn %1$d skill for %2$s", n, goldStr)
+                    or  EllesmereUI.Lf("Learn %1$d skills for %2$s", n, goldStr)
                 EllesmereUI.ShowWidgetTooltip(self, msg)
             end)
             trainBtn:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)

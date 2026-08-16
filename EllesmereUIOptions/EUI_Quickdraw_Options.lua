@@ -459,9 +459,9 @@ initFrame:SetScript("OnEvent", function(self)
                 local cap = ns.NestChildCap and ns.NestChildCap(editPalette)
                 local child = ns.ChildIndex(slot)
                 local kids = ns.ChildSlots and ns.ChildSlots(child, cap)
-                caption = ("nested action menu, %d %s"):format(
-                    kids and #kids or 0,
-                    (kids and #kids == 1) and "entry" or "entries")
+                caption = (kids and #kids == 1)
+                    and EllesmereUI.Lf("nested action menu, %1$d entry", 1)
+                    or  EllesmereUI.Lf("nested action menu, %1$d entries", kids and #kids or 0)
                 -- Said where the user meets it, rather than left to be
                 -- discovered by counting the entries that turned up: a menu
                 -- holding more than the halo can show looks broken otherwise.
@@ -2522,11 +2522,11 @@ initFrame:SetScript("OnEvent", function(self)
             -- Right-click means two different things on a plainMouse picker
             -- depending on whether it is armed, so it has to say which.
             local tip = plainMouse
-                and "Left-click to set a keybind, then press any key or\n"
+                and EllesmereUI.L("Left-click to set a keybind, then press any key or\n"
                     .. "click any mouse button to use it.\n"
-                    .. "Escape cancels. Right-click here to unbind."
-                or "Left-click to set a keybind.\nRight-click to unbind."
-            if intro then tip = intro .. "\n\n" .. tip end
+                    .. "Escape cancels. Right-click here to unbind.")
+                or EllesmereUI.L("Left-click to set a keybind.\nRight-click to unbind.")
+            if intro then tip = EllesmereUI.L(intro) .. "\n\n" .. tip end
             EllesmereUI.ShowWidgetTooltip(self, tip)
         end)
         kbBtn:SetScript("OnLeave", function()
