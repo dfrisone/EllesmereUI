@@ -216,6 +216,9 @@ local defaults = {
         portraitStyle = "attached",
         healthBarTexture = "none",
         darkTheme = false,
+        -- Rounded corners on the health/power bars and their absorb overlays.
+        -- Global, default off: costs nothing until enabled (see ns.ApplyBarCornerMask).
+        roundedBarCorners = false,
         -- One decimal on abbreviated values (240.5k) and percents (77.3%); global, read by text tags via _G flags.
         showDecimalOnText = false,
         -- With decimals on, boss frames use two (240.55k / 77.30%); inline cog on "Show Decimal on Health Text".
@@ -1249,6 +1252,7 @@ local function ApplyHealthBarTexture(health, unitKey, texKeyOverride)
     if hFill then UnsnapTex(hFill) end
     -- The swap replaced the fill object; re-derive rotation for the bar's axis.
     ns.ApplyFillRotation(health)
+    ns.ApplyBarCornerMask(health)
 
     -- Power bar: same texture. Walk up from health to find the oUF frame
     -- (health may be parented to a clip container, not the oUF frame directly).
@@ -1265,6 +1269,7 @@ local function ApplyHealthBarTexture(health, unitKey, texKeyOverride)
         end
         local pFill = power:GetStatusBarTexture()
         if pFill then UnsnapTex(pFill) end
+        ns.ApplyBarCornerMask(power)
     end
 end
 
@@ -4395,6 +4400,46 @@ function ns.ApplyHealthOrientation(bar, settings)
     return vert
 end
 
+-- Rounded bar corners (opt-in, global). ONE mask object per bar is shared by the
+-- fill, the background and every absorb overlay, so no texture ever carries more
+-- than one mask: the engine caps a texture at 3 and the 4th AddMaskTexture throws
+-- rather than no-opping, which would abort whoever was mid-layout.
+--
+-- The wrap arguments are load-bearing. A mask left on the default wrap clamps its
+-- edge texel outward, so a white mask smaller than its target clips nothing at all.
+function ns.ApplyBarCornerMask(bar)
+    if not bar then return end
+    local on = db.profile.roundedBarCorners and true or false
+    local mask = bar._barMask
+    if not mask then
+        -- Nothing is created while the option is off, so a disabled profile pays
+        -- nothing. CreateAbsorbBar makes its own no-op mask when it gets there first.
+        if not on then return end
+        mask = bar:CreateMaskTexture()
+        mask:SetAllPoints(bar)
+        bar._barMask = mask
+    end
+    if on then
+        mask:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\portraits\\csquare_mask.tga",
+            "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    else
+        -- White + default wrap is a no-op mask, which is what the absorb overlays
+        -- have always run with; leaving it attached keeps their setup untouched.
+        mask:SetTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    -- Remove before add, AddMaskTexture is additive. Never gate this on
+    -- GetNumMaskTextures: it returns a secret for the Hierarchy aspect.
+    local fill = bar:GetStatusBarTexture()
+    if fill then
+        pcall(fill.RemoveMaskTexture, fill, mask)
+        if on then fill:AddMaskTexture(mask) end
+    end
+    if bar.bg then
+        pcall(bar.bg.RemoveMaskTexture, bar.bg, mask)
+        if on then bar.bg:AddMaskTexture(mask) end
+    end
+end
+
 local function CreateHealthBar(frame, unit, height, xOffset, settings, rightInset)
     height = height or settings.healthHeight
     xOffset = xOffset or 0
@@ -4924,12 +4969,18 @@ local function CreateAbsorbBar(frame, unit, settings)
 
     local hpBar = frame.Health
 
-    -- Mask texture: constrains absorb rendering to exact health bar bounds at the
-    -- GPU level, preventing the subpixel bleed where absorb textures extend 1px
-    -- outside the health bar at some frame positions.
-    local absorbMask = hpBar:CreateMaskTexture()
-    absorbMask:SetAllPoints(hpBar)
-    absorbMask:SetTexture("Interface\\Buttons\\WHITE8X8")
+    -- Shared with the health fill and background (ns.ApplyBarCornerMask): one mask
+    -- object across every texture keeps each one at 1 of the engine's 3-mask cap,
+    -- and lets Rounded Bar Corners round the absorb overlays at no extra cost.
+    -- On WHITE8X8 with the default wrap this mask is a no-op; what actually holds
+    -- the absorbs inside the bar is curClip/missClip below.
+    local absorbMask = hpBar._barMask
+    if not absorbMask then
+        absorbMask = hpBar:CreateMaskTexture()
+        absorbMask:SetAllPoints(hpBar)
+        absorbMask:SetTexture("Interface\\Buttons\\WHITE8X8")
+        hpBar._barMask = absorbMask
+    end
 
     -- Reverse fill: when health fills right-to-left, mirror all absorb anchors.
     local isReversed = settings.healthReverseFill and true or false
@@ -5453,6 +5504,7 @@ local function CreatePowerBar(frame, unit, settings)
     end
     UnsnapTex(bg)
     power.bg = bg
+    ns.ApplyBarCornerMask(power)
 
     -- Fill color is driven by the powerPercentPowerColor toggle; the gradient
     -- layers additively on top of the resolved custom/power-type color.

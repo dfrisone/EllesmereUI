@@ -5316,7 +5316,15 @@ initFrame:SetScript("OnEvent", function(self)
                   db.profile.showNicknames = v
                   if ns.RefreshAllUnitNames then ns.RefreshAllUnitNames() end
               end },
-            { type="label", text="" });  y = y - h
+            -- Rounded Bar Corners: also ONE global toggle (default OFF). Masks the health
+            -- and power fill, background and absorb overlays (ns.ApplyBarCornerMask).
+            { type="toggle", text="Rounded Bar Corners",
+              tooltip="Round the corners of the health and power bars on your main frames. Off by default.",
+              getValue=function() return db.profile.roundedBarCorners or false end,
+              setValue=function(v)
+                  db.profile.roundedBarCorners = v
+                  ReloadAndUpdate(); UpdatePreview(); EllesmereUI:RefreshPage()
+              end });  y = y - h
 
         _, h = W:Spacer(parent, y, 20); y = y - h
 
