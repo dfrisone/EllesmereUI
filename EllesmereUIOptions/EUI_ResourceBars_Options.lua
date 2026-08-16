@@ -7562,6 +7562,48 @@ initFrame:SetScript("OnEvent", function(self)
             })
             MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
         end
+        -- Inline direction cog on "Expand Power Bar if No Resource". "Auto" reads
+        -- the class resource bar's stored position, which specs that never draw
+        -- one (Warrior, Rogue, BM/MM Hunter) cannot show the user -- so the
+        -- direction is also settable outright.
+        if not EllesmereUI._prebuilding then
+            local rgn = shiftResRow._rightRegion
+            local function HeightMatched()
+                return (EllesmereUI.GetHeightMatchTarget and EllesmereUI.GetHeightMatchTarget("ERB_Power")) and true or false
+            end
+            local function ExpandOff()
+                local p = DB()
+                if not p or not p.primary.enabled or not p.primary.expandIfNoResource then return true end
+                return HeightMatched()
+            end
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Expand Direction",
+                rows = {
+                    { type = "dropdown", label = "Expand Direction",
+                      tooltip = "Which way the power bar grows into the empty class resource slot. Auto grows toward wherever the class resource bar is positioned.",
+                      values = { Auto = "Auto", Up = "Up", Down = "Down" },
+                      order = { "Auto", "Up", "Down" },
+                      disabled = ExpandOff,
+                      -- Existing keys only, so this adds no translation work.
+                      disabledTooltip = function()
+                          if HeightMatched() then
+                              return "This option can't be used while you have the Power Bar Height Matched in the Unlock Mode."
+                          end
+                          local p = DB()
+                          if p and not p.primary.enabled then return "Power Bar" end
+                          return "Expand Power Bar if No Resource"
+                      end,
+                      rawTooltip = HeightMatched,
+                      get = function() local p = DB(); return (p and p.primary.expandIfNoResourceDir) or "Auto" end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.primary.expandIfNoResourceDir = v
+                          Refresh()
+                      end },
+                },
+            })
+            MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
+        end
 
         -- Row 5: Shift Elements if No Power | (blank)
         local shiftPowRow

@@ -1182,6 +1182,12 @@ local DEFAULTS = {
             hashWidth   = 1,
             hashColorR  = 1, hashColorG = 1, hashColorB = 1, hashColorA = 0.7,
             expandIfNoResource = false,
+            -- Direction the expand grows in. "Auto" infers it from where the class
+            -- resource bar sits (the only behaviour before this key existed, so
+            -- existing profiles are unchanged); "Up"/"Down" force it. Needed
+            -- because the inferred answer reads a bar that specs without a class
+            -- resource never draw, leaving the user nothing visible to move.
+            expandIfNoResourceDir = "Auto",
             -- Shift elements anchored to the power bar when the spec has no primary
             -- power (e.g. BM/MM Hunter, Focus shows as class resource). "None"/"Up"/
             -- "Down", visual-only.
@@ -2491,6 +2497,13 @@ end
 -- expanding into a toggled-off/spec-disabled one grows the right way. Falls back
 -- to +1 (default layout has it above) with no config or when co-located.
 local function ResolveExpandDirSign(pp, sp)
+    -- Explicit "Expand Direction" wins over every inferred rule below. The
+    -- inference is only as discoverable as the class resource bar's position,
+    -- and a spec that never draws that bar (Warrior, Rogue, BM/MM Hunter) gives
+    -- the user nothing on screen to move -- hence the manual override.
+    local forced = pp and pp.expandIfNoResourceDir
+    if forced == "Up" then return 1 end
+    if forced == "Down" then return -1 end
     if not sp then return 1 end
     -- Anchored: class resource pinned relative to the power bar.
     if NormalizeAnchorKey(sp.anchorTo) == "erb_powerbar" then
@@ -2506,6 +2519,25 @@ local function ResolveExpandDirSign(pp, sp)
     local sy, py = BarEffectiveY(sp), BarEffectiveY(pp)
     if sy > py then return 1 elseif sy < py then return -1 end
     return 1
+end
+
+-- Extra Y for an ANCHORED expanding power bar. Its anchor edge already fixes a
+-- growth direction (top-anchored grows up, bottom-anchored grows down,
+-- left/right grow centered on the edge), so only an EXPLICIT "Expand Direction"
+-- moves the frame, by the gap between what was asked for and what the edge
+-- does. "Auto" returns 0, leaving every anchored layout exactly as it was.
+-- Horizontal bars only: a vertical power bar spends its height along X, so a Y
+-- nudge would just shove it off its anchor.
+local function ExpandAnchorNudge(pp, delta, orientation)
+    if (orientation or "HORIZONTAL") ~= "HORIZONTAL" then return 0 end
+    local want
+    if pp.expandIfNoResourceDir == "Up" then want = 1
+    elseif pp.expandIfNoResourceDir == "Down" then want = -1
+    else return 0 end
+    local natural = 0
+    if pp.anchorPosition == "top" then natural = 1
+    elseif pp.anchorPosition == "bottom" then natural = -1 end
+    return (want - natural) * delta * 0.5
 end
 
 -- ApplyBarAnchor args: frame to position; anchorKey = anchorTo value; anchorPos
@@ -3156,6 +3188,9 @@ local function BuildBars()
         elseif primaryAnchorKey ~= "none" then
             local ow, oh = OrientedSize(ppWidth, ppHeight, ppOri)
             local offsetX, offsetY = GetAnchorOffsets(pp)
+            if ppExpandDelta > 0 then
+                offsetY = offsetY + ExpandAnchorNudge(pp, ppExpandDelta, ppOri)
+            end
             primaryBar:SetSize(ow, oh)
             if not ApplyBarAnchor(primaryBar, primaryAnchorKey, pp.anchorPosition, offsetX, offsetY, pp.growthDirection, pp.growCentered) then
                 ApplyFreeBarPosition(primaryBar, pp, 0, -54, ow, oh)
@@ -3211,8 +3246,9 @@ local function BuildBars()
         end
         -- expandIfNoResource grows the power bar toward the class resource (above
         -- ->up, below->down) via ppDirSign/ResolveExpandDirSign for the free and
-        -- dragged branches above; anchorTo/unlock-anchored branches grow per their
-        -- own anchor edge.
+        -- dragged branches above; anchorTo branches grow per their own anchor edge
+        -- unless "Expand Direction" is set explicitly (ExpandAnchorNudge).
+        -- Unlock-anchored bars are owned by the anchor system and are unaffected.
         primaryBar:ApplyBorder(pp.borderSize, pp.borderR, pp.borderG, pp.borderB, pp.borderA, pp.borderTexture, pp.borderTextureOffset, pp.borderTextureOffsetY, pp.borderTextureShiftX, pp.borderTextureShiftY, "resourcebars", pp.borderSize, pp.borderBehind)
 
         -- Bar texture (must be applied before colors since SetStatusBarTexture resets vertex color)
