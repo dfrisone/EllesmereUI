@@ -4499,6 +4499,100 @@ function ns.TrackBarCornerTexture(owner, tex)
     ns.ApplyBarCornerTexture(owner, tex)
 end
 
+-- Rounded border corners. PP.CreateBorder draws 4 straight strips, so masking them to
+-- the silhouette clips the square corner away but leaves a GAP: there is no art on the
+-- curve. These quarter-ring textures fill it.
+--
+-- The stroke cannot be baked into the art at an absolute pixel width. The corner radius
+-- tracks frame height (a cap mask must span the full height, and four independent corner
+-- masks would need 4 of the engine's 3 mask slots), so the arcs are authored with the
+-- stroke as a FRACTION of the radius and the nearest fraction to borderSize/radius is
+-- chosen at runtime. Thickness is therefore approximate, within roughly 15% of the
+-- setting, and drifts furthest on very tall frames with a thick border.
+local ARC_FRACS = { 0.04, 0.055, 0.07, 0.09, 0.12, 0.15, 0.19, 0.25, 0.33, 0.45 }
+local CAP_RADII = { 4, 8, 12, 16, 20, 24, 28, 32 }
+local ARC_CORNERS = {
+    { "TOPLEFT",     0, 1, 0, 1 },
+    { "TOPRIGHT",    1, 0, 0, 1 },
+    { "BOTTOMLEFT",  0, 1, 1, 0 },
+    { "BOTTOMRIGHT", 1, 0, 1, 0 },
+}
+
+function ns.ApplyFrameCornerArcs(frame)
+    if not frame then return end
+    local bf = frame.unifiedBorder
+    if not bf then return end
+    -- Textured borders run through BackdropTemplate instead of the 4 strips and have no
+    -- container to hang arcs on; leave those alone.
+    local container = EllesmereUI.PP and EllesmereUI.PP.GetBorders and EllesmereUI.PP.GetBorders(bf)
+    if not container then return end
+
+    local arcs = frame._cornerArcs
+    local on = db.profile.roundedBarCorners and true or false
+    if not on then
+        if arcs then for i = 1, #arcs do arcs[i]:Hide() end end
+        return
+    end
+
+    -- Clip the straight strips to the silhouette so their square corners go away.
+    for _, k in ipairs({ "_top", "_bottom", "_left", "_right" }) do
+        if container[k] then ns.TrackBarCornerTexture(frame, container[k]) end
+    end
+
+    local h = frame:GetHeight() or 0
+    if h < 2 then h = 2 end
+    local step = db.profile.barCornerRoundness or 5
+    if step < 1 then step = 1 elseif step > 8 then step = 8 end
+    local radius = (CAP_RADII[step] or 20) * h / 64
+    if radius < 1 then radius = 1 end
+
+    -- Strip height IS the border size, so the arc never disagrees with the live border.
+    local thickness = (container._top and container._top:GetHeight()) or 1
+    if thickness < 1 then thickness = 1 end
+    local want, best, bestD = thickness / radius, 1, math.huge
+    for i = 1, #ARC_FRACS do
+        local d = math.abs(ARC_FRACS[i] - want)
+        if d < bestD then best, bestD = i, d end
+    end
+    local path = "Interface\\AddOns\\EllesmereUI\\media\\textures\\barcaps\\arc-" .. best .. ".tga"
+
+    -- _bdColor aliases PP's live border color table, and PP only ever caches a CLEAN
+    -- color there (secret components skip the cache and mark it dirty), so nothing secret
+    -- can reach SetVertexColor through this path.
+    local c = container._bdColor
+    local cr, cg, cb, ca = 0, 0, 0, 1
+    if c then cr, cg, cb, ca = c[1] or 0, c[2] or 0, c[3] or 0, c[4] or 1 end
+
+    if not arcs then arcs = {}; frame._cornerArcs = arcs end
+    for i = 1, #ARC_CORNERS do
+        local def = ARC_CORNERS[i]
+        local t = arcs[i]
+        if not t then
+            t = container:CreateTexture(nil, "OVERLAY", nil, 7)
+            EllesmereUI.PP.DisablePixelSnap(t)
+            arcs[i] = t
+        end
+        t:ClearAllPoints()
+        t:SetPoint(def[1], container, def[1], 0, 0)
+        t:SetSize(radius, radius)
+        t:SetTexture(path)
+        t:SetTexCoord(def[2], def[3], def[4], def[5])
+        t:SetVertexColor(cr, cg, cb, ca)
+        t:Show()
+    end
+end
+
+-- Repaint the arcs after a border color change (hover in/out, threat, spec overrides).
+function ns.RefreshFrameCornerArcColor(frame)
+    local arcs = frame and frame._cornerArcs
+    if not arcs then return end
+    local bf = frame.unifiedBorder
+    local container = bf and EllesmereUI.PP and EllesmereUI.PP.GetBorders and EllesmereUI.PP.GetBorders(bf)
+    local c = container and container._bdColor
+    if not c then return end
+    for i = 1, #arcs do arcs[i]:SetVertexColor(c[1] or 0, c[2] or 0, c[3] or 0, c[4] or 1) end
+end
+
 function ns.ApplyBarCornerMask(owner)
     owner = CornerOwner(owner)
     if not owner then return end
@@ -4513,6 +4607,7 @@ function ns.ApplyBarCornerMask(owner)
     if list then
         for i = 1, #list do ns.ApplyBarCornerTexture(owner, list[i]) end
     end
+    ns.ApplyFrameCornerArcs(owner)
 end
 
 local function CreateHealthBar(frame, unit, height, xOffset, settings, rightInset)
@@ -6974,6 +7069,7 @@ ns.ApplyBossBorderState = function(self)
         r, g, b, a = c.r, c.g, c.b, s.borderAlpha or 1
     end
     EllesmereUI.SetBorderStyleColor(self.unifiedBorder, r, g, b, a)
+    ns.RefreshFrameCornerArcColor(self)
 end
 
 local function FrameBorderEnter(self)
@@ -6995,6 +7091,7 @@ local function FrameBorderEnter(self)
     local hc = settings.highlightColor or { r = 1, g = 1, b = 1 }
     local ha = settings.highlightAlpha or 1
     EllesmereUI.SetBorderStyleColor(self.unifiedBorder, hc.r, hc.g, hc.b, ha)
+    ns.RefreshFrameCornerArcColor(self)
 end
 local function FrameBorderLeave(self)
     if not self.unifiedBorder then return end
@@ -7009,6 +7106,7 @@ local function FrameBorderLeave(self)
     local bc = settings.borderColor or { r = 0, g = 0, b = 0 }
     local ba = settings.borderAlpha or 1
     EllesmereUI.SetBorderStyleColor(self.unifiedBorder, bc.r, bc.g, bc.b, ba)
+    ns.RefreshFrameCornerArcColor(self)
 end
 
 -- Unified border for unit frames using the PP border system
