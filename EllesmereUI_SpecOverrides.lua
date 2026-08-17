@@ -7198,6 +7198,38 @@ local function BuildListRow(parent, y, entry)
             end
         end
     end
+    -- A conditional entry whose fkey a SPEC override also owns never applies at
+    -- runtime: Cond.WriteValues skips spec-owned fkeys outside an editing session
+    -- (the forSession gate), so the value shows while the session is open and is
+    -- dropped the moment it closes. The row otherwise reads as live while doing
+    -- nothing, which is the whole reason this is hard to diagnose -- name the
+    -- owner instead of leaving the eviction silent.
+    if isCondEntry then
+        local ownerEntry
+        for fkey in pairs(entry.values and entry.values.default or {}) do
+            ownerEntry = EntryOwning(fkey)
+            if ownerEntry then break end
+        end
+        if ownerEntry then
+            local og = GroupById(ownerEntry.group)
+            local warn = EllesmereUI.MakeFont(row, 11, nil, 1, 0.45, 0.45, 0.85)
+            warn:SetPoint("LEFT", crumb, "RIGHT", 10, 0)
+            warn:SetText(string.format(L("held by '%s'"), (og and og.name) or "?"))
+            local hit = CreateFrame("Frame", nil, row)
+            hit:SetAllPoints(warn)
+            hit:EnableMouse(true)
+            hit:SetScript("OnEnter", function(self)
+                if EllesmereUI.ShowWidgetTooltip then
+                    EllesmereUI.ShowWidgetTooltip(self,
+                        L("A spec override owns this setting, so this conditional value never applies outside an editing session. Remove the spec override to let it through."))
+                end
+            end)
+            hit:SetScript("OnLeave", function()
+                if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip() end
+            end)
+        end
+    end
+
     local rm, rmBrd = MakeBtn("Remove Override", -20, 116)
     rm:SetScript("OnEnter", function() if rmBrd and rmBrd.SetColor then rmBrd:SetColor(1, 0.35, 0.35, 0.8) end end)
     rm:SetScript("OnLeave", function() if rmBrd and rmBrd.SetColor then rmBrd:SetColor(1, 1, 1, 0.22) end end)
