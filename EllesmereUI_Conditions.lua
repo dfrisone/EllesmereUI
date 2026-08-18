@@ -146,6 +146,16 @@ function EllesmereUI.Conditions_ActiveGroup()
         end
         return nil  -- in an instance: solo never applies
     end
+    -- Tier 3.5: raid group outside any instance. Open-world Raid Finder /
+    -- Story-mode scaling converts the party to a raid without ever setting
+    -- an instance type, so Tier 3 above never sees it. Party-only groups
+    -- get no equivalent here -- only raid conversion was reported blind.
+    if IsInRaid() then
+        for _, g in ipairs(groups) do
+            if g.conds and g.conds.raid then return g end
+        end
+        return nil  -- raid group: solo never applies
+    end
     -- Tier 4: solo.
     if not IsInGroup() then
         for _, g in ipairs(groups) do
