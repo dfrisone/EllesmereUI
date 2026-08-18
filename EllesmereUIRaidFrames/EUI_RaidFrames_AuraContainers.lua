@@ -2800,6 +2800,12 @@ local function CreateButtonShells(button, health, d)
         -- health-bar decorations (dispel overlay, shields) and text; the
         -- containers default far lower. Children keep relative levels.
         c:SetFrameLevel(button:GetFrameLevel() + (ns.LVL_AURA or 13))
+        -- Stay hidden until the queued finish job anchors and sizes this container
+        -- (QueueDebuffPhase): an adopted header-born container carries Blizzard's own
+        -- default geometry, and a freshly built one is born centered on the health bar
+        -- at 1x1 -- either is a real, wrong-looking rect if content streams in before
+        -- the anchor job runs, which a busy combat-only queue can delay noticeably.
+        c:Hide()
         d.rfcDebuffShell = c
         d.rfcDebuffGroups = {}
     end
@@ -2927,6 +2933,7 @@ local function QueueDebuffPhase(button, health, d)
         if sNow then
             AnchorDebuffContainer(c, health, sNow)
             ApplyDebuffConfig(c, d, sNow)
+            c:Show()
         end
     end, "rf:debuff-finish")
 end
