@@ -2287,7 +2287,9 @@ ns.ResolveUnitNameColor = function(unit)
     if UnitIsPlayer(unit) or (UnitInPartyIsAI and UnitInPartyIsAI(unit)) then
         local _, class = UnitClass(unit)
         if not issecretvalue(class) and class then
-            local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
+            -- Custom class colors and Class Color Darken are never written back to
+            -- RAID_CLASS_COLORS (taint), so a raw read of it ignores the user's palette.
+            local c = EllesmereUI.GetClassColor(class)
             if c then return c.r, c.g, c.b end
         end
         return nil
@@ -2768,6 +2770,22 @@ local function GetSettingsForUnit(unit)
         end
     end
     return unitSettingsMap[unit] or db.profile.player
+end
+
+-- Text zones resolve their class color at apply time (plus the target/focus and boss
+-- switch handlers), so a palette edit stays unpainted until the next target change.
+-- ApplyColorsToOUF is the suite's "colors changed" chokepoint.
+if EllesmereUI and hooksecurefunc then
+    hooksecurefunc(EllesmereUI, "ApplyColorsToOUF", function()
+        for unit, frame in pairs(frames) do
+            if type(frame) == "table" then
+                local s = GetSettingsForUnit(unit)
+                if frame._applyTextPositions then frame._applyTextPositions(s) end
+                local btb = frame._btb
+                if btb and btb._applyBTBTextPositions then btb._applyBTBTextPositions(s) end
+            end
+        end
+    end)
 end
 
 -- Per-unit frame source resolver. Returns "eui" (spawn skinned frame, default),
@@ -3738,7 +3756,7 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
             -- Dark mode: always the player's own class color.
             local _, classToken = UnitClass("player")
             if classToken then
-                local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[classToken]
+                local c = EllesmereUI.GetClassColor(classToken)
                 if c then bR, bG, bB = c.r, c.g, c.b end
             end
         elseif unitToken and UnitExists(unitToken) then
@@ -3746,7 +3764,7 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
             -- for NPCs, tapped grey).
             local _, classToken = UnitClass(unitToken)
             if UnitIsPlayer(unitToken) and not issecretvalue(classToken) and classToken then
-                local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[classToken]
+                local c = EllesmereUI.GetClassColor(classToken)
                 if c then bR, bG, bB = c.r, c.g, c.b end
             elseif UnitIsTapDenied and UnitIsTapDenied(unitToken) then
                 bR, bG, bB = 0.6, 0.6, 0.6
@@ -3764,7 +3782,7 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
             -- Fallback: player class color.
             local _, classToken = UnitClass("player")
             if classToken then
-                local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[classToken]
+                local c = EllesmereUI.GetClassColor(classToken)
                 if c then bR, bG, bB = c.r, c.g, c.b end
             end
         end
