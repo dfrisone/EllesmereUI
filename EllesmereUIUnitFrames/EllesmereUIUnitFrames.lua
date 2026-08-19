@@ -5265,6 +5265,33 @@ local function CreateAbsorbBar(frame, unit, settings)
                 absorbAmt = (UnitGetTotalAbsorbs and UnitGetTotalAbsorbs(updUnit)) or 0
             end
 
+            -- A shield lost to its own duration, rather than spent by damage, can leave
+            -- Blizzard's removal notification unsent: neither UNIT_ABSORB_AMOUNT_CHANGED
+            -- nor UNIT_AURA is guaranteed to fire at the exact moment, confirmed live with
+            -- a diagnostic build -- the true total was already zero while nothing told us,
+            -- and the stale reading only cleared on the unit's NEXT unrelated aura change.
+            -- One debounced recheck per shield closes that gap without polling: the first
+            -- update that shows a live absorb arms a single 1s timer; a normal event
+            -- reaching true zero in the meantime needs no help and the timer simply finds
+            -- nothing left to do. The recheck's own repaint is tagged so it never re-arms
+            -- itself, capping this at exactly one extra check per shield, not a loop.
+            if event ~= "AbsorbRecheck" then
+                if absorbAmt and absorbAmt > 0 then
+                    if not ab._absorbRecheckPending then
+                        ab._absorbRecheckPending = true
+                        C_Timer.After(1, function()
+                            ab._absorbRecheckPending = nil
+                            if self.unit == updUnit and self:IsShown() then
+                                local ov = self.HealthPrediction and self.HealthPrediction.Override
+                                if ov then ov(self, "AbsorbRecheck", updUnit) end
+                            end
+                        end)
+                    end
+                else
+                    ab._absorbRecheckPending = nil
+                end
+            end
+
             -- Keep bars sized to the health bar every update.
             local hpW, hpH = hp:GetWidth(), hp:GetHeight()
             ab:SetWidth(hpW); ab:SetHeight(hpH)
