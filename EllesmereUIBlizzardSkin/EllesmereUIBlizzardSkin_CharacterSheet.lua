@@ -16,17 +16,18 @@ local function GetFFD(frame)
     return d
 end
 
-local function GetTotalDurabilityPercent()
-    local curTotal, maxTotal = 0, 0
+-- Same reading as the Chat sidebar icon and the DataBars block: the LOWEST
+-- percent across equipped slots 1-18 (the weakest item), floored.
+local function GetDurabilityPercent()
+    local lowest = 100
     for slotId = 1, 18 do
         local cur, mx = GetInventoryItemDurability(slotId)
         if cur and mx and mx > 0 then
-            curTotal = curTotal + cur
-            maxTotal = maxTotal + mx
+            local pct = cur / mx * 100
+            if pct < lowest then lowest = pct end
         end
     end
-    if maxTotal <= 0 then return 100 end
-    return curTotal / maxTotal * 100
+    return math.floor(lowest)
 end
 
 local function GetDurabilityTextColor(pct)
@@ -37,11 +38,10 @@ local function GetDurabilityTextColor(pct)
 end
 
 local function FormatDurabilityText(pct, showLabel)
-    local pctStr = string.format("%d%%", math.floor(pct + 0.5))
     if showLabel then
-        return L("Durability") .. ": " .. pctStr
+        return L("Durability") .. ": " .. pct .. "%"
     end
-    return pctStr
+    return pct .. "%"
 end
 
 -- "gear" = the 16 slots with ilvl/enchants/sockets.
@@ -1378,31 +1378,49 @@ local function SkinCharacterSheet()
         end
     end
 
-    local function UpdateDurabilityDisplay()
-        local ffd = GetFFD(frame)
-        local modelLabel = ffd.durabilityModelLabel
-        local headerLabel = ffd.durabilityHeaderLabel
-        local footerLabel = ffd.durabilityFooterLabel or ffd.durabilityTitleLabel
-        local overlay = ffd.durabilityOverlay
+    -- Labels are created once above (model/footer at skin time, header just
+    -- above); the ffd handle is stable, so no per-call lookups or closures.
+    local durFfd = GetFFD(frame)
+    local function HideAllDurabilityLabels()
+        if durFfd.durabilityModelLabel then durFfd.durabilityModelLabel:Hide() end
+        if durFfd.durabilityHeaderLabel then durFfd.durabilityHeaderLabel:Hide() end
+        if durFfd.durabilityFooterLabel then durFfd.durabilityFooterLabel:Hide() end
+        if durFfd.durabilityOverlay then durFfd.durabilityOverlay:Hide() end
+    end
 
-        local function HideAllDurabilityLabels()
-            if modelLabel then modelLabel:Hide() end
-            if headerLabel then headerLabel:Hide() end
-            if footerLabel then footerLabel:Hide() end
-            if overlay then overlay:Hide() end
+    -- Zero cost while off or closed: the durability event is registered only
+    -- while the feature is enabled AND the sheet is shown (OnShow/OnHide +
+    -- the options toggle re-sync); the OnShow pass paints the first value.
+    local durEvents
+    local UpdateDurabilityDisplay
+    local function SyncDurabilityEvents()
+        local want = EllesmereUIDB and EllesmereUIDB.showCharSheetDurability and frame:IsShown()
+        if want then
+            if not durEvents then
+                durEvents = CreateFrame("Frame")
+                durEvents:SetScript("OnEvent", function() UpdateDurabilityDisplay() end)
+            end
+            durEvents:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
+        elseif durEvents then
+            durEvents:UnregisterEvent("UPDATE_INVENTORY_DURABILITY")
         end
+    end
 
-        local enabled = EllesmereUIDB and EllesmereUIDB.showCharSheetDurability
-        local isCharTab = PaperDollFrame and PaperDollFrame:IsShown()
-        if not enabled or not isCharTab then
+    UpdateDurabilityDisplay = function()
+        SyncDurabilityEvents()
+        if not (EllesmereUIDB and EllesmereUIDB.showCharSheetDurability)
+            or not (PaperDollFrame and PaperDollFrame:IsShown()) then
             HideAllDurabilityLabels()
             return
         end
 
-        local location = (EllesmereUIDB and EllesmereUIDB.charSheetDurabilityLocation) or "model"
-        if location == "title" then location = "footer" end
-        local showLabel = not EllesmereUIDB or EllesmereUIDB.charSheetDurabilityShowLabel ~= false
-        local pct = GetTotalDurabilityPercent()
+        local modelLabel = durFfd.durabilityModelLabel
+        local headerLabel = durFfd.durabilityHeaderLabel
+        local footerLabel = durFfd.durabilityFooterLabel
+        local overlay = durFfd.durabilityOverlay
+        local location = EllesmereUIDB.charSheetDurabilityLocation or "model"
+        local showLabel = EllesmereUIDB.charSheetDurabilityShowLabel ~= false
+        local pct = GetDurabilityPercent()
         local r, g, b = GetDurabilityTextColor(pct)
         local text = FormatDurabilityText(pct, showLabel)
 
@@ -1432,14 +1450,9 @@ local function SkinCharacterSheet()
 
     EllesmereUI._updateCharSheetDurability = UpdateDurabilityDisplay
 
-    if not GetFFD(frame).durabilityEvents then
-        local durEvents = CreateFrame("Frame")
-        durEvents:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
-        durEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
-        durEvents:SetScript("OnEvent", UpdateDurabilityDisplay)
-        GetFFD(frame).durabilityEvents = durEvents
-        frame:HookScript("OnShow", UpdateDurabilityDisplay)
-    end
+    -- SkinCharacterSheet runs once (guarded), so these hooks install once.
+    frame:HookScript("OnShow", UpdateDurabilityDisplay)
+    frame:HookScript("OnHide", SyncDurabilityEvents)
 
     UpdateDurabilityDisplay()
 

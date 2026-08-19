@@ -100,11 +100,18 @@ local function BuildRuleDurationFormatter(withSecondsUnit, preciseThreshold)
         { threshold = 3600,  format = "%dh", step = 1, rounding = Down, components = { { div = 3600 } } },
         { threshold = 86400, format = "%dd", step = 1, rounding = Down, components = { { div = 86400 } } },
     }
-    if preciseThreshold and preciseThreshold > 0 then
-        -- Below the selected threshold, use a clock-style value such as 5:23.
-        -- Starting at zero also gives useful precision for durations under a minute.
+    -- > 60, not > 0: with the threshold at exactly one minute the m:ss band is
+    -- empty and the table would carry duplicate 60-thresholds -- the standard
+    -- table renders identically there.
+    if preciseThreshold and preciseThreshold > 60 then
+        -- Below the selected threshold, a clock-style value such as 5:23;
+        -- under a minute plain seconds ("45", or "45s" with the unit on),
+        -- matching the standard formatter's sub-minute look. The 60-band
+        -- catcher mirrors the stock table's: seconds round UP, so a raw value
+        -- in (59, 60) reaches 60 and must land as exactly 1:00, not wrap.
         points = {
-            { threshold = 0, format = "%d:%02d", step = 1, rounding = Up,
+            { threshold = 0, format = withSecondsUnit and "%ds" or "%d", step = 1, rounding = Up },
+            { threshold = 60, format = "%d:%02d", step = 1, rounding = Up,
                 components = { { div = 60 }, { mod = 60 } } },
             { threshold = preciseThreshold, format = "%dm", step = 1, rounding = Down,
                 components = { { div = 60 } } },

@@ -755,13 +755,17 @@ local function ApplyUFText(button, d, style)
         -- Duration formatter options are registered once when an AuraKit button
         -- is created. Re-register when the user changes the precision threshold;
         -- a normal style restyle alone does not change the engine binding.
-        local wantFmt = (style.durationPrecisionThreshold and tostring(style.durationPrecisionThreshold)) or "0"
-        if d.ufDurationFmt ~= wantFmt then
+        -- SAME stamp key + shape as MakeInitializer's creation write ("b" --
+        -- UF styles never set durationShowSeconds -- plus the threshold), so
+        -- untouched configs compare equal to the creation stamp and never
+        -- rebind: zero cost while the feature is off.
+        local wantFmt = "b" .. tostring(style.durationPrecisionThreshold or 0)
+        if d.durationFmtS ~= wantFmt then
             local AK = EllesmereUI.AuraKit
             local opts = AK.BuildDurationTextOpts(
                 AK.GetDurationFormatter(nil, style.durationPrecisionThreshold))
             local ok = AK.SetDurationTextSafe(button, d.duration, opts)
-            if ok then d.ufDurationFmt = wantFmt end
+            if ok then d.durationFmtS = wantFmt end
         end
     end
     if d.stack then

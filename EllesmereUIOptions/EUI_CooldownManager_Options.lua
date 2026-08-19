@@ -5499,16 +5499,10 @@ initFrame:SetScript("OnEvent", function(self)
         if not EllesmereUI._prebuilding then
             local rightRgn = tbbVisRow._rightRegion
             if rightRgn._control then rightRgn._control:Hide() end
-            -- Same base list + insert position as Resource & Cast Bars' VIS_OPT_ITEMS_RESOURCE_BARS.
+            -- The shared list (skyriding included) plus the TBB-only Hide When Inactive cap.
             local tbbVisItems = {}
             for _, item in ipairs(EllesmereUI.VIS_OPT_ITEMS) do
                 tbbVisItems[#tbbVisItems + 1] = item
-                if item.key == "visHideMounted" then
-                    tbbVisItems[#tbbVisItems + 1] = {
-                        key = "visHideDragonriding", label = "Hide when Dragonriding",
-                        tooltip = "Hides this element while you are on a skyriding (glide-capable) mount, where Blizzard shows its vigor HUD.",
-                    }
-                end
             end
             tbbVisItems[#tbbVisItems + 1] = { key = "hideWhenInactive", label = "Hide When Inactive",
                 tooltip = "Only show this bar while the tracked buff/cooldown is active. Unchecked keeps an empty bar on screen at all times." }

@@ -812,6 +812,20 @@ local function GetWeaponCategory(slotID)
     return "NEUTRAL"
 end
 
+-- Off-hand slot holds a shield. Gates the shield-only imbue reminders
+-- (requireShield rows); on EABR, not a local, since this file sits at the
+-- 200-local cap. UNIT_INVENTORY_CHANGED already refreshes, so no new event.
+function EABR.HasShieldEquipped()
+    local itemID = GetInventoryItemID("player", 17)
+    if not itemID then return false end
+    local _, _, _, equipLoc
+    if C_Item and C_Item.GetItemInfoInstant then
+        _, _, _, equipLoc = C_Item.GetItemInfoInstant(itemID)
+    else
+        _, _, _, equipLoc = GetItemInfoInstant(itemID)
+    end
+    return equipLoc == "INVTYPE_SHIELD"
+end
 
 -------------------------------------------------------------------------------
 --  Raid buff beneficiaries (class-level). Only Intellect/Attack Power are stat-restricted (versatility/stamina/
@@ -1098,8 +1112,8 @@ local SHAMAN_IMBUES = {
     { key="flametongue", name="Flametongue Weapon", castSpell=318038, buffIDs={319778}, wepEnchID={5400} },
     { key="windfury",    name="Windfury Weapon",    castSpell=33757,  buffIDs={319773},  wepEnchID={5401} },
     { key="earthliving", name="Earthliving Weapon", castSpell=382021, buffIDs={382021, 382022}, wepEnchID={6498} },
-    { key="tidecaller",  name="Tidecaller's Guard", castSpell=457496, buffIDs={457496, 457481}, wepEnchID={7528} },
-    { key="tstrike",     name="Thunderstrike Ward", castSpell=462757, buffIDs={462757, 462742}, wepEnchID={7587} },
+    { key="tidecaller",  name="Tidecaller's Guard", castSpell=457481, buffIDs={457496, 457481}, wepEnchID={7528}, requireShield=true },
+    { key="tstrike",     name="Thunderstrike Ward", castSpell=462757, buffIDs={462757, 462742}, wepEnchID={7587}, requireShield=true },
 }
 
 -- Shaman Shields: 3 entries gated on Elemental Orbit (383010). With Orbit: Earth Shield self-buff (383648) + Lightning/Water Shield both required; without, any of the three. Cast spell by spec: Resto (264) -> Water Shield (52127), else Lightning Shield (192106).
@@ -3253,7 +3267,8 @@ local specialsActive = EABR.SectionShows(co.specialsWhereToShow, inInstance)
             if playerClass == "SHAMAN" then
                 local hasMH, mhExpire, _, mhEnchID, hasOH, ohExpire, _, ohEnchID = EABR.WeaponEnchants()
                 for _, imbue in ipairs(SHAMAN_IMBUES) do
-                    if co.enabled[imbue.key] and Known(imbue.castSpell) then
+                    if co.enabled[imbue.key] and Known(imbue.castSpell)
+                       and (not imbue.requireShield or EABR.HasShieldEquipped()) then
                         local found = false
                         if imbue.wepEnchID then
                             for _, eid in ipairs(imbue.wepEnchID) do

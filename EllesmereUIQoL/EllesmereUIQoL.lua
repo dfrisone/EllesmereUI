@@ -248,7 +248,10 @@ qolFrame:SetScript("OnEvent", function(self)
             local info = C_Container.GetContainerItemInfo(bag, slot)
             if not (info and info.itemID) then return false end
             local _, _, _, _, _, _, _, _, _, _, _, _, _, bindType = C_Item.GetItemInfo(info.itemID)
-            if not bindType then return false end
+            -- Item data not cached yet: fail CLOSED (skip this pass; the scan
+            -- re-checks once the data lands) so a warbound container is never
+            -- opened just because its bind type was not known yet.
+            if not bindType then return true end
             return WARBOUND_BIND_TYPES[bindType] == true
         end
         local SLOTS_PER_FRAME = 3  -- check 3 slots per OnUpdate tick

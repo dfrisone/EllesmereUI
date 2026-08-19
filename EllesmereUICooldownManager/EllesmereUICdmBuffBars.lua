@@ -4708,18 +4708,21 @@ end
 -------------------------------------------------------------------------------
 --  "Visibility" gate (CDM-Bars-style mode + options, TBB-scoped)
 --  Mirrors _CDMApplyVisibility's priority-2/3 checks (EllesmereUICooldownManager.lua),
---  but folded into TBB's own tick since TBB bars are not native CDM bars. State
---  table is reused across the whole tick pass, same pattern as CDM's visState.
+--  but folded into TBB's own tick since TBB bars are not native CDM bars.
+--  Zero cost for bars without a condition: the tick consults the gate only
+--  for bars flagged at build (bar._tbbVisCond) and fills the shared state
+--  table ONCE per pass (TBBFillVisState) when any bar carries a condition.
 -------------------------------------------------------------------------------
 local _tbbVisState = {}
 
-local function TBBVisibilityHides(cfg)
+local function TBBFillVisState()
     local inRaid = IsInRaid and IsInRaid() or false
-    local inParty = not inRaid and (IsInGroup and IsInGroup() or false)
     _tbbVisState.inCombat = TBBInCombat()
     _tbbVisState.inRaid = inRaid
-    _tbbVisState.inParty = inParty
+    _tbbVisState.inParty = not inRaid and (IsInGroup and IsInGroup() or false)
+end
 
+local function TBBVisibilityHides(cfg)
     if EllesmereUI.CheckVisibilityOptions and EllesmereUI.CheckVisibilityOptions(cfg) then
         return true
     end
@@ -4731,9 +4734,9 @@ local function TBBVisibilityHides(cfg)
     if vis == "never" then return true end
     if vis == "in_combat" then return not _tbbVisState.inCombat end
     if vis == "out_of_combat" then return _tbbVisState.inCombat end
-    if vis == "in_raid" then return not inRaid end
-    if vis == "in_party" then return not inParty end
-    if vis == "solo" then return inRaid or inParty end
+    if vis == "in_raid" then return not _tbbVisState.inRaid end
+    if vis == "in_party" then return not _tbbVisState.inParty end
+    if vis == "solo" then return _tbbVisState.inRaid or _tbbVisState.inParty end
     return false
 end
 
@@ -4746,7 +4749,6 @@ local function TBBUsesVisCondition(cfg)
     if vis and vis ~= "always" then return true end
     local vm = cfg.visibilityModes
     if type(vm) == "table" and next(vm) then return true end
-    if cfg.visHideDragonriding then return true end
     local items = EllesmereUI.VIS_OPT_ITEMS
     if items then
         for i = 1, #items do
@@ -4798,6 +4800,9 @@ function ns.UpdateTrackedBuffBarTimers()
     -- configs sharing a cooldownInfo (Eclipse Solar+Lunar) cannot both mirror the same frame and show twice.
     local assignment = AssignFramesToConfigs(bars)
 
+    -- Visibility gate inputs, once per pass, only when some bar has a condition.
+    if _anyVisCond then TBBFillVisState() end
+
     for i, cfg in ipairs(bars) do
         local bar = tbbFrames[i]
         if not bar or not bar._tbbReady then
@@ -4807,7 +4812,7 @@ function ns.UpdateTrackedBuffBarTimers()
             if not bar:IsShown() then bar:Show() end
         elseif cfg.enabled == false then
             bar:Hide()
-        elseif TBBVisibilityHides(cfg) then
+        elseif bar._tbbVisCond and TBBVisibilityHides(cfg) then
             HideTBBBarForCombat(bar)
         elseif cfg.onlyInCombat and not TBBInCombat() then
             -- "Only In Combat": out of combat the bar is gone regardless of aura/cooldown state, and regardless of Hide When Inactive.
@@ -5401,12 +5406,15 @@ function ns.BuildTrackedBuffBars()
         if (cfg.stacksPosition or "center") ~= "none"  then _anyStacks    = true end
         if cfg.stackBasedBar and cfg.trackType ~= "cooldown"
            and cfg.stackThresholdMaxEnabled             then _anyStacks    = true end
-        if TBBUsesVisCondition(cfg)                     then _anyVisCond   = true end
+        local visCond = TBBUsesVisCondition(cfg)
+        if visCond                                      then _anyVisCond   = true end
 
         if not tbbFrames[i] then
             tbbFrames[i] = CreateTrackedBuffBarFrame(UIParent, i)
         end
         local bar = tbbFrames[i]
+        -- Per-bar gate flag for the tick (our frame; the tick never re-derives it).
+        bar._tbbVisCond = visCond or nil
 
         if cfg.enabled == false then
             bar:Hide()

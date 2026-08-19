@@ -1098,9 +1098,7 @@ initFrame:SetScript("OnEvent", function(self)
                       values={ model="Above Model", header="Stats Header", footer="Frame Footer" },
                       order={ "model", "header", "footer" },
                       get=function()
-                          local loc = EllesmereUIDB and EllesmereUIDB.charSheetDurabilityLocation or "model"
-                          if loc == "title" then return "footer" end
-                          return loc
+                          return EllesmereUIDB and EllesmereUIDB.charSheetDurabilityLocation or "model"
                       end,
                       set=function(v)
                           if not EllesmereUIDB then EllesmereUIDB = {} end

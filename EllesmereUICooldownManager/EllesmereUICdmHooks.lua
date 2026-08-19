@@ -853,6 +853,32 @@ function ns.ResetVariantBaseStore()
     local sv = _variantBaseSV()
     if sv then sv._variantBase = nil end
 end
+
+-- Equivalence check for the picker/list helpers: true when both ids reach the
+-- same root through the learned variant -> base ledger. The live spell APIs
+-- are blind to a rotating override's inactive form (Sacred Weapon/Holy
+-- Bulwark), while the ledger keeps the pair. Called from FindVariantIndex
+-- loops, so no per-call closure: the two root walks are inlined. The hop cap
+-- guards a cyclic pair.
+function ns.IsLearnedVariantOf(a, b)
+    if type(a) ~= "number" or type(b) ~= "number" then return false end
+    if issecretvalue and (issecretvalue(a) or issecretvalue(b)) then return false end
+    if a <= 0 or b <= 0 then return false end
+    _loadVariantBases()
+    local hops = 0
+    while hops < 8 do
+        local nxt = _variantBaseLearned[a]
+        if not nxt or nxt == a then break end
+        a = nxt; hops = hops + 1
+    end
+    hops = 0
+    while hops < 8 do
+        local nxt = _variantBaseLearned[b]
+        if not nxt or nxt == b then break end
+        b = nxt; hops = hops + 1
+    end
+    return a == b
+end
 ns._divertedSpellsBuff = _divertedSpellsBuff
 ns._divertedSpellsCD   = _divertedSpellsCD
 
@@ -924,13 +950,15 @@ function ns.RebuildSpellRouteMap()
         end
     end
 
-    local function CollectDiversionsFor(bd)
+    local function CollectDiversionsFor(bd, skipPositiveSet)
         local sd = ns.GetBarSpellData(bd.key)
         if not sd or not sd.assignedSpells then return end
         local targetMap = IsBuffFamily and IsBuffFamily(bd) and _divertedSpellsBuff or _divertedSpellsCD
         for _, sid in ipairs(sd.assignedSpells) do
             if type(sid) == "number" and sid > 0 then
-                StoreDirect(targetMap, sid, bd.key)
+                if not skipPositiveSet or not skipPositiveSet[sid] then
+                    StoreDirect(targetMap, sid, bd.key)
+                end
             else
                 -- Equipment slot entry: routes Blizzard's own equipment cooldown
                 -- for that slot, which has no spellID to key on. Same overwrite
@@ -1018,12 +1046,42 @@ function ns.RebuildSpellRouteMap()
             end
         end
     end
+    -- Stale ghost ALIASES of a visible family: a rotating override can sit in
+    -- the ghost under one form (Holy Bulwark 432459) while its base (375576)
+    -- is visibly assigned -- the add path could not remove the ghost entry
+    -- because the live APIs are blind to the inactive form. Close the visible
+    -- CD keys over the learned variant/base ledger, then drop from that set
+    -- every id that is EXACTLY assigned to a visible bar: what remains are
+    -- pure aliases, and only those ghost entries are skipped below. Routing
+    -- only -- the ghost entry itself is untouched.
+    local ghostAliasSkip = {}
+    for sid in pairs(_divertedSpellsCD) do ghostAliasSkip[sid] = true end
+    local expanded
+    repeat
+        expanded = false
+        for variant, base in pairs(_variantBaseLearned) do
+            if ghostAliasSkip[variant] or ghostAliasSkip[base] then
+                if not ghostAliasSkip[variant] then
+                    ghostAliasSkip[variant] = true
+                    expanded = true
+                end
+                if not ghostAliasSkip[base] then
+                    ghostAliasSkip[base] = true
+                    expanded = true
+                end
+            end
+        end
+    until not expanded
+    for sid in pairs(_divertedDirectCD) do ghostAliasSkip[sid] = nil end
+
     -- Pass 4: ghost bars LAST = HIGHEST priority. A spell the user HID stays
-    -- hidden even if also on a visible bar ("both-state"). ns.AddSpellToBar
-    -- removes it from the ghost, so this never hides a deliberate placement.
+    -- hidden even if the same id also sits on a visible bar ("both-state");
+    -- ns.AddSpellToBar removes it from the ghost, so this never hides a
+    -- deliberate placement. Only a ghost entry that is a pure ALIAS of a
+    -- visible family (set above) is skipped.
     for _, bd in ipairs(p.cdmBars.bars) do
         if bd.enabled and bd.isGhostBar then
-            CollectDiversionsFor(bd)
+            CollectDiversionsFor(bd, ghostAliasSkip)
         end
     end
 

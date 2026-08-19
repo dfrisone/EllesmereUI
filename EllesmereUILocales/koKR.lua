@@ -2331,8 +2331,6 @@ L["Glow Nameplate When Near Aggro"] = "위협 근접 시 이름표 반짝임"
 L["Edit Tracked Auras"] = "추적 오라 편집"
 L["Edit Tracked CC"] = "추적 군중 제어 편집"
 L["Enemy Buff Filter"] = "적 강화 효과 필터"
-L["None (Show All)"] = "없음 (모두 표시)"
-L["Which enemy buffs show on nameplates. Important shows the buffs Blizzard flags for enemy nameplates. Dispellable shows only buffs that can be dispelled or purged. None shows every enemy buff. With a Dispel Glow style set, the dispellable buffs glow under any of these."] = "이름표에 어떤 적 강화 효과를 표시할지 정합니다. 중요는 블리자드가 적 이름표용으로 지정한 효과만 표시합니다. 해제 가능은 해제하거나 정화할 수 있는 효과만 표시합니다. 없음은 모든 적 강화 효과를 표시합니다. 해제 강조 모양을 설정해 두면 어느 것을 골라도 해제 가능한 효과에는 강조가 들어갑니다."
 
 -- == add UnitFrames (유닛 프레임) ==============================================
 L["Only Dispellable by You"] = "내가 해제 가능한 것만"
@@ -3426,7 +3424,6 @@ L["Show every debuff. Use the Hide lane below to remove specific filters."] = "�
 L["Show every debuff in this indicator. Use the Hide lane below to remove specific filters."] = "이 표시기에서 모든 약화 효과를 표시합니다. 특정 필터를 빼려면 아래 숨김 칸을 쓰세요."
 L["Only show debuffs that have a duration, excluding permanent ones. Combines with the filters below; checked alone it shows every timed debuff."] = "지속시간이 있는 약화 효과만 표시하고 영구 효과는 제외합니다. 아래 필터와 함께 동작하며, 이것만 체크하면 지속시간이 있는 모든 약화 효과를 표시합니다."
 L["Debuffs not caused by any player or player pet (this is what shows most pve debuffs)."] = "플레이어나 플레이어의 소환수가 건 것이 아닌 약화 효과입니다(대부분의 PvE 약화 효과가 여기에 해당합니다)."
-L["Which debuffs this indicator watches for. Show every debuff turns the grid around: the filters you tick are hidden instead of added."] = "이 표시기가 어떤 약화 효과를 볼지 정합니다. 모든 약화 효과를 켜면 반대로 동작합니다 - 체크한 필터가 추가되는 대신 숨겨집니다."
 
 -- == add CooldownManager (재사용 대기시간 관리자) ===================================
 L["Apply Height to all %s Bars"] = "모든 %s 바에 높이 적용"
