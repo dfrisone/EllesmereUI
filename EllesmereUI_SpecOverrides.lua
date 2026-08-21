@@ -329,6 +329,7 @@ local SETTING_BLACKLIST = {
     },
     EllesmereUICooldownManager = {
         barSpellSettings   = true,   -- "Apply to Bar (All Specs)" per-spell tier
+        hostedBuffSettings = true,   -- hosted buffs' cross-spec per-spell tier
         customActiveStates = true,   -- per-spell active state rules
         cdmBarPositions    = true,   -- unlock-layer territory
         growDirection      = true,   -- unlock-layer territory

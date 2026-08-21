@@ -976,6 +976,27 @@ function ns.GetBarTierSettings(sd, barKey)
     return abs
 end
 
+-- Cross-spec tier for HOSTED buffs (a buff placed on a cd/util bar), keyed by the same
+-- spell id as the per-spec entry. Hosted icons never chain to a bar tier, so this
+-- profile-level store is the only layer below their spec entry -- it is what the
+-- per-icon "Apply to All Specs" writes. Absent until first used, so an untouched
+-- profile resolves exactly as it did before the store existed.
+function ns.GetHostedBuffSettings(create)
+    local p = ECME and ECME.db and ECME.db.profile
+    if not p then return nil end
+    if not p.hostedBuffSettings and create then p.hostedBuffSettings = {} end
+    return p.hostedBuffSettings
+end
+
+function ns.GetHostedBuffSetting(spellID, create)
+    if not spellID then return nil end
+    local st = ns.GetHostedBuffSettings(create)
+    if not st then return nil end
+    local e = st[spellID]
+    if not e and create then e = {}; st[spellID] = e end
+    return e
+end
+
 -- True when any per-icon settings could apply on this bar: family store has ANY entry
 -- (over-approximate -- keyed by spell, not bar) or either bar tier is non-empty. Gates "re-resolve appearance" passes.
 function ns.BarHasAnySpellSettings(barKey, sd)
@@ -989,12 +1010,28 @@ function ns.BarHasAnySpellSettings(barKey, sd)
     end
     local bd = ns.barDataByKey and ns.barDataByKey[barKey]
     if bd and bd.barSpellSettings and next(bd.barSpellSettings) ~= nil then return true end
+    -- A hosted buff's settings live in the BUFF family (and its cross-spec tier),
+    -- neither of which the barKey lookup above reaches on a cd/util bar.
+    if sd and sd.hostedBuffSpellIDs and next(sd.hostedBuffSpellIDs) ~= nil then
+        local hostSt = ns.GetSpellSettingsStore("buffs")
+        if hostSt then
+            for hsid in pairs(sd.hostedBuffSpellIDs) do
+                if type(hostSt[hsid]) == "table" then return true end
+            end
+        end
+        local hostTier = ns.GetHostedBuffSettings and ns.GetHostedBuffSettings()
+        if hostTier then
+            for hsid in pairs(sd.hostedBuffSpellIDs) do
+                if type(hostTier[hsid]) == "table" then return true end
+            end
+        end
+    end
     return false
 end
 
 -- Iterate every SAVED settings block that can hold per-spell setting keys: all specs'
 -- family-store entries + per-bar barSettings, plus the active profile's bar-level
--- barSpellSettings. fn(ss) returning true stops the walk. Used by login gate scans ("does anyone use feature X anywhere").
+-- barSpellSettings and the hosted-buff cross-spec tier. fn(ss) returning true stops the walk. Used by login gate scans ("does anyone use feature X anywhere").
 function ns.ForEachSavedSettingsBlock(fn)
     if not EllesmereUIDB then return false end
     local sp = SpellStore and SpellStore.GetSpecProfiles and SpellStore.GetSpecProfiles()
@@ -1036,6 +1073,12 @@ function ns.ForEachSavedSettingsBlock(fn)
         for _, bd in ipairs(bars) do
             local abs = type(bd) == "table" and bd.barSpellSettings
             if type(abs) == "table" and fn(abs) then return true end
+        end
+    end
+    local hosted = p and p.hostedBuffSettings
+    if type(hosted) == "table" then
+        for _, ss in pairs(hosted) do
+            if type(ss) == "table" and fn(ss) then return true end
         end
     end
     return false

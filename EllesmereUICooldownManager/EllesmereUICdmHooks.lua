@@ -370,11 +370,25 @@ local function ResolveSpellSettingsUncached(frame, sid2, sd2, barKey)
         end
     end
     -- HOSTED BUFFS never inherit the host bar's Apply-to-Bar tier (shared keys:
-    -- Duration Text, Border) -- own per-spell entry ONLY. Nil-frame callers fall
-    -- back to the flag test (a nil-frame lookup for a hosted id is always buff).
-    if tier and (hostedFrame
-       or (not frame and sd2 and sd2.hostedBuffSpellIDs and sd2.hostedBuffSpellIDs[sid2])) then
+    -- Duration Text, Border). Their one tier is the profile-level cross-spec entry
+    -- written by the per-icon "Apply to All Specs", looked up under the same key
+    -- preference the per-spec entry uses below. Nil-frame callers fall back to the
+    -- flag test (a nil-frame lookup for a hosted id is always buff).
+    if hostedFrame
+       or (not frame and sd2 and sd2.hostedBuffSpellIDs and sd2.hostedBuffSpellIDs[sid2]) then
         tier = nil
+        local hst = ns.GetHostedBuffSettings and ns.GetHostedBuffSettings()
+        if hst then
+            local cdIDh = frame and frame.cooldownID
+            if type(cdIDh) == "number" then
+                tier = hst["c" .. cdIDh]
+                if not tier then
+                    local cleanH = ns._cdmCleanSidByCDID and ns._cdmCleanSidByCDID[cdIDh]
+                    if cleanH then tier = hst[cleanH] end
+                end
+            end
+            if not tier then tier = hst[sid2] end
+        end
     end
     -- Per-spell entries live in the spec's FAMILY store (travel with the spell
     -- across bars), not the bar. A hosted buff reads the BUFF store keyed off the

@@ -8581,15 +8581,19 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                     -- Per-spell entries live in the spec FAMILY store (travel with the spell
                     -- across bars); bar tiers sit below them: sd.barSettings ("Apply to Bar")
-                    -- -> bd.barSpellSettings ("Apply to Bar (All Specs)"). A hosted buff uses the BUFF store (same entry as on the buffs bar) and never chains to this bar's cd/util tiers.
+                    -- -> bd.barSpellSettings ("Apply to Bar (All Specs)"). A hosted buff uses the BUFF store (same entry as on the buffs bar) and never chains to this bar's cd/util tiers -- its only tier is the profile-level cross-spec entry written by "Apply to All Specs".
                     local store = ns.GetSpellSettingsStore(isHostedBuff and "buffs" or barKey, true)
                     local bdSel = ns.barDataByKey and ns.barDataByKey[barKey]
                     local famKey = ns.SettingsFamilyKey(isHostedBuff and "buffs" or barKey)
                     -- Effective-read view: the entry (or a not-yet-persisted fresh table)
-                    -- chained to the bar tiers, so the menu shows the values the icon actually renders with; EnsureSS() persists the entry on first WRITE.
+                    -- chained to the tier below it, so the menu shows the values the icon actually renders with; EnsureSS() persists the entry on first WRITE.
                     local ss = store and store[spellID]
                     if not ss then ss = {} end
-                    ns.ChainSettings(ss, isHostedBuff and nil or ns.GetBarTierSettings(sd, barKey))
+                    if isHostedBuff then
+                        ns.ChainSettings(ss, ns.GetHostedBuffSetting and ns.GetHostedBuffSetting(spellID))
+                    else
+                        ns.ChainSettings(ss, ns.GetBarTierSettings(sd, barKey))
+                    end
                     local function EnsureSS()
                         if store and not store[spellID] then
                             store[spellID] = ss
@@ -8618,6 +8622,17 @@ initFrame:SetScript("OnEvent", function(self)
                     --  local (AB) instead of individual locals: this function is enormous and Lua 5.1 caps active locals at 200.
                     -----------------------------------------------------------
                     local AB = {}
+                    -- Hosted buffs answer a different pair of scopes than bar members: this
+                    -- spell in this spec, or this spell in every spec. Set here (not at the
+                    -- Apply-to-Bar rows below) so the lazily-built strip and its closures can
+                    -- read it whichever row is hovered first.
+                    AB.hosted = isHostedBuff
+                    -- The profile-level cross-spec entry for a hosted buff, or nil when the
+                    -- spell has never been applied to all specs.
+                    AB.HostedTier = function(create)
+                        if not AB.hosted then return nil end
+                        return ns.GetHostedBuffSetting and ns.GetHostedBuffSetting(spellID, create)
+                    end
                     -- Run fn(sid, entry) for every per-spell entry belonging to a bar in the
                     -- given spec profile. The DEFAULT buffs bar owns every buff-store entry not claimed by another buff bar (Blizzard-tracked buffs aren't in assignedSpells).
                     AB.ForEachMemberEntry = function(prof, bsX, fn)
@@ -9037,6 +9052,75 @@ initFrame:SetScript("OnEvent", function(self)
                         if ns.QueueReanchor then ns.QueueReanchor() end
                     end
 
+                    -- Hosted-buff "Apply to All Specs": the value moves to the profile-level
+                    -- cross-spec entry for THIS spell and every spec's own copy of those keys is
+                    -- dropped, so each spec now reads the shared value. No bar sweep -- a hosted
+                    -- buff is not a bar member (see ForEachMemberEntry).
+                    AB.RunHostedApply = function(keys, applyWrite, val)
+                        local tier = AB.HostedTier(true)
+                        if not (tier and applyWrite) then return end
+                        applyWrite(tier, val)
+                        AB.FlipSessionGates(tier)
+                        local spAll = ns.GetActiveSpecProfiles and ns.GetActiveSpecProfiles()
+                        if spAll then
+                            for _, prof in pairs(spAll) do
+                                local st = type(prof) == "table" and prof[famKey]
+                                local e = st and st[spellID]
+                                if type(e) == "table" then
+                                    for _, k in ipairs(keys) do rawset(e, k, nil) end
+                                    if next(e) == nil then st[spellID] = nil end
+                                end
+                            end
+                        end
+                        -- Tier created and emptied spec entries deleted: retire memoized resolution results.
+                        ns._cdmResGen = (ns._cdmResGen or 0) + 1
+                        ns.ChainSettings(ss, tier)
+                        if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                        if ns.QueueReanchor then ns.QueueReanchor() end
+                    end
+
+                    -- Drop the cross-spec apply: clears the keys from the shared entry. Each
+                    -- spec's own values are left alone (they already shadow it).
+                    AB.RunHostedUnapply = function(keys)
+                        local st = ns.GetHostedBuffSettings and ns.GetHostedBuffSettings()
+                        local tier = spellID and st and st[spellID]
+                        if not tier then return end
+                        for _, k in ipairs(keys) do tier[k] = nil end
+                        if next(tier) == nil then
+                            st[spellID] = nil
+                            ns.ChainSettings(ss, nil)
+                        end
+                        ns._cdmResGen = (ns._cdmResGen or 0) + 1
+                        if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                        if ns.QueueReanchor then ns.QueueReanchor() end
+                    end
+
+                    -- How many specs hold a DIFFERING own value for these keys that the apply
+                    -- would drop? Feeds the same overwrite confirm the bar applies use.
+                    AB.CountHostedOverwrites = function(keys, applyWrite, val)
+                        if not (applyWrite and spellID) then return 0 end
+                        local temp = {}
+                        applyWrite(temp, val)
+                        local count = 0
+                        local spAll = ns.GetActiveSpecProfiles and ns.GetActiveSpecProfiles()
+                        if spAll then
+                            for _, prof in pairs(spAll) do
+                                local st = type(prof) == "table" and prof[famKey]
+                                local e = st and st[spellID]
+                                if type(e) == "table" then
+                                    for _, k in ipairs(keys) do
+                                        local own = rawget(e, k)
+                                        if own ~= nil and own ~= temp[k] then
+                                            count = count + 1
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        return count
+                    end
+
                     -- The scope flyout itself: a vertical list (Apply to This Spell / Apply to
                     -- Bar / Apply to Bar (All Specs) / conditional Exclude this spec) docked to the right of the hovered flyout item. One shared frame per menu; context swapped on each hover.
                     AB.GetApplyStrip = function()
@@ -9093,7 +9177,10 @@ initFrame:SetScript("OnEvent", function(self)
                         end
                         local thisBtn = MakeScopeItem(EllesmereUI.L("Apply to This Spell"))
                         local b1 = MakeScopeItem(EllesmereUI.L("Apply to Bar"))
-                        local b2 = MakeScopeItem(EllesmereUI.L("Apply to Bar (All Specs)"))
+                        -- A hosted buff has no bar scope: its second row is the cross-spec entry for this one spell.
+                        local b2 = MakeScopeItem(AB.hosted
+                            and EllesmereUI.L("Apply to All Specs")
+                            or EllesmereUI.L("Apply to Bar (All Specs)"))
                         local b3 = MakeScopeItem(EllesmereUI.L("Exclude This Spell"))
                         b3._shown = false
                         -- Exclude/Include This Spell reads apart from the scope rows: soft red
@@ -9131,7 +9218,8 @@ initFrame:SetScript("OnEvent", function(self)
                                 y = y + ITEM_H
                             end
                             if b3._shown then place(b3); thisBtn:Hide() else place(thisBtn); b3:Hide() end
-                            place(b1); place(b2)
+                            if AB.hosted then b1:Hide() else place(b1) end
+                            place(b2)
                             local total = y + 4
                             sInner:SetHeight(total)
                             s:SetHeight(total)
@@ -9139,8 +9227,9 @@ initFrame:SetScript("OnEvent", function(self)
                             -- the Exclude/Include row is re-captioned, so the swapped
                             -- text is measured; all four rows count, so swapping row 1
                             -- never resizes the strip under the cursor.
-                            local fitW = FitMenuWidth(
-                                { thisBtn._label, b1._label, b2._label, b3._label }, SUBW)
+                            local fitW = FitMenuWidth(AB.hosted
+                                and { thisBtn._label, b2._label }
+                                or { thisBtn._label, b1._label, b2._label, b3._label }, SUBW)
                             s:SetWidth(fitW)
                             sInner:SetWidth(fitW)
                         end
@@ -9182,20 +9271,31 @@ initFrame:SetScript("OnEvent", function(self)
                             else
                                 thisBtn._active = holds(ss, true)
                             end
-                            b1._active = (not excluded) and holds(sd.barSettings, true)
-                            b2._active = (not excluded) and holds(bdSel and bdSel.barSpellSettings, false)
-                            thisBtn._rest(); b1._rest(); b2._rest()
-                            -- Exclude/Include This Spell: shown whenever a bar apply drives the
-                            -- setting (so this spell+spec can opt out/back in). Label + soft red/green colour flip on the excluded state (b3._excluded drives the colour -- see b3._rest above).
-                            if AB.KeysBarApplied(keys) then
-                                b3._excluded = excluded
-                                b3._setText(excluded and ("+ " .. EllesmereUI.L("Include This Spell"))
-                                    or ("+ " .. EllesmereUI.L("Exclude This Spell")))
-                                b3._shown = true
-                            else
+                            if AB.hosted then
+                                -- Two scopes only: this spell in this spec (thisBtn, above) or in
+                                -- every spec. The spec entry shadows the shared one, so an
+                                -- excluded spell never lights the cross-spec row. Nothing to
+                                -- exclude FROM -- a hosted buff is not a bar member.
+                                b1._active = false
+                                b2._active = (not excluded) and holds(AB.HostedTier(), true)
                                 b3._excluded = false
                                 b3._shown = false
+                            else
+                                b1._active = (not excluded) and holds(sd.barSettings, true)
+                                b2._active = (not excluded) and holds(bdSel and bdSel.barSpellSettings, false)
+                                -- Exclude/Include This Spell: shown whenever a bar apply drives the
+                                -- setting (so this spell+spec can opt out/back in). Label + soft red/green colour flip on the excluded state (b3._excluded drives the colour -- see b3._rest above).
+                                if AB.KeysBarApplied(keys) then
+                                    b3._excluded = excluded
+                                    b3._setText(excluded and ("+ " .. EllesmereUI.L("Include This Spell"))
+                                        or ("+ " .. EllesmereUI.L("Exclude This Spell")))
+                                    b3._shown = true
+                                else
+                                    b3._excluded = false
+                                    b3._shown = false
+                                end
                             end
+                            thisBtn._rest(); b1._rest(); b2._rest()
                             b3._rest()
                             Relayout()
                         end
@@ -9353,8 +9453,77 @@ initFrame:SetScript("OnEvent", function(self)
                             if ctx.refresh then ctx.refresh() end
                             if s:IsShown() and s._updateActive then s._updateActive() end
                         end)
+                        -- Hosted-buff cross-spec apply: the same gesture as Apply to Bar (All
+                        -- Specs) scoped to this one spell. Clicking an already-active scope
+                        -- un-applies it, seeding the removed value back into this spec first so a
+                        -- payload (scalar seconds, custom colour) is not silently discarded.
+                        local function DoHostedApply()
+                            local ctx = s._ctx
+                            if not (ctx and ctx.write) then return end
+                            local val = ctx.valueOf and ctx.valueOf()
+                            local keys = ctx.keys or {}
+                            local temp = {}
+                            ctx.write(temp, val)
+                            local tier = AB.HostedTier()
+                            local scopeActive, valuesMatch = false, true
+                            for _, k in ipairs(keys) do
+                                local own = tier and rawget(tier, k)
+                                if own ~= nil then scopeActive = true end
+                                if own ~= temp[k] then valuesMatch = false end
+                            end
+                            if scopeActive and (valuesMatch or (ctx.isToggle and not ctx.payloadValue)) then
+                                if ctx.scalarApply or ctx.payloadValue then
+                                    local target = EnsureSS()
+                                    for _, k in ipairs(keys) do
+                                        local own = rawget(tier, k)
+                                        if own ~= nil then rawset(target, k, own) end
+                                    end
+                                end
+                                AB.RunHostedUnapply(keys)
+                                if ctx.refresh then ctx.refresh() end
+                                if s._updateActive then s._updateActive() end
+                                return
+                            end
+                            local function go()
+                                AB.RunHostedApply(keys, ctx.write, val)
+                                if ctx.refresh then ctx.refresh() end
+                                if s._updateActive then s._updateActive() end
+                            end
+                            local overwrites = AB.CountHostedOverwrites(keys, ctx.write, val)
+                            if not scopeActive and overwrites == 0 then
+                                go()
+                                return
+                            end
+                            local message = ""
+                            if scopeActive then
+                                message = EllesmereUI.L("This setting's active Apply to All Specs value will be replaced.")
+                            end
+                            if overwrites > 0 then
+                                -- The English key is itself a valid "%d" format string, so if a locale's
+                                -- translation mangles the specifier and string.format errors, fall back to formatting the untranslated key.
+                                local key = "This replaces %d existing value(s) for this setting across your specs."
+                                local ok, line = pcall(string.format, EllesmereUI.L(key), overwrites)
+                                if not ok then line = string.format(key, overwrites) end
+                                if message ~= "" then
+                                    message = message .. "\n\n" .. line
+                                else
+                                    message = line
+                                end
+                            end
+                            message = message .. " " .. EllesmereUI.L("Do you want to continue?")
+                            menu:Hide()
+                            EllesmereUI:ShowConfirmPopup({
+                                title       = EllesmereUI.L("Overwrite Existing Settings"),
+                                message     = message,
+                                confirmText = "Apply",
+                                cancelText  = "Cancel",
+                                onConfirm   = go,
+                            })
+                        end
                         b1:SetScript("OnClick", function() DoApply(false) end)
-                        b2:SetScript("OnClick", function() DoApply(true) end)
+                        b2:SetScript("OnClick", function()
+                            if AB.hosted then DoHostedApply() else DoApply(true) end
+                        end)
                         -- Exclude / Include This Spell (per spell+spec, via ss).
                         b3:SetScript("OnClick", function()
                             local ctx = s._ctx
@@ -9516,10 +9685,6 @@ initFrame:SetScript("OnEvent", function(self)
                     }
 
                     -- Track open subnavs on the menu frame so OnUpdate can see them
-
-                    -- Hosted buffs are fully removed from the Apply-to-Bar system: this flag (set
-                    -- per-icon below, once isHostedBuff is known) suppresses the "Apply to Bar" hover strip on every row for a hosted buff.
-                    local hostedBuffNoApply = false
 
                     -- Helper: subnav flyout (same style as Potions & Healthstone)
                     -- isDefault: function returning true when the setting is at default value
@@ -9727,20 +9892,19 @@ initFrame:SetScript("OnEvent", function(self)
                                 local rowApply = opts and opts.apply
                                 local applyKeys  = item.applyKeys or (rowApply and rowApply.keys)
                                 local applyWrite = item.applyWrite or (rowApply and rowApply.write)
-                                -- Hosted buffs are excluded from Apply-to-Bar entirely.
-                                local canApply = applyWrite ~= nil and not hostedBuffNoApply
+                                local canApply = applyWrite ~= nil
                                 -- When a bar apply drives this setting, the value the BAR applies acts
                                 -- like a submenu row: it shows a right-arrow and is unclickable -- you
                                 -- manage it through the scope flyout that opens on hover (Exclude/Include/Apply to Bar), never by re-selecting the value. A bar-applied "+ " toggle counts too.
                                 local function itemIsBarApplied()
                                     -- A hosted buff never chains to the bar tiers (its
-                                    -- effective read passes nil for the bar/spec tiers,
-                                    -- and the runtime resolver strips them too), so a
-                                    -- bar-wide apply can never drive it. Reporting
-                                    -- "bar applied" here would dead-lock its toggle
-                                    -- rows: the OnClick bails on bar-applied items and
-                                    -- hosted rows have no Apply strip to escape through.
-                                    if hostedBuffNoApply then return false end
+                                    -- effective read and the runtime resolver both pass
+                                    -- nil for them), so a bar-wide apply can never drive
+                                    -- it. Reporting "bar applied" here would dead-lock
+                                    -- its toggle rows: the OnClick bails on bar-applied
+                                    -- items. Its own cross-spec scope is managed from the
+                                    -- Apply strip instead, which never locks a row.
+                                    if AB.hosted then return false end
                                     if not (applyKeys and AB.KeysBarApplied(applyKeys)) then return false end
                                     if isChargeToggle or isActiveBorder or isFnToggle then return true end
                                     local barTier = ns.GetBarTierSettings and ns.GetBarTierSettings(sd, barKey)
@@ -9776,7 +9940,10 @@ initFrame:SetScript("OnEvent", function(self)
                                     -- it on everything; "+ " toggles are never OR, so they keep it. A
                                     -- scalar popup value (Threshold Seconds) has only one item, so "the
                                     -- bar's value differs from this item" is meaningless -- never suppress it, or Apply-to-Bar vanishes the moment the entered number differs from the bar's.
-                                    local suppressStrip = canApply and not item.scalarApply
+                                    -- Hosted rows are never suppressed: KeysBarApplied answers for
+                                    -- the BAR, which they don't read, so a CD spell's bar apply
+                                    -- would otherwise hide their own cross-spec strip.
+                                    local suppressStrip = canApply and not AB.hosted and not item.scalarApply
                                         and not (isChargeToggle or isActiveBorder or isFnToggle)
                                         and AB.KeysBarApplied(applyKeys) and not itemIsBarApplied()
                                     if suppressStrip then
@@ -10309,8 +10476,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- A HOSTED buff (buff placed on a CD/util bar) is a real Blizzard buff frame
                     -- reparented onto the bar, so it takes the BUFF per-icon menu, not the CD/util
                     -- one (same settings as on a buffs bar); isHostedBuff is resolved above
-                    -- (slot-based). Hosted buffs are removed from Apply-to-Bar entirely (no strip, no bar-tier chaining in ResolveSpellSettings).
-                    hostedBuffNoApply = isHostedBuff
+                    -- (slot-based). Hosted buffs are removed from Apply-to-BAR entirely (no bar-tier chaining in ResolveSpellSettings); their strip offers this spec vs. all specs instead (AB.hosted).
                     if isBuffBar or isHostedBuff then
                         -- Injected custom/preset buffs (cast-timer driven, identified by a stored
                         -- spellDuration) are show-on-cast only, so the Always Show Buffs/Desaturate Inactive overrides (which act on Blizzard-tracked inactive placeholders) don't apply to them.
@@ -10320,7 +10486,7 @@ initFrame:SetScript("OnEvent", function(self)
                         -- Visibility When Missing (HOSTED buffs only): nil = desaturated
                         -- placeholder; "hidden" keeps the reserved slot but renders nothing;
                         -- "hiddenShift" skips the placeholder so later icons close the gap (same
-                        -- outcome as Hidden on CD (Shift Icons)). Purely per-spell: no apply opts, hosted rows never get the Apply-to-Bar strip anyway (entries chain to no tier).
+                        -- outcome as Hidden on CD (Shift Icons)). Purely per-spell: no apply opts, so no Apply strip on this row (a placeholder rule is host-bar-specific, not something to share across specs).
                         if isHostedBuff then
                             local MISSING_VIS_ITEMS = {
                                 { val = nil,           label = "Desaturated" },
