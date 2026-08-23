@@ -861,6 +861,10 @@ function _tbbWake.Sleep()
     _tbbWake:RegisterUnitEvent("UNIT_AURA", "player")
     _tbbWake:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     _tbbWake:RegisterEvent("PLAYER_REGEN_DISABLED")
+    -- A target-bound HARMFUL tracker (e.g. Rupture/Garrote) legitimately reads IsActive()
+    -- false the instant you tab off the mob; Blizzard resyncs its own item frame on retarget
+    -- synchronously (not via pool Acquire), but nothing carried that edge to a parked tick.
+    _tbbWake:RegisterEvent("PLAYER_TARGET_CHANGED")
 end
 function _tbbWake.Wake()
     _tbbWake:UnregisterAllEvents()
