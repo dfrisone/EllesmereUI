@@ -27,21 +27,43 @@ local SLOT_SIZE, SPACING = 34, 4
 -- the real item, never GetItemByID: scaling gear's bonus IDs lower its required level, but
 -- GetItemByID shows the unscaled base item's level (reads red). Prefer bag slot > link > ID; cache by link, wipe on level-up.
 local _canUseCache = {}
+local ITEM_CLASS_RECIPE = Enum.ItemClass.Recipe
 local function BagsItemUnusable(bagID, slot, itemLink, itemID)
     local item = itemLink or itemID
     if not item then return false end
     local cached = _canUseCache[item]
     if cached ~= nil then return cached end
     local unusable = false
+
+    -- Recipes also have a spell (the teach effect), so they'd hit the tooltip scan
+    -- below. Skip that: the scan can see red from the crafted item's own preview
+    -- stats, not just from the recipe's learn requirements. Use the usable check
+    -- instead, which reflects skill/known state directly.
+    local _, _, _, _, _, classID = GetItemInfoInstant(item)
+    if classID == ITEM_CLASS_RECIPE then
+        local usable = C_Item.IsUsableItem(item)
+        unusable = not usable
+        _canUseCache[item] = unusable
+        return unusable
+    end
+
     if IsEquippableItem(item) or C_Item.GetItemSpell(item) then
-        local tip
-        if bagID and slot then tip = C_TooltipInfo.GetBagItem(bagID, slot) end
-        if not tip and itemLink then tip = C_TooltipInfo.GetHyperlink(itemLink) end
-        if not tip and itemID then tip = C_TooltipInfo.GetItemByID(itemID) end
+        -- Only use a tooltip from the real bag slot or real item link; both carry
+        -- bonus IDs, which set the item's true required level. A bare itemID lacks
+        -- those and can read the wrong level requirement either way.
+        local tip, reliable
+        if bagID and slot then
+            tip = C_TooltipInfo.GetBagItem(bagID, slot)
+            reliable = true
+        elseif itemLink then
+            tip = C_TooltipInfo.GetHyperlink(itemLink)
+            reliable = true
+        end
         if tip and tip.lines then
             for _, row in ipairs(tip.lines) do
                 local lc = row.leftColor
-                if lc and lc.r == 1 and lc.g < 0.2 and lc.b < 0.2
+                -- Tolerance, not exact equality: rounding can put red just under r=1.
+                if lc and lc.r > 0.9 and lc.g < 0.2 and lc.b < 0.2
                    and row.leftText ~= ITEM_SCRAPABLE_NOT
                    and row.leftText ~= CANNOT_UNEQUIP_COMBAT
                    and row.leftText ~= ITEM_DISENCHANT_NOT_DISENCHANTABLE then
@@ -49,11 +71,16 @@ local function BagsItemUnusable(bagID, slot, itemLink, itemID)
                     break
                 end
                 local rc = row.rightColor
-                if rc and rc.r == 1 and rc.g < 0.2 and rc.b < 0.2 then
+                if rc and rc.r > 0.9 and rc.g < 0.2 and rc.b < 0.2 then
                     unusable = true
                     break
                 end
             end
+        end
+        if not reliable then
+            -- No bag slot or link yet, so don't cache a guess. A later call with
+            -- real data will compute and cache the right answer.
+            return unusable
         end
     end
     _canUseCache[item] = unusable

@@ -1438,11 +1438,21 @@ local function AnchorHealthBg(health)
     local bg = health and health.bg
     local tex = health and health.GetStatusBarTexture and health:GetStatusBarTexture()
     if not bg or not tex then return end
-    bg:ClearAllPoints()
     local reversed = health.GetReverseFill and health:GetReverseFill()
     -- Vertical fill empties at the TOP (BOTTOM when reversed); read the axis off
     -- the bar itself so this needs no settings lookup.
     local vert = health.GetOrientation and health:GetOrientation() == "VERTICAL"
+    -- The anchors bind to the fill texture's EDGE, which the engine moves with
+    -- every SetValue -- they are live and never need re-pushing per paint
+    -- (this ran per health event). Re-anchor only when an actual input moved:
+    -- the texture OBJECT (retexture replaces it) or the axis/direction.
+    local aKey = (vert and "V" or "H") .. (reversed and "R" or "N")
+    if health._bgAnchorTex == tex and health._bgAnchorKey == aKey then
+        return
+    end
+    health._bgAnchorTex = tex
+    health._bgAnchorKey = aKey
+    bg:ClearAllPoints()
     if vert then
         if reversed then
             bg:SetPoint("TOPLEFT", tex, "BOTTOMLEFT", 0, 0)
@@ -2023,14 +2033,25 @@ do
         local element = frame.Health
         if not element or not unit or not UnitExists(unit) then return end
         if not ns.Engine.ElementOn(frame, "Health") then return end
-        local max = UnitHealthMax(unit)
-        element:SetMinMaxValues(0, max)
+        -- Bar bounds ride the max-health/identity events (Blizzard's own
+        -- contract); a pure UNIT_HEALTH value tick pushes only the value.
+        if event ~= "UNIT_HEALTH" or not element._maxSet then
+            element._maxSet = true
+            element:SetMinMaxValues(0, UnitHealthMax(unit))
+        end
         if UnitIsConnected(unit) then
             element:SetValue(UnitHealth(unit), element.smoothing)
         else
-            element:SetValue(max, element.smoothing)
+            element:SetValue(UnitHealthMax(unit), element.smoothing)
         end
-        UF_SecretSafeHealthColor(frame, event, unit)
+        -- Color inputs (class/reaction/dark/disconnect/tap) change via their
+        -- own events or identity repaints -- a pure health tick re-runs the
+        -- color chain only for modes whose color follows health/combat state
+        -- per tick (dynamic curve, threat, tap coloring).
+        if event ~= "UNIT_HEALTH" or element.colorSmooth
+           or element.colorThreat or element.colorTapping then
+            UF_SecretSafeHealthColor(frame, event, unit)
+        end
     end
     ns.Engine.SetPainter("health", PaintHealth)
 
@@ -2350,9 +2371,10 @@ end
 -- On ns for the Lua 5.1 200-local ceiling.
 ns.NICK_ADDON = addonName:find("Standalone") and addonName or "EllesmereUI"
 
--- Resolve a unit's display name via nickname providers in order: NSAPI ->
--- EasyNicknameAPI -> TimelineReminders -> LiquidAPI, then the raw unit name. Each is
--- pcall-wrapped so a misbehaving external API can never break names.
+-- Resolve a unit's display name through MethodInternal's authoritative surface
+-- choice for known Method players, then the normal provider order: NSAPI ->
+-- TimelineReminders -> LiquidAPI, then the raw unit name. Each
+-- external call is pcall-wrapped so a misbehaving API can never break names.
 --
 -- SECRET-SAFE: an enemy unit's UnitName is secret in protected content and any Lua op
 -- on it (==, .., format) throws. Nicknames only apply to your own group, so: non-players
@@ -2364,22 +2386,30 @@ ns.NICK_ADDON = addonName:find("Standalone") and addonName or "EllesmereUI"
 function ns.ResolveUnitNickname(unit)
     local name = UnitName(unit)
     if not name then return "" end
-    -- Master toggle (Unit Frames > main frames > Display, default OFF): when off,
-    -- skip every provider lookup and show the raw unit name (display-safe).
-    if not (db and db.profile and db.profile.showNicknames) then return name end
     -- Nicknames are player-only; NPCs (bosses, etc.) keep their name.
     if not UnitIsPlayer(unit) then return name end
     local nameSecret = issecretvalue and issecretvalue(name)
     local display
-    if not nameSecret and NSAPI and NSAPI.GetName then
-        local ok, dn = pcall(NSAPI.GetName, NSAPI, name, "EUI")
-        if ok and type(dn) == "string"
-           and not (issecretvalue and issecretvalue(dn)) and dn ~= "" and dn ~= name then
-            display = dn
+    -- MethodInternal's surface choice is authoritative for known Method players,
+    -- including Character Name (which deliberately equals the raw name). It sits
+    -- ahead of the EUI master toggle so the MethodInternal-owned setting works on
+    -- its selected surface; unknown players continue through EUI's normal chain.
+    if EasyNicknameAPI and EasyNicknameAPI.GetNicknameForUnitForSurface then
+        local ok, dn, handled = pcall(
+            EasyNicknameAPI.GetNicknameForUnitForSurface, unit, "unitFrames")
+        if ok and handled == true then
+            if type(dn) == "string"
+               and not (issecretvalue and issecretvalue(dn)) and dn ~= "" then
+                return dn
+            end
+            return name
         end
     end
-    if not display and not nameSecret and EasyNicknameAPI and EasyNicknameAPI.GetNicknameForUnit then
-        local ok, dn = pcall(EasyNicknameAPI.GetNicknameForUnit, unit)
+    -- Master toggle (Unit Frames > main frames > Display, default OFF): when off,
+    -- skip the remaining provider lookups and show the raw unit name (display-safe).
+    if not (db and db.profile and db.profile.showNicknames) then return name end
+    if not nameSecret and NSAPI and NSAPI.GetName then
+        local ok, dn = pcall(NSAPI.GetName, NSAPI, name, "EUI")
         if ok and type(dn) == "string"
            and not (issecretvalue and issecretvalue(dn)) and dn ~= "" and dn ~= name then
             display = dn
@@ -2464,13 +2494,21 @@ do
     end)
 end
 
--- Provider callbacks. NSAPI and TimelineReminders may load after us, so registration
--- retries on PLAYER_LOGIN/PLAYER_ENTERING_WORLD until it sticks. Registrant key MUST
+-- Provider callbacks. MethodInternal uses the addon-loaded callback; NSAPI and
+-- TimelineReminders retry on PLAYER_LOGIN/PLAYER_ENTERING_WORLD. Registrant key MUST
 -- be "EllesmereUIUnitFrames", not "EllesmereUI": Raid Frames owns that key and
 -- CallbackHandler keys registrations by it, so reuse would clobber one module. The
 -- provider CHECKBOX key stays shared (ns.NICK_ADDON/"EUI") so one toggle drives raid AND unit frames.
 do
     local function RefreshNames() if ns.RefreshAllUnitNames then ns.RefreshAllUnitNames() end end
+    local function RegisterMethodInternal()
+        if ns._methodInternalSurfaceNickHooked then return end
+        if EasyNicknameAPI and EasyNicknameAPI.RegisterCallback then
+            EasyNicknameAPI.RegisterCallback(
+                "SurfaceNicknamesChanged", RefreshNames, "EllesmereUIUnitFrames")
+            ns._methodInternalSurfaceNickHooked = true
+        end
+    end
     local function RegisterNSRT()
         if ns._nsrtNickHooked then return true end
         if NSAPI and NSAPI.RegisterCallback then
@@ -2506,6 +2544,7 @@ do
             if (a and b) or event == "PLAYER_ENTERING_WORLD" then self:UnregisterAllEvents() end
         end)
     end
+    EventUtil.ContinueOnAddOnLoaded("MethodInternal", RegisterMethodInternal)
 end
 
 -- "Name > Target" is built from FOUR tags so the (possibly SECRET) target name is never
@@ -2700,7 +2739,7 @@ do
     -- returns route through a scratch table + unpack (tables carry secrets
     -- fine; nothing inspects them).
     local scratch = {}
-    local function PaintText(frame, unit)
+    local function PaintText(frame, unit, event)
         local zones = frame._euiTextZones
         if not zones then return end
         for i = 1, #zones do
@@ -2840,6 +2879,19 @@ local function CastIconInWidth(unit, s)
     return s.showCastIcon ~= false and s.castbarIconInWidth ~= false
 end
 
+-- Whether the cast spell icon is shown at all. Independent of "part of the
+-- bar" (CastIconInWidth folds this in already for its own purposes, but
+-- LayoutCastbarIcon needs the shown state on its own to know whether a
+-- disabled icon should suppress the bar's facing border).
+local function CastIconShown(unit, s)
+    s = s or GetSettingsForUnit(unit)
+    if not s then return true end
+    if unit == "player" then
+        return s.showPlayerCastIcon ~= false
+    end
+    return s.showCastIcon ~= false
+end
+
 -- Whether the cast spell icon sits on the RIGHT of the bar instead of the
 -- default left. Independent of "part of the bar"; defaults off (left).
 local function CastIconOnRight(unit, s)
@@ -2872,7 +2924,7 @@ end
 -- at final height/scale). iconH is the configured cast bar height (castbarHeight/
 -- playerCastbarHeight), used only for the square WIDTH and matching fill inset so
 -- those stay deterministic; falls back to bg:GetHeight().
-local function LayoutCastbarIcon(castbar, inWidth, iconH, onRight, offX, offY)
+local function LayoutCastbarIcon(castbar, inWidth, iconH, onRight, offX, offY, iconShown)
     if not castbar then return end
     local bg = castbar:GetParent()
     if not bg then return end
@@ -2919,12 +2971,15 @@ local function LayoutCastbarIcon(castbar, inWidth, iconH, onRight, offX, offY)
     -- the facing edge on each side, same _hideLeft/_hideRight pattern as the
     -- health/power seam elsewhere in this file. Only when truly flush (no
     -- configured icon offset): with an offset there's a real gap, and hiding
-    -- both edges would leave it with no border on either side.
+    -- both edges would leave it with no border on either side. And only when
+    -- the icon is actually shown -- a disabled icon still owns a (hidden)
+    -- iconFrame, so blindly suppressing the bar's facing edge here left the
+    -- bar with no border at all on that side while the icon is off.
     if iconFrame then
         local iconEdges = PP.GetBorders(iconFrame)
         local barEdges = PP.GetBorders(castbar)
         if iconEdges and barEdges then
-            if offX == 0 and offY == 0 then
+            if iconShown and offX == 0 and offY == 0 then
                 iconEdges._hideRight = (not onRight) or nil
                 iconEdges._hideLeft  = onRight or nil
                 barEdges._hideLeft   = (not onRight) or nil
@@ -5014,6 +5069,48 @@ ns.UF_ApplyStripBarLayout = function(stripBar, hp, position, height, absorbLevel
     end
 end
 
+-- Armed-frames absorb belt (mirror of the Raid Frames one): covers the ONE
+-- absorb transition with no event at all -- an aura-granted shield expiring
+-- on its TIMER on an unhit, topped unit (VDH Infernal Strike field class).
+-- One shared 0.5s ticker exists only while some hosted frame is armed; each
+-- sweep repaints only stale-painted armed frames and cancels itself when the
+-- set empties. Zero event registrations, zero cost with no shields up.
+do
+    local armed = {}
+    local belt
+    function ns.UF_AbArm(frame)
+        frame._absActive = true
+        armed[frame] = true
+        if not belt and C_Timer then
+            belt = C_Timer.NewTicker(0.5, function()
+                local now = GetTime()
+                local any = false
+                for f in pairs(armed) do
+                    any = true
+                    if (now - (f._absPaintAt or 0)) > 0.45 then
+                        local hp = f.HealthPrediction
+                        local ov = hp and hp.Override
+                        if ov then ov(f, "EUI_AbsorbBelt", f._euiUnit) end
+                    end
+                end
+                if not any then belt:Cancel(); belt = nil end
+            end)
+        end
+    end
+    function ns.UF_AbDisarm(frame)
+        -- Armed -> clear is the moment a shield ended; if it ended with no
+        -- absorb event (the timer-expiry class this belt exists for), any
+        -- long-form Absorb text zone is showing the dead amount. One text
+        -- recompose here keeps those zones honest WITHOUT the text channel
+        -- riding UNIT_AURA. No-op frames early-return on their zone list.
+        if frame._absActive and ns.UF_PaintText then
+            ns.UF_PaintText(frame, frame._euiUnit, "EUI_AbsorbEnd")
+        end
+        frame._absActive = false
+        armed[frame] = nil
+    end
+end
+
 local function CreateAbsorbBar(frame, unit, settings)
     if not frame.Health then return end
 
@@ -5089,17 +5186,6 @@ local function CreateAbsorbBar(frame, unit, settings)
     forwardBar:SetFrameLevel(hpBar:GetFrameLevel() + 1)
     forwardBar:Hide()
 
-    -- Per-frame secret-safe absorb calculator; matches the nameplate
-    -- UpdateHealthValues init exactly.
-    local hpCalc
-    if CreateUnitHealPredictionCalculator then
-        hpCalc = CreateUnitHealPredictionCalculator()
-        if hpCalc.SetMaximumHealthMode then
-            hpCalc:SetMaximumHealthMode(Enum.UnitMaximumHealthMode.WithAbsorbs)
-            hpCalc:SetDamageAbsorbClampMode(Enum.UnitDamageAbsorbClampMode.MaximumHealth)
-        end
-    end
-
     -- Heal absorb bar: overlays filled-health in red, reverse-filling from the health
     -- texture edge inward. Has its OWN clip frame (not the shield's curClip) so
     -- placement is independent: overlay clips to filled health, right/left span the
@@ -5171,7 +5257,6 @@ local function CreateAbsorbBar(frame, unit, settings)
     backfillBar._topBar       = absorbTopBar
     backfillBar._healTopBar   = healAbsorbTopBar
     backfillBar._hpBar        = hpBar
-    backfillBar._hpCalculator = hpCalc
     backfillBar._curClip      = curClip
     backfillBar._healClip     = healClip
     backfillBar._missClip     = missClip
@@ -5189,15 +5274,29 @@ local function CreateAbsorbBar(frame, unit, settings)
         healAbsorbBar:Hide()
     end)
 
-    frame.HealthPrediction = {
-        damageAbsorb = backfillBar,
-        Override = function(self, event, updUnit)
+    -- Named local so profilers attribute this hot painter (it traced as the
+    -- "(anonymous) :5228" row); assigned into HealthPrediction below.
+    local UF_AbsorbOverride
+    UF_AbsorbOverride = function(self, event, updUnit)
             if self._euiUnit ~= updUnit then return end
 
             -- Incoming-heal prediction is never rendered on unit frames, so its frequent
             -- healer-cast-driven events change nothing we paint; absorb/health changes
             -- always arrive via their own events, so skipping cannot strand state.
             if event == "UNIT_HEAL_PREDICTION" then return end
+
+            -- Arm on the dedicated absorb events (plainly observable even
+            -- while values are secret). Value-only health chatter is not
+            -- delivered to this channel at all (engine list); max changes
+            -- repaint ONLY while a shield/heal-absorb is known active --
+            -- with no absorb, a range change moves nothing visible.
+            -- Repoints, ForceUpdate and the belt always paint and re-derive
+            -- the flag below. Mirror of the RF gate.
+            if event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
+                ns.UF_AbArm(self)
+            elseif event == "UNIT_MAXHEALTH" and not self._absActive then
+                return
+            end
 
             -- Drive the "Absorb Short" health-text gate(s): feed the raw absorb so the
             -- clip reveals/collapses, AND refresh the text in LOCKSTEP so it never
@@ -5208,16 +5307,16 @@ local function CreateAbsorbBar(frame, unit, settings)
             -- pet) get re-pointed with no absorb event at all (target switch, OnShow,
             -- ForceUpdate), and a dying unit drops its shield without one either -- the
             -- TAG re-evaluates on those paths and lands on "0", so a gate still held
-            -- open by the PREVIOUS unit's shield would leave a stuck "0". Health events
-            -- skip the text refresh (absorb text only changes on an absorb event, which
-            -- does its own lockstep SetText). Secret-safe: absorb only reaches SetValue
+            -- open by the PREVIOUS unit's shield would leave a stuck "0". Max-health
+            -- events skip the text refresh (absorb text only changes on an absorb event,
+            -- which does its own lockstep SetText). Secret-safe: absorb only reaches SetValue
             -- and AbbreviateNumbers, never a zero comparison. Each gate feeds its own
             -- source: shield gates use total absorbs, heal gates (g._euiHealGate) total
             -- heal absorbs, fetched lazily once.
+            local shieldAmt, healAmt
             if self._absGate then
-                local syncText = (event ~= "UNIT_HEALTH" and event ~= "UNIT_MAXHEALTH"
-                                  and event ~= "UNIT_HEAL_PREDICTION")
-                local shieldAmt, healAmt, fsZone
+                local syncText = (event ~= "UNIT_MAXHEALTH")
+                local fsZone
                 for zone, g in pairs(self._absGate) do
                     if g:IsShown() then
                         local amt
@@ -5246,7 +5345,6 @@ local function CreateAbsorbBar(frame, unit, settings)
             if not ab then return end
             local fw   = ab._forward
             local hp   = ab._hpBar
-            local calc = ab._hpCalculator
             if not hp then return end
 
             -- Heal absorb renders independently of shield absorb: shield "none" hides
@@ -5280,21 +5378,49 @@ local function CreateAbsorbBar(frame, unit, settings)
                 return
             end
 
-            local maxHealth, absorbAmt
-            if calc and UnitGetDetailedHealPrediction then
-                UnitGetDetailedHealPrediction(updUnit, nil, calc)
-                calc:SetMaximumHealthMode(Enum.UnitMaximumHealthMode.Default)
-                maxHealth = calc:GetMaximumHealth()
-                absorbAmt = calc:GetDamageAbsorbs()
+            -- Direct pair, matching PaintHealth's scale: the health bar runs raw
+            -- UnitHealthMax, and every absorb sink below is a StatusBar with a
+            -- (0, maxHealth) range that clamps oversized shields visually, so a
+            -- detailed-prediction calculator adds fetches without changing a pixel.
+            -- The gate block above may have fetched the shield total already.
+            local maxHealth = UnitHealthMax(updUnit) or 0
+            local absorbAmt = shieldAmt or (UnitGetTotalAbsorbs and UnitGetTotalAbsorbs(updUnit)) or 0
+
+            -- Lean-flag derivation + belt stamp (mirror of Raid Frames): a
+            -- fresh PLAIN all-zero read disarms the head gate; secret reads
+            -- keep it armed (fail-open to today's always-paint in combat).
+            self._absPaintAt = GetTime()
+            local haAmtD = healAmt or (UnitGetTotalHealAbsorbs and UnitGetTotalHealAbsorbs(updUnit)) or 0
+            local isSecD = issecretvalue
+            if (isSecD and (isSecD(absorbAmt) or isSecD(haAmtD)))
+               or (absorbAmt or 0) > 0 or (haAmtD or 0) > 0 then
+                if not self._absActive then ns.UF_AbArm(self) end
             else
-                maxHealth = UnitHealthMax(updUnit) or 0
-                absorbAmt = (UnitGetTotalAbsorbs and UnitGetTotalAbsorbs(updUnit)) or 0
+                ns.UF_AbDisarm(self)
             end
 
-            -- Keep bars sized to the health bar every update.
             local hpW, hpH = hp:GetWidth(), hp:GetHeight()
-            ab:SetWidth(hpW); ab:SetHeight(hpH)
-            if fw then fw:SetWidth(hpW); fw:SetHeight(hpH) end
+            -- Identical-state short-circuit (RF's memo, ported): chatter
+            -- events with unchanged values skip the whole paint below.
+            -- Identity/settings/belt paints bypass the skip; any secret input
+            -- fails open to painting and poisons the memo for the next plain
+            -- pass (exactly the RF contract).
+            if isSecD and (isSecD(absorbAmt) or isSecD(maxHealth) or isSecD(haAmtD)) then
+                ab._mAbs = nil
+            elseif event ~= "ForceUpdate" and event ~= "Resettle" and event ~= "EUI_AbsorbBelt"
+               and ab._mAbs == absorbAmt and ab._mHeal == haAmtD
+               and ab._mMax == maxHealth and ab._mW == hpW and ab._mH == hpH then
+                return
+            else
+                ab._mAbs, ab._mHeal, ab._mMax = absorbAmt, haAmtD, maxHealth
+                ab._mW, ab._mH = hpW, hpH
+            end
+            -- Bars track the health-bar size; size-gated (sizes never secret).
+            if ab._szW ~= hpW or ab._szH ~= hpH then
+                ab._szW = hpW; ab._szH = hpH
+                ab:SetWidth(hpW); ab:SetHeight(hpH)
+                if fw then fw:SetWidth(hpW); fw:SetHeight(hpH) end
+            end
 
             -- Strip bars (mirrors Raid Frames): independent of the overlay styles.
             if topBar then
@@ -5328,7 +5454,7 @@ local function CreateAbsorbBar(frame, unit, settings)
                     end
                     healTopBar:SetStatusBarColor(hbc.r, hbc.g, hbc.b, hbc.a or 1)
                     healTopBar:SetMinMaxValues(0, maxHealth)
-                    healTopBar:SetValue((UnitGetTotalHealAbsorbs and UnitGetTotalHealAbsorbs(updUnit)) or 0)
+                    healTopBar:SetValue(haAmtD)
                     healTopBar:Show()
                 else
                     healTopBar:Hide()
@@ -5345,11 +5471,15 @@ local function CreateAbsorbBar(frame, unit, settings)
             -- re-anchors the backfill in UpdateAbsorbBarReverseFill.
             local osMode = s and s.overshieldMode
             if osMode == nil then osMode = (s and s.showOvershield == false) and "never" or "always" end
-            local edgeKey = absorbMode .. ":" .. ((s and s.healAbsorbEdgeMode) or "overlay")
-                .. ":" .. tostring((s and s.healthVerticalFill) and true or false)
-                .. ":" .. osMode
-            if ab._lastEdgeKey ~= edgeKey then
-                ab._lastEdgeKey = edgeKey
+            -- Component compares instead of a concatenated key: same change
+            -- detection, zero string allocation on the per-event path. Fields
+            -- start nil, so the first update always anchors.
+            local healEdgeMode = (s and s.healAbsorbEdgeMode) or "overlay"
+            local vertFill = (s and s.healthVerticalFill) and true or false
+            if ab._ekAbs ~= absorbMode or ab._ekHeal ~= healEdgeMode
+               or ab._ekVert ~= vertFill or ab._ekOs ~= osMode then
+                ab._ekAbs, ab._ekHeal = absorbMode, healEdgeMode
+                ab._ekVert, ab._ekOs = vertFill, osMode
                 UpdateAbsorbBarReverseFill(self, ab._isReversed)
             end
 
@@ -5424,7 +5554,10 @@ local function CreateAbsorbBar(frame, unit, settings)
                     end
                 end
             end
-        end,
+    end
+    frame.HealthPrediction = {
+        damageAbsorb = backfillBar,
+        Override = UF_AbsorbOverride,
     }
 
     -- The anchors above are the horizontal layout; hand the cluster to the shared
@@ -6693,7 +6826,10 @@ local function CreateCastBar(frame, unit, settings)
 
     -- Initial icon/fill layout (re-applied on every reload by the per-unit
     -- update paths and whenever the cast-bar height changes).
-    LayoutCastbarIcon(castbar, CastIconInWidth(unit, settings), cbHeight, CastIconOnRight(unit, settings), CastIconOffsets(unit, settings))
+    do
+        local offX, offY = CastIconOffsets(unit, settings)
+        LayoutCastbarIcon(castbar, CastIconInWidth(unit, settings), cbHeight, CastIconOnRight(unit, settings), offX, offY, CastIconShown(unit, settings))
+    end
 
     return castbar
 end
@@ -9630,8 +9766,13 @@ local function CreateCustomClassPower(playerFrame, style)
         end
 
         eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-        eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-
+        -- PLAYER_SPECIALIZATION_CHANGED is deliberately NOT registered here. It is owned
+        -- by cpSpecWatcher (see InitializeFrames), which lives OUTSIDE the container,
+        -- filters unit == "player", and rebuilds after tearing down. A copy of that
+        -- handler on this driver could only ever destroy WITHOUT rebuilding (the
+        -- teardown unregisters the driver mid-dispatch), and -- lacking the unit filter
+        -- -- would fire on any GROUP MEMBER's spec event, silently killing the bar until
+        -- the next /reload.
         if needsAura then
             eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
         end
@@ -9645,14 +9786,7 @@ local function CreateCustomClassPower(playerFrame, style)
         end
 
         eventFrame:SetScript("OnEvent", function(_, event, ...)
-            if event == "PLAYER_SPECIALIZATION_CHANGED" then
-                DestroyCustomClassPower()
-                frames._classPowerBar = nil
-                -- Don't call ReloadFrames here: the profile system handles the full
-                -- rebuild via RefreshAllAddons -> _EUF_ReloadFrames. Width/height
-                -- matches re-apply after CDM clears _specProfileSwitching in ProcessSpecChange.
-                return
-            elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            if event == "UNIT_SPELLCAST_SUCCEEDED" then
                 if not _G._ERB_AceDB and EllesmereUI then
                     local unit, castGUID, spellID = ...
                     if unit == "player" then
@@ -10280,7 +10414,8 @@ local function ReloadFrames()
                                     local cbg = settings.castBgColor
                                     castbarBg._bgTex:SetColorTexture(cbg and cbg.r or 0, cbg and cbg.g or 0, cbg and cbg.b or 0, settings.castBgAlpha or 0.5)
                                 end
-                                LayoutCastbarIcon(frame.Castbar, CastIconInWidth("player", settings), nil, CastIconOnRight("player", settings), CastIconOffsets("player", settings))
+                                local pIconOffX, pIconOffY = CastIconOffsets("player", settings)
+                                LayoutCastbarIcon(frame.Castbar, CastIconInWidth("player", settings), nil, CastIconOnRight("player", settings), pIconOffX, pIconOffY, CastIconShown("player", settings))
                                 -- Resize cast icon to match castbar height
                                 if frame.Castbar._iconFrame then
                                     PP.Size(frame.Castbar._iconFrame, cbH, cbH)
@@ -10792,7 +10927,8 @@ local function ReloadFrames()
                                     local cbg = settings.castBgColor
                                     castbarBg._bgTex:SetColorTexture(cbg and cbg.r or 0, cbg and cbg.g or 0, cbg and cbg.b or 0, settings.castBgAlpha or 0.5)
                                 end
-                                LayoutCastbarIcon(frame.Castbar, CastIconInWidth("target", settings), nil, CastIconOnRight("target", settings), CastIconOffsets("target", settings))
+                                local tIconOffX, tIconOffY = CastIconOffsets("target", settings)
+                                LayoutCastbarIcon(frame.Castbar, CastIconInWidth("target", settings), nil, CastIconOnRight("target", settings), tIconOffX, tIconOffY, CastIconShown("target", settings))
                                 if frame.Castbar._iconFrame then
                                     PP.Size(frame.Castbar._iconFrame, cbH2, cbH2)
                                     if not frame.Castbar:IsShown() then
@@ -11206,7 +11342,8 @@ local function ReloadFrames()
                                 local cbg = settings.castBgColor
                                 castbarBg._bgTex:SetColorTexture(cbg and cbg.r or 0, cbg and cbg.g or 0, cbg and cbg.b or 0, settings.castBgAlpha or 0.5)
                             end
-                            LayoutCastbarIcon(frame.Castbar, CastIconInWidth("focus", settings), nil, CastIconOnRight("focus", settings), CastIconOffsets("focus", settings))
+                            local fIconOffX, fIconOffY = CastIconOffsets("focus", settings)
+                            LayoutCastbarIcon(frame.Castbar, CastIconInWidth("focus", settings), nil, CastIconOnRight("focus", settings), fIconOffX, fIconOffY, CastIconShown("focus", settings))
                             if frame.Castbar._iconFrame then
                                 PP.Size(frame.Castbar._iconFrame, cbH3, cbH3)
                                 if not frame.Castbar:IsShown() then
@@ -11582,7 +11719,8 @@ local function ReloadFrames()
                             local bCbW = settings.castbarWidth or 0
                             if bCbW > 0 and bCbW < 30 then bCbW = 30 end
                             PP.Size(castbarBg, bCbW > 0 and bCbW or totalWidth, settings.castbarHeight or 14)
-                            LayoutCastbarIcon(frame.Castbar, CastIconInWidth("boss1", settings), nil, CastIconOnRight("boss1", settings), CastIconOffsets("boss1", settings))
+                            local bIconOffX, bIconOffY = CastIconOffsets("boss1", settings)
+                            LayoutCastbarIcon(frame.Castbar, CastIconInWidth("boss1", settings), nil, CastIconOnRight("boss1", settings), bIconOffX, bIconOffY, CastIconShown("boss1", settings))
                             if frame.Castbar._iconFrame then
                                 local cbH = settings.castbarHeight or 14
                                 PP.Size(frame.Castbar._iconFrame, cbH, cbH)
@@ -15520,13 +15658,36 @@ do
     local RACIAL_DISPEL_TYPES = {
         bleed = { Dwarf = true },  -- Stoneform
     }
+    -- The token is equally blind to talent dispels: a shaman's poison removal is
+    -- Poison Cleansing Totem, so Poison never passes for them. Raid Frames applies
+    -- the same rule to its group-wide dispel slots (EUI_RaidFrames_AuraContainers.lua).
+    -- Cached: IsPlayerSpell can lag both addon load and the trait event that
+    -- announces a change; the shaman watcher in EUI_UnitFrames_AuraContainers.lua
+    -- calls UF_RefreshPoisonTotem on trait and spellbook events and reloads the
+    -- dispel slots when it reports a flip.
+    local POISON_CLEANSING_TOTEM = 383013
+    local _, ufPlayerClass = UnitClass("player")
+    local poisonTotemKnown = ufPlayerClass == "SHAMAN"
+        and IsPlayerSpell(POISON_CLEANSING_TOTEM) or false
+    function ns.UF_RefreshPoisonTotem()
+        local known = ufPlayerClass == "SHAMAN"
+            and IsPlayerSpell(POISON_CLEANSING_TOTEM) or false
+        if known == poisonTotemKnown then return false end
+        poisonTotemKnown = known
+        return true
+    end
     -- Shared with the 12.1 container slots (EUI_UnitFrames_AuraContainers.lua),
     -- which apply the same rule by choosing which slot style stays visible.
-    function ns.UF_RacialClearsDispel(typeKey)
+    function ns.UF_TokenBlindDispel(typeKey)
         local races = RACIAL_DISPEL_TYPES[typeKey]
-        if not races then return false end
-        local _, raceToken = UnitRace("player")
-        return raceToken ~= nil and races[raceToken] == true
+        if races then
+            local _, raceToken = UnitRace("player")
+            return raceToken ~= nil and races[raceToken] == true
+        end
+        if typeKey == "poison" then
+            return poisonTotemKnown
+        end
+        return false
     end
 
     local function RebuildCurve()

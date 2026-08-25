@@ -126,7 +126,6 @@ local UnitIsConnected       = UnitIsConnected
 local UnitIsVisible         = UnitIsVisible
 local UnitIsDeadOrGhost     = UnitIsDeadOrGhost
 local UnitHasIncomingResurrection = UnitHasIncomingResurrection
-local UnitGroupRolesAssigned = UnitGroupRolesAssigned
 local UnitThreatSituation   = UnitThreatSituation
 local UnitIsUnit            = UnitIsUnit
 local UnitInRange           = UnitInRange
@@ -1176,18 +1175,13 @@ function ns.RF_AnchorHostFor(d)
     return ns.RF_AnchorHost(d.health, s)
 end
 
--- Role for POWER-BAR gating. UnitGroupRolesAssigned returns "NONE" for the solo
--- player, which would fall through to the DPS toggle and wrongly hide a solo
--- healer's mana bar, so fall back to spec role. Player only: other units have
--- no reliable spec role, and in a real group Blizzard never returns "NONE".
+-- Role for POWER-BAR gating. Effective role (EllesmereUI.UnitEffectiveRole):
+-- the player's spec wins over the assigned role, which covers both the solo
+-- "NONE" case (a solo healer's mana bar must not fall through to the DPS
+-- toggle) and a stale premade-listing role (listed as tank, playing dps).
+-- Other units keep the assigned role.
 ns._ResolvePowerRole = function(unit)
-    local role = UnitGroupRolesAssigned(unit)
-    if role == "NONE" and UnitIsUnit(unit, "player") then
-        local spec = GetSpecialization and GetSpecialization()
-        local specRole = spec and GetSpecializationRole and GetSpecializationRole(spec)
-        if specRole then return specRole end
-    end
-    return role
+    return EllesmereUI.UnitEffectiveRole(unit)
 end
 
 -------------------------------------------------------------------------------
@@ -1397,44 +1391,65 @@ end
 -- death/resurrect transitions) stay in lockstep -- else a resurrect arriving only via UNIT_HEALTH
 -- strands the tint. Colors overridable via the Status Colors swatch in Extras; inline fallbacks
 -- allocate only when the DB key is missing. On ns (local cap).
-function ns._ApplyHealthBg(d, health, s, unit)
+function ns._ApplyHealthBg(d, health, s, unit, connected, deadOrGhost)
     local EllesmereUI = ns.EllesmereUI  -- upvalue read, not a global read (see taint note at top)
     local bg = d.bg
-    if not UnitIsConnected(unit) then
-        if bg then
-            local c = s.statusColorOffline or { r = 0x66/255, g = 0x66/255, b = 0x66/255 }
-            bg:ClearAllPoints(); bg:SetAllPoints(health)
-            bg:SetColorTexture(c.r, c.g, c.b, 1)
+    if connected == nil then connected = UnitIsConnected(unit) end
+    if deadOrGhost == nil then deadOrGhost = UnitIsDeadOrGhost(unit) end
+    -- Dead/offline: bg covers the FULL bar, fill dims. State+color stamped so
+    -- a repeated tick in the same state re-applies nothing; entering either
+    -- state clears the alive-path anchor/color stamps AND the fill-color
+    -- stamp in _UpdateButtonHealth (the tint here overwrote its work).
+    if not connected or deadOrGhost then
+        local c = (not connected) and (s.statusColorOffline or { r = 0x66/255, g = 0x66/255, b = 0x66/255 })
+            or (s.statusColorDead or { r = 0x24/255, g = 0x17/255, b = 0x17/255 })
+        local st = (not connected) and 3 or 2
+        if d._bgSt ~= st or d._bgR ~= c.r or d._bgG ~= c.g or d._bgB ~= c.b then
+            d._bgSt, d._bgR, d._bgG, d._bgB = st, c.r, c.g, c.b
+            d._bgTex, d._bgA = nil, nil
+            d._hcR = nil
+            if bg then
+                bg:ClearAllPoints(); bg:SetAllPoints(health)
+                bg:SetColorTexture(c.r, c.g, c.b, 1)
+            end
+            if health then
+                if st == 3 then health:SetStatusBarColor(0.3, 0.3, 0.3, 0.3)
+                else health:SetStatusBarColor(0.3, 0.3, 0.3, 0.5) end
+            end
         end
-        if health then health:SetStatusBarColor(0.3, 0.3, 0.3, 0.3) end
-        return
-    elseif UnitIsDeadOrGhost(unit) then
-        if bg then
-            local c = s.statusColorDead or { r = 0x24/255, g = 0x17/255, b = 0x17/255 }
-            bg:ClearAllPoints(); bg:SetAllPoints(health)
-            bg:SetColorTexture(c.r, c.g, c.b, 1)
-        end
-        if health then health:SetStatusBarColor(0.3, 0.3, 0.3, 0.5) end
         return
     end
     if not bg then return end
-    bg:ClearAllPoints()
-    -- The bg covers only MISSING health, so it hangs off the far side of the fill: the fill's
-    -- right edge normally, its top edge on a vertical bar. Axis read off the bar, no settings lookup.
-    if health.GetOrientation and health:GetOrientation() == "VERTICAL" then
-        bg:SetPoint("TOPLEFT", health, "TOPLEFT", 0, 0)
-        bg:SetPoint("BOTTOMRIGHT", health:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
-    else
-        bg:SetPoint("TOPLEFT", health:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
-        bg:SetPoint("BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
+    -- Alive: the bg covers only MISSING health, so it hangs off the far side of the
+    -- fill: the fill's right edge normally, its top edge on a vertical bar. The
+    -- anchor set only changes when the fill texture object or the axis does, so it
+    -- is stamped instead of being re-cleared and re-set on every health tick.
+    local vert = health.GetOrientation and health:GetOrientation() == "VERTICAL"
+    local tex = health:GetStatusBarTexture()
+    if d._bgSt ~= 1 or d._bgTex ~= tex or d._bgVert ~= vert then
+        d._bgSt, d._bgTex, d._bgVert = 1, tex, vert
+        d._bgA = nil
+        bg:ClearAllPoints()
+        if vert then
+            bg:SetPoint("TOPLEFT", health, "TOPLEFT", 0, 0)
+            bg:SetPoint("BOTTOMRIGHT", tex, "TOPRIGHT", 0, 0)
+        else
+            bg:SetPoint("TOPLEFT", tex, "TOPRIGHT", 0, 0)
+            bg:SetPoint("BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
+        end
     end
+    local br, bgr, bb, ba
     if s.healthColorMode == "dark" then
-        bg:SetColorTexture(EllesmereUI.GetDarkModeBg())
+        br, bgr, bb, ba = EllesmereUI.GetDarkModeBg()
     else
         -- Class-colored when bgClassColored, else custom (GetBgColor handles the secret-value
         -- guard + alpha = bgDarkness). MUST match the layout-pass and preview paths or this
         -- refresh clobbers the class-colored bg.
-        bg:SetColorTexture(ns.GetBgColor(unit, s))
+        br, bgr, bb, ba = ns.GetBgColor(unit, s)
+    end
+    if d._bgR ~= br or d._bgG ~= bgr or d._bgB ~= bb or d._bgA ~= ba then
+        d._bgR, d._bgG, d._bgB, d._bgA = br, bgr, bb, ba
+        bg:SetColorTexture(br, bgr, bb, ba)
     end
 end
 
@@ -1536,11 +1551,16 @@ local function ResolveDisplayName(unit, applyCap, s)
         end
     end
     -- MethodInternal nicknames (EasyNicknameAPI), second source.
-    if not display and EasyNicknameAPI and EasyNicknameAPI.GetNicknameForUnit then
-        local ok, dn = pcall(EasyNicknameAPI.GetNicknameForUnit, unit)
-        if ok and type(dn) == "string"
-           and not (issecretvalue and issecretvalue(dn)) and dn ~= "" and dn ~= name then
-            display = dn
+    if not display and EasyNicknameAPI and EasyNicknameAPI.GetNicknameForUnitForSurface then
+        local ok, dn, handled = pcall(
+            EasyNicknameAPI.GetNicknameForUnitForSurface, unit, "raidFrames")
+        if ok and handled == true then
+            if type(dn) == "string"
+               and not (issecretvalue and issecretvalue(dn)) and dn ~= "" then
+                display = dn
+            else
+                display = name
+            end
         end
     end
     -- TimelineReminders, gated by its own EllesmereUI checkbox. GetNickname falls back to the
@@ -2600,8 +2620,24 @@ local function UpdateAbsorb(button, unit)
     -- open to painting and poisons the memo for the next plain pass.
     local hpW, hpH = hp:GetWidth(), hp:GetHeight()
     local isSec = issecretvalue
-    if isSec and (isSec(absorbAmt) or isSec(maxHealth)
-       or isSec(healAbsorbAmt) or isSec(isClamped) or isSec(incomingHeals)) then
+    local anySec = isSec and (isSec(absorbAmt) or isSec(maxHealth)
+       or isSec(healAbsorbAmt) or isSec(isClamped) or isSec(incomingHeals))
+    -- Absorb-active lean flag: the health ride repaints absorbs ONLY while
+    -- this is set (clamp state can flip with health while shielded; with no
+    -- absorb, a health change alters nothing this function paints). Event
+    -- branches arm it; a fresh PLAIN all-zero read here disarms; secret reads
+    -- keep it armed (fail-open = today's always-paint behavior in combat).
+    ab._paintAt = GetTime()
+    if anySec then
+        if not d._absActive then ns._AbArm(button, unit, d) end
+    elseif (absorbAmt or 0) > 0 or (healAbsorbAmt or 0) > 0
+        or incomingHeals > 0 or isClamped == true then
+        if not d._absActive then ns._AbArm(button, unit, d) end
+    else
+        d._absActive = false
+        ns._abArmed[button] = nil
+    end
+    if anySec then
         ab._mAbs = nil
     elseif ab._mAbs == absorbAmt and ab._mHeal == healAbsorbAmt
        and ab._mMax == maxHealth and ab._mClamp == isClamped
@@ -2916,6 +2952,58 @@ end
 -------------------------------------------------------------------------------
 --  Debuff grid layout (shared by the live render and the options preview)
 -------------------------------------------------------------------------------
+-- Absorb paint coalescer (Blizzard's own CompactUnitFrame model: absorb /
+-- heal-prediction repaints are "frequent and expensive, update once per frame
+-- at most"). Event branches MARK; one flush paints each dirty button once per
+-- render frame -- server batches land several absorb-family events per button
+-- in one frame at raid scale, and only the last paint renders. The flush
+-- frame is hidden whenever the set is empty. On ns (200-local cap).
+ns._abDirty = {}
+ns._abFlush = CreateFrame("Frame")
+ns._abFlush:Hide()
+ns._abFlush:SetScript("OnUpdate", function(self)
+    for button, unit in pairs(ns._abDirty) do
+        UpdateAbsorb(button, unit)
+    end
+    table.wipe(ns._abDirty)
+    self:Hide()
+end)
+function ns._MarkAbsorbDirty(button, unit)
+    ns._abDirty[button] = unit
+    ns._abFlush:Show()
+end
+
+-- Armed-members belt: covers the ONE transition with no event at all -- an
+-- aura-granted shield expiring on its TIMER on an unhit, topped unit (VDH
+-- Infernal Strike field report; damaged/healed units correct instantly via
+-- the health/absorb events). One shared 0.5s ticker exists only while some
+-- member is armed; each sweep repaints ONLY armed members whose last paint is
+-- stale (event-active members are skipped by the stamp compare), and the
+-- ticker cancels itself when the armed set empties. Zero event registrations,
+-- zero cost with no shields anywhere.
+ns._abArmed = ns._abArmed or {}
+function ns._AbArm(button, unit, d)
+    d._absActive = true
+    ns._abArmed[button] = unit
+    if not ns._abBelt and C_Timer then
+        ns._abBelt = C_Timer.NewTicker(0.5, function()
+            local now = GetTime()
+            local any = false
+            for btn, u in pairs(ns._abArmed) do
+                any = true
+                local ab = GetFFD(btn).absorbBar
+                if not ab or (now - (ab._paintAt or 0)) > 0.45 then
+                    ns._MarkAbsorbDirty(btn, u)
+                end
+            end
+            if not any then
+                ns._abBelt:Cancel()
+                ns._abBelt = nil
+            end
+        end)
+    end
+end
+
 -- Effective icon size for dispellable debuffs routed to their own anchor ("Dispellable Debuff
 -- Location"): 0 = match the main Debuff Size. Reads scaled proxies transparently (the key is in
 -- INDICATOR_SCALE_KEYS; 0 scales to 0, so the match sentinel survives). On ns (200-local cap).
@@ -3131,6 +3219,11 @@ local function StyleButton(button)
     ns.RF_ApplyHealthOrientation(health, s)
     health:SetMinMaxValues(0, 100)
     health:SetValue(100)
+    -- Pre-paint tint: a StatusBar texture renders WHITE (default vertex
+    -- color) until the first content paint assigns the real class/reaction
+    -- color a few frames after login (the styling drain). Start dark so the
+    -- loading shell reads as calm empty frames instead of a flat white flash.
+    health:SetStatusBarColor(0.12, 0.12, 0.12)
     d.health = health
 
     -- Full-height anchor reference for Uniform Icon Anchoring: top tracks the health bar (so the
@@ -3158,6 +3251,8 @@ local function StyleButton(button)
         if PP then PP.DisablePixelSnap(power) end
         power:SetMinMaxValues(0, 1)
         power:SetValue(1)
+        -- Pre-paint tint (see the health bar note above).
+        power:SetStatusBarColor(0.12, 0.12, 0.12)
         local pwBg = power:CreateTexture(nil, "BACKGROUND")
         pwBg:SetAllPoints()
         pwBg:SetColorTexture((s.powerBgColor or {}).r or 0, (s.powerBgColor or {}).g or 0, (s.powerBgColor or {}).b or 0, (s.powerBgDarkness or 70) / 100)
@@ -3717,6 +3812,13 @@ local function StyleButton(button)
             -- landing after the roster-timer rebuild can never leave it blank or route live events
             -- to a stale button. Fires only for buttons whose unit changed, so bounded.
             local d = GetFFD(self)
+            -- Fires even on a same-unit re-confirm (see the private-aura note above), so only drop
+            -- the power-hide cache on a genuine occupant change -- else it forces an unconditional
+            -- Show/Hide/SetHeight repaint, reintroducing the pop the deferred-power fix removed.
+            if d._lastUnit ~= u then
+                d._lastUnit = u
+                d._appliedHidePower = nil
+            end
             -- Extra Frames duplicates never enter the real routing maps (one button per unit);
             -- XF_Apply owns ns._xfUnitToButton. The repaint/range/private-aura work below is 1:1.
             if d._isExtra then
@@ -3801,7 +3903,7 @@ ns._UpdateRoleIcon = function(d, s, unit)
     local style = s.roleIconStyle or "modern"
     if style == "none" then roleIcon:Hide(); return end
     if s.roleIconHideInCombat and inCombat then roleIcon:Hide(); return end
-    local role = UnitGroupRolesAssigned(unit)
+    local role = EllesmereUI.UnitEffectiveRole(unit)
     if role and not issecretvalue(role) then
         local showForRole = (role == "TANK" and s.showRoleForTank)
             or (role == "HEALER" and s.showRoleForHealer)
@@ -3965,19 +4067,42 @@ local function UpdateButton(button)
         -- Extra Frames duplicates carry a per-group size offset (Extra Height), so the BUTTON is
         -- authoritative -- the shared setting would shrink health and leave a gap every update.
         local frameH = d._isExtra and button:GetHeight() or (s.frameHeight or 46)
-        if hidePower then
-            power:Hide()
-            if d.powerBorderFrame then d.powerBorderFrame:Hide() end
-            -- Expand health bar to full frame height (minus the Top Name Bar)
-            if d.health then
-                d.health:SetHeight(PixelSnap(frameH - tnbH))
+
+        -- power:Show()/Hide() and the two SetHeight branches below reflow every decoration
+        -- anchored to health (RF_AnchorHost anchors to the live health frame, not a stable
+        -- ref). Applying that transition on every call lets an in-combat identity/roster event
+        -- (role resync race, a GROUP_ROSTER_UPDATE storm at pull start) pop the whole button's
+        -- content stack mid-fight. Only run the transition when hidePower actually changes, and
+        -- defer it to combat end if combat is up; flushed from PLAYER_REGEN_ENABLED alongside
+        -- the existing _rosterDirtyInCombat/_sizeTierDirtyInCombat deferrals. nil (fresh occupant,
+        -- see the OnAttributeChanged reset) always applies immediately, never inheriting a stale layout.
+        if d._appliedHidePower ~= hidePower then
+            if inCombat and d._appliedHidePower ~= nil then
+                d._powerDirtyInCombat = true
+                ns._powerDirtyInCombat = true
+            else
+                d._appliedHidePower = hidePower
+                if hidePower then
+                    power:Hide()
+                    if d.powerBorderFrame then d.powerBorderFrame:Hide() end
+                    -- Expand health bar to full frame height (minus the Top Name Bar)
+                    if d.health then
+                        d.health:SetHeight(PixelSnap(frameH - tnbH))
+                    end
+                else
+                    -- Restore health bar height with power bar space (and Top Name Bar)
+                    local powerH = PixelSnap(s.powerHeight or 4)
+                    if d.health then
+                        d.health:SetHeight(PixelSnap(frameH - ns.RF_HealthPowerInset(s, powerH) - tnbH))
+                    end
+                end
             end
-        else
-            -- Restore health bar height with power bar space (and Top Name Bar)
-            local powerH = PixelSnap(s.powerHeight or 4)
-            if d.health then
-                d.health:SetHeight(PixelSnap(frameH - ns.RF_HealthPowerInset(s, powerH) - tnbH))
-            end
+        end
+
+        -- Value/color refresh for the power bar in its last APPLIED shown state (not the
+        -- freshly computed one), so a deferred transition keeps rendering the old state
+        -- instead of updating a bar whose show/hide hasn't actually changed yet.
+        if d._appliedHidePower == false then
             -- Smooth interpolation only animates correctly on a bar already shown last frame; on a
             -- fresh hidden->shown transition (profile swap replacing the fill texture) it leaves
             -- the fill at 0. Snap plainly on first show, smooth only after that.
@@ -4037,12 +4162,18 @@ local function UpdateButton(button)
             local pct = GetSafeHealthPercent(unit)
             d.healthText:SetFormattedText("%.0f%%", pct)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "percentNoSign" then
             local pct = GetSafeHealthPercent(unit)
             d.healthText:SetFormattedText("%.0f", pct)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "number" then
             local curr = UnitHealth(unit, true)
             if curr and AbbreviateNumbers then
@@ -4051,21 +4182,30 @@ local function UpdateButton(button)
                 d.healthText:SetFormattedText("%s", curr)
             end
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "numberPercent" then
             local curr = UnitHealth(unit, true)
             local pct = GetSafeHealthPercent(unit)
             local numStr = (curr and AbbreviateNumbers) and AbbreviateNumbers(curr) or tostring(curr or 0)
             d.healthText:SetFormattedText("%s | %.0f%%", numStr, pct)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "percentNumber" then
             local curr = UnitHealth(unit, true)
             local pct = GetSafeHealthPercent(unit)
             local numStr = (curr and AbbreviateNumbers) and AbbreviateNumbers(curr) or tostring(curr or 0)
             d.healthText:SetFormattedText("%.0f%% | %s", pct, numStr)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "missing" then
             local curr = UnitHealthMissing(unit, true)
             d.healthText:SetText(C_StringUtil.TruncateWhenZero(curr))
@@ -4077,7 +4217,10 @@ local function UpdateButton(button)
                 end
             end
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         else
             d.healthText:SetText("")
         end
@@ -4553,8 +4696,9 @@ ns.UpdateCombatEventRegistration = function()
 end
 
 -- Lightweight health-only update for UNIT_HEALTH / UNIT_MAXHEALTH. Skips power/name/role/leader/marker/target/threat -- each has its own event path.
-ns._UpdateButtonHealth = function(button)
-    local unit = button:GetAttribute("unit")
+ns._UpdateButtonHealth = function(button, unit)
+    -- Dispatchers pass the event's unit token; rare callers omit it.
+    unit = unit or button:GetAttribute("unit")
     if not unit or not UnitExists(unit) then return end
     local d = GetFFD(button)
     if not d.styled then return end
@@ -4562,10 +4706,14 @@ ns._UpdateButtonHealth = function(button)
 
     local health = d.health
     local pct = GetSafeHealthPercent(unit)
+    local connected = UnitIsConnected(unit)
+    local deadOrGhost = UnitIsDeadOrGhost(unit)
 
     -- Health bar
     if health then
-        health:SetMinMaxValues(0, 100)
+        -- The bar is always a percent bar; its range never changes after the
+        -- first application.
+        if not d._hb100 then d._hb100 = true; health:SetMinMaxValues(0, 100) end
         local smooth = s.smoothBars and Enum and Enum.StatusBarInterpolation
             and Enum.StatusBarInterpolation.ExponentialEaseOut
         if smooth then
@@ -4573,35 +4721,56 @@ ns._UpdateButtonHealth = function(button)
         else
             health:SetValue(pct)
         end
-        local r, g, b = GetHealthColor(unit, s)
-        local fillTex = health:GetStatusBarTexture()
-        if s.healthColorMode == "dark" then
-            health:SetStatusBarColor(r, g, b, 1)
-            -- 4th return of GetDarkModeFill() is the Dark Mode Fill Opacity.
-            if fillTex then fillTex:SetAlpha(select(4, EllesmereUI.GetDarkModeFill())) end
-        else
-            if fillTex then fillTex:SetAlpha(1) end
-            health:SetStatusBarColor(r, g, b, (s.healthBarOpacity or 100) / 100)
+        -- Fill color: dead/offline ticks skip this entirely (_ApplyHealthBg
+        -- owns the gray tint and clears the stamp on the transition). The
+        -- curve modes recolor with health, so they apply every tick; static
+        -- modes stamp the applied color and re-run only on a real change
+        -- (every static-mode component is a plain value by construction).
+        if connected and not deadOrGhost then
+            local mode = s.healthColorMode
+            local r, g, b = GetHealthColor(unit, s)
+            if mode == "classic" or mode == "customDynamic" or mode == "classReactive" then
+                local fillTex = health:GetStatusBarTexture()
+                if fillTex then fillTex:SetAlpha(1) end
+                health:SetStatusBarColor(r, g, b, (s.healthBarOpacity or 100) / 100)
+            else
+                local a = (mode == "dark") and 1 or (s.healthBarOpacity or 100) / 100
+                if d._hcR ~= r or d._hcG ~= g or d._hcB ~= b or d._hcA ~= a or d._hcM ~= mode then
+                    d._hcR, d._hcG, d._hcB, d._hcA, d._hcM = r, g, b, a, mode
+                    local fillTex = health:GetStatusBarTexture()
+                    if mode == "dark" then
+                        health:SetStatusBarColor(r, g, b, 1)
+                        -- 4th return of GetDarkModeFill() is the Dark Mode Fill Opacity.
+                        if fillTex then fillTex:SetAlpha(select(4, EllesmereUI.GetDarkModeFill())) end
+                    else
+                        if fillTex then fillTex:SetAlpha(1) end
+                        health:SetStatusBarColor(r, g, b, a)
+                    end
+                end
+            end
         end
     end
-
-    -- Absorb (clip frames anchor to fill texture, need visual update)
-    UpdateAbsorb(button, unit)
 
     -- Health text
     if d.healthText then
         local mode = s.healthTextMode or "none"
         -- Hide health text while dead/offline (see UpdateButton; matches preview).
-        if UnitIsDeadOrGhost(unit) or not UnitIsConnected(unit) then
+        if deadOrGhost or not connected then
             d.healthText:SetText("")
         elseif mode == "percent" then
             d.healthText:SetFormattedText("%.0f%%", pct)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "percentNoSign" then
             d.healthText:SetFormattedText("%.0f", pct)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "number" then
             local curr = UnitHealth(unit, true)
             if curr and AbbreviateNumbers then
@@ -4610,19 +4779,28 @@ ns._UpdateButtonHealth = function(button)
                 d.healthText:SetFormattedText("%s", curr)
             end
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "numberPercent" then
             local curr = UnitHealth(unit, true)
             local numStr = (curr and AbbreviateNumbers) and AbbreviateNumbers(curr) or tostring(curr or 0)
             d.healthText:SetFormattedText("%s | %.0f%%", numStr, pct)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "percentNumber" then
             local curr = UnitHealth(unit, true)
             local numStr = (curr and AbbreviateNumbers) and AbbreviateNumbers(curr) or tostring(curr or 0)
             d.healthText:SetFormattedText("%.0f%% | %s", pct, numStr)
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         elseif mode == "missing" then
             local curr = UnitHealthMissing(unit, true)
             d.healthText:SetText(C_StringUtil.TruncateWhenZero(curr))
@@ -4634,7 +4812,10 @@ ns._UpdateButtonHealth = function(button)
                 end
             end
             local htr, htg, htb = GetHealthTextColor(unit, s)
-            d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            if d._htR ~= htr or d._htG ~= htg or d._htB ~= htb then
+                d._htR, d._htG, d._htB = htr, htg, htb
+                d.healthText:SetTextColor(htr, htg, htb, 0.9)
+            end
         else
             d.healthText:SetText("")
         end
@@ -4642,7 +4823,7 @@ ns._UpdateButtonHealth = function(button)
 
     -- Heal absorb text
     if d.healAbsorbText then
-        if UnitIsDeadOrGhost(unit) or not UnitIsConnected(unit) then
+        if deadOrGhost or not connected then
             d.healAbsorbText:SetText("")
         else
             ns.SetHealAbsorbText(d.healAbsorbText, unit, s)
@@ -4651,31 +4832,44 @@ ns._UpdateButtonHealth = function(button)
 
     -- Status text (dead/ghost state changes with health)
     if d.statusText then
+        -- State + color stamped: text/color/visibility re-apply only on a
+        -- real transition (0 hidden, 1 offline, 2 dead, 3 AFK). Rez check
+        -- still runs per tick (it flips without a settings edit).
         local stc = s.statusTextColor or { r = 1, g = 1, b = 1 }
+        local st
         if s.statusTextPosition == "none" then
-            d.statusText:Hide()
+            st = 0
         elseif s.showIncomingRez and ns._RFRezShown(unit) then
             -- Being resurrected: hide the status text so the incoming-rez icon isn't covered.
-            d.statusText:Hide()
-        elseif not UnitIsConnected(unit) then
-            d.statusText:SetText(EllesmereUI.L("OFFLINE"))
-            d.statusText:SetTextColor(stc.r, stc.g, stc.b)
-            d.statusText:Show()
-        elseif UnitIsDeadOrGhost(unit) then
-            d.statusText:SetText(EllesmereUI.L("DEAD"))
-            d.statusText:SetTextColor(stc.r, stc.g, stc.b)
-            d.statusText:Show()
-        elseif s.statusShowAFK and UnitIsAFK and not issecretvalue(UnitIsAFK(unit)) and UnitIsAFK(unit) then
-            d.statusText:SetText(EllesmereUI.L("AFK"))
-            d.statusText:SetTextColor(stc.r, stc.g, stc.b)
-            d.statusText:Show()
+            st = 0
+        elseif not connected then
+            st = 1
+        elseif deadOrGhost then
+            st = 2
         else
-            d.statusText:Hide()
+            local afk
+            if s.statusShowAFK and UnitIsAFK then
+                afk = UnitIsAFK(unit)
+                if issecretvalue(afk) then afk = nil end
+            end
+            st = afk and 3 or 0
+        end
+        if d._stSt ~= st or d._stR ~= stc.r or d._stG ~= stc.g or d._stB ~= stc.b then
+            d._stSt, d._stR, d._stG, d._stB = st, stc.r, stc.g, stc.b
+            if st == 0 then
+                d.statusText:Hide()
+            else
+                d.statusText:SetText(st == 1 and EllesmereUI.L("OFFLINE")
+                    or st == 2 and EllesmereUI.L("DEAD") or EllesmereUI.L("AFK"))
+                d.statusText:SetTextColor(stc.r, stc.g, stc.b)
+                d.statusText:Show()
+            end
         end
     end
 
-    -- Background + dead/offline tint. This path owns death/resurrect transitions arriving via UNIT_HEALTH, so it restores the bg when alive.
-    ns._ApplyHealthBg(d, health, s, unit)
+    -- Background + dead/offline tint. This path owns death/resurrect transitions
+    -- arriving via UNIT_HEALTH, so it runs per tick (state-stamped inside).
+    ns._ApplyHealthBg(d, health, s, unit, connected, deadOrGhost)
 
     -- Debuff Manager dead-corpse swap rides the same ownership: one field read
     -- for every button without a qualifying config.
@@ -5619,7 +5813,7 @@ XF.ResolveUnits = function()
             if #units >= cap then break end
             local name = GetRaidRosterInfo(i)
             if name and not seen[name]
-               and UnitGroupRolesAssigned("raid" .. i) == "TANK"
+               and EllesmereUI.UnitEffectiveRole("raid" .. i) == "TANK"
                -- Exclude Myself (Show Tanks cog): the tanks auto-include
                -- skips the player's own frame; explicit hotkey picks below
                -- still add it.
@@ -5797,7 +5991,12 @@ end
 -- unit-payload broadcast events (READY_CHECK_CONFIRM, PLAYER_FLAGS_CHANGED)
 -- are plain registrations filtered in the handler.
 XF.EVENTS = {
-    "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_AURA", "UNIT_POWER_UPDATE",
+    -- UNIT_AURA deliberately absent (Blizzard parity: their CompactUnitFrame
+    -- repaints prediction from health/absorb events only). The one gap -- an
+    -- aura-granted shield expiring on its TIMER on an unhit, topped unit
+    -- (field report: VDH Infernal Strike) fires NO event at all -- is covered
+    -- by the armed-members belt next to the absorb coalescer.
+    "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_POWER_UPDATE",
     "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED",
     "UNIT_HEAL_PREDICTION", "UNIT_MAX_HEALTH_MODIFIERS_CHANGED",
     "UNIT_THREAT_LIST_UPDATE", "UNIT_THREAT_SITUATION_UPDATE",
@@ -5834,12 +6033,16 @@ XF.EnsureBuilt = function(count)
         t:SetScript("OnEvent", function(_, event, unit, updateInfo)
             if not b:IsVisible() then return end
             if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
-                ns._UpdateButtonHealth(b)
-                if event == "UNIT_MAXHEALTH" then ns._ResettleButtonHealth(b) end
-            elseif event == "UNIT_AURA" then
-                    -- Aura displays are engine containers; only the absorb
-                    -- overlay is event-driven here.
-                    UpdateAbsorb(b, unit)
+                ns._UpdateButtonHealth(b, unit)
+                if event == "UNIT_MAXHEALTH" then
+                    ns._ResettleButtonHealth(b)
+                    -- Max moves the absorb bars' range; value-only health
+                    -- changes touch nothing UpdateAbsorb paints (overlays are
+                    -- clip-anchored; the missing-health clamp edge rides the
+                    -- armed belt / next absorb event instead).
+                    local d = GetFFD(b)
+                    if d._absActive then ns._MarkAbsorbDirty(b, unit) end
+                end
             elseif event == "UNIT_POWER_UPDATE" then
                 local d = GetFFD(b)
                 if d.power and d.power:IsShown() then
@@ -5862,12 +6065,27 @@ XF.EnsureBuilt = function(count)
                 end
             elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED"
                 or event == "UNIT_HEAL_PREDICTION" or event == "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then
-                UpdateAbsorb(b, unit)
+                -- The event IS the arm: plainly observable even while the
+                -- values are secret. Paint coalesces to once per render frame.
+                -- Prediction is view-gated: with the feature off for this
+                -- button's view the event changes no pixel and must not arm.
+                local dd = GetFFD(b)
+                if event == "UNIT_HEAL_PREDICTION" then
+                    local sv = dd._isParty and ns._scaledPartyProxy
+                        or (dd._isExtra and ns._scaledExtraProxy) or ns._scaledProfile
+                    if sv.healPrediction then
+                        ns._AbArm(b, unit, dd)
+                        ns._MarkAbsorbDirty(b, unit)
+                    end
+                else
+                if event ~= "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then ns._AbArm(b, unit, dd) end
+                ns._MarkAbsorbDirty(b, unit)
                 if event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then ns.UpdateHealAbsorbTextFor(b, unit) end
                 if event == "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then
-                    ns._UpdateButtonHealth(b)
+                    ns._UpdateButtonHealth(b, unit)
                     ns._ResettleButtonHealth(b)
                 end
+                end -- prediction view-gate else
             elseif event == "UNIT_THREAT_LIST_UPDATE" or event == "UNIT_THREAT_SITUATION_UPDATE" then
                 local d = GetFFD(b)
                 if d.threatFrame then
@@ -6021,7 +6239,7 @@ XF.ToggleHovered = function()
     -- Already covered by Show Tanks: adding would be an invisible duplicate.
     -- An Exclude-Myself'd player tank is NOT covered, so their manual add
     -- stays legitimate.
-    if set.showTanks and UnitGroupRolesAssigned(unit) == "TANK"
+    if set.showTanks and EllesmereUI.UnitEffectiveRole(unit) == "TANK"
        and not (set.excludeSelfTank and UnitIsUnit(unit, "player")) then
         return
     end
@@ -6091,7 +6309,7 @@ end
 -- Build a "player first" nameList for the player's raid subgroup. Names come from
 -- GetRaidRosterInfo (same source the secure header matches against, range-independent),
 -- so nothing can vanish. Others follow the active sort: role order (ROLE mode, via
--- UnitGroupRolesAssigned) else raid index. selfLast orders the player LAST instead.
+-- EllesmereUI.UnitEffectiveRole) else raid index. selfLast orders the player LAST instead.
 function ns._BuildSelfFirstNameList(playerGroup, sortByRole, roleOrder, selfLast)
     if not IsInRaid() or not playerGroup then return nil end
     local pri
@@ -6111,7 +6329,7 @@ function ns._BuildSelfFirstNameList(playerGroup, sortByRole, roleOrder, selfLast
         if subgroup == playerGroup then
             local unit = "raid" .. i
             local rp = 99
-            if pri then rp = pri[UnitGroupRolesAssigned(unit)] or 99 end
+            if pri then rp = pri[EllesmereUI.UnitEffectiveRole(unit)] or 99 end
             members[#members + 1] = {
                 name = name,
                 isPlayer = UnitIsUnit(unit, "player"),
@@ -6186,7 +6404,7 @@ function ns._BuildPartyClassNameList(includePlayer, sortByRole, roleOrder, class
             local _, classToken = UnitClass(unit)
             members[#members + 1] = {
                 name = name,
-                rolePri = (rolePri and rolePri[UnitGroupRolesAssigned(unit)]) or 99,
+                rolePri = (rolePri and rolePri[EllesmereUI.UnitEffectiveRole(unit)]) or 99,
                 classPri = classPri[classToken] or 99,
             }
         end
@@ -6224,7 +6442,7 @@ function ns._BuildArenaNameList(hideSelf, selfFirst, selfLast, sortByRole, roleO
         local isPlayer = UnitIsUnit(unit, "player")
         if not (hideSelf and isPlayer) then
             local rp = 99
-            if pri then rp = pri[UnitGroupRolesAssigned(unit)] or 99 end
+            if pri then rp = pri[EllesmereUI.UnitEffectiveRole(unit)] or 99 end
             members[#members + 1] = {
                 name = name,
                 isPlayer = isPlayer,
@@ -6269,7 +6487,7 @@ function ns._BuildMergedSelfNameList(sortByRole, roleOrder, selfLast, visibleGro
         if not visibleGroups or visibleGroups[subgroup] ~= false then
             local unit = "raid" .. i
             local rp = 99
-            if pri then rp = pri[UnitGroupRolesAssigned(unit)] or 99 end
+            if pri then rp = pri[EllesmereUI.UnitEffectiveRole(unit)] or 99 end
             members[#members + 1] = {
                 name = name,
                 isPlayer = UnitIsUnit(unit, "player"),
@@ -6400,19 +6618,14 @@ ns._BuildHeaderSet = function(merge)
         self:SetHeight(%d)
     ]]):format(bw, bh)
 
-    -- Compute correct initial point/offset from saved growth direction
-    local initUnitGrowth = s.unitGrowth or "DOWN"
-    local initPoint, initXOff, initYOff
+    -- Compute correct initial point/offset from saved growth direction. Self-heal
+    -- a same-axis pair (see ns._RFEffectiveGrowth) before deriving anything from
+    -- it -- this bootstrap runs from the raw profile, ahead of _LayoutGroupsImpl's
+    -- own per-tier resolution and self-heal.
+    local initUnitGrowth, initGroupGrowth = ns._RFEffectiveGrowth(
+        s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", merge)
     local csInit = PixelSnap(s.cellSpacing or 2)
-    if initUnitGrowth == "DOWN" then
-        initPoint = "TOP";    initXOff = 0;    initYOff = -csInit
-    elseif initUnitGrowth == "UP" then
-        initPoint = "BOTTOM"; initXOff = 0;    initYOff = csInit
-    elseif initUnitGrowth == "RIGHT" then
-        initPoint = "LEFT";   initXOff = csInit; initYOff = 0
-    else -- LEFT
-        initPoint = "RIGHT";  initXOff = -csInit; initYOff = 0
-    end
+    local initPoint, initXOff, initYOff = ns._RFHeaderPoint(initUnitGrowth, csInit)
 
     if not merge then
         -----------------------------------------------------------
@@ -6477,23 +6690,7 @@ ns._BuildHeaderSet = function(merge)
         ns._flatHeader:SetAttribute("unitsPerColumn", 5)
         ns._flatHeader:SetAttribute("maxColumns", 8)
         ns._flatHeader:SetAttribute("columnSpacing", PixelSnap(s.groupSpacing or 8))
-        -- Compute correct initial columnAnchorPoint from saved growth directions
-        local initGroupGrowth = s.groupGrowth or "RIGHT"
-        local initColAnchor
-        if initGroupGrowth == "DOWN" or initGroupGrowth == "RIGHT" then
-            if initUnitGrowth == "DOWN" or initUnitGrowth == "UP" then
-                initColAnchor = "LEFT"
-            else
-                initColAnchor = "TOP"
-            end
-        else
-            if initUnitGrowth == "DOWN" or initUnitGrowth == "UP" then
-                initColAnchor = "RIGHT"
-            else
-                initColAnchor = "BOTTOM"
-            end
-        end
-        ns._flatHeader:SetAttribute("columnAnchorPoint", initColAnchor)
+        ns._flatHeader:SetAttribute("columnAnchorPoint", ns._RFColAnchor(initUnitGrowth, initGroupGrowth))
         ns._flatHeader:SetAttribute("sortMethod", "INDEX")
 
         -- Pre-create 40 buttons
@@ -6640,38 +6837,19 @@ ns._LayoutGroupsImpl = function()
         groupGrowth = activeOv.groupGrowth or groupGrowth
         unitGrowth  = activeOv.unitGrowth or unitGrowth
     end
+    -- Backstop: self-heal a same-axis pair that reached here without going
+    -- through a guarded write site (see ns._RFEffectiveGrowth).
+    unitGrowth, groupGrowth = ns._RFEffectiveGrowth(unitGrowth, groupGrowth, merged)
     local bw = PixelSnap(ns._activeSizeW or s.frameWidth or 72)
     local bh = PixelSnap(ns._activeSizeH or s.frameHeight or 46)
     local cs = PixelSnap(s.cellSpacing or 2)
     local gs = PixelSnap(s.groupSpacing or 8)
 
     -- Header attributes for unit growth direction
-    local hdrPoint, hdrXOff, hdrYOff
-    if unitGrowth == "DOWN" then
-        hdrPoint = "TOP";    hdrXOff = 0;   hdrYOff = -cs
-    elseif unitGrowth == "UP" then
-        hdrPoint = "BOTTOM"; hdrXOff = 0;   hdrYOff = cs
-    elseif unitGrowth == "RIGHT" then
-        hdrPoint = "LEFT";   hdrXOff = cs;  hdrYOff = 0
-    else -- LEFT
-        hdrPoint = "RIGHT";  hdrXOff = -cs; hdrYOff = 0
-    end
+    local hdrPoint, hdrXOff, hdrYOff = ns._RFHeaderPoint(unitGrowth, cs)
 
     -- Column anchor: where next column of 5 goes (perpendicular to unit growth)
-    local colAnchor
-    if groupGrowth == "DOWN" or groupGrowth == "RIGHT" then
-        if unitGrowth == "DOWN" or unitGrowth == "UP" then
-            colAnchor = "LEFT"
-        else
-            colAnchor = "TOP"
-        end
-    else -- UP or LEFT
-        if unitGrowth == "DOWN" or unitGrowth == "UP" then
-            colAnchor = "RIGHT"
-        else
-            colAnchor = "BOTTOM"
-        end
-    end
+    local colAnchor = ns._RFColAnchor(unitGrowth, groupGrowth)
 
     -- Group bounding box: size of one group along each axis
     local groupW, groupH
@@ -6705,8 +6883,14 @@ ns._LayoutGroupsImpl = function()
 
         -- Configure flat header layout attributes
         if ns._flatHeader then
+            -- Blizzard's header anchors its first button at the corner where
+            -- "point" and "columnAnchorPoint" meet, then grows away from it --
+            -- same corner ns._RFGrowthCorner names for separated headers. A
+            -- fixed TOPLEFT here left the rendered grid offset from the
+            -- container/mover box whenever growth pinned a different corner.
+            local hdrCorner = ns._RFGrowthCorner(unitGrowth, groupGrowth)
             ns._flatHeader:ClearAllPoints()
-            ns._flatHeader:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 0, 0)
+            ns._flatHeader:SetPoint(hdrCorner, containerFrame, hdrCorner, 0, 0)
             local layoutChanged = false
             -- While Self Position owns the merged header (whole-raid nameList,
             -- applied by ApplySortToHeaders at the end of this pass), a
@@ -6839,14 +7023,31 @@ ns._LayoutGroupsImpl = function()
     -- Apply sort after all headers are positioned
     ApplySortToHeaders()
 
-    -- Container size based on 4 groups for unlock mode mover
+    -- Container size based on 4 groups for unlock mode mover. Merged mode's
+    -- columnAnchorPoint is always perpendicular to unitGrowth (colAnchor above),
+    -- so its actual render axis follows unitGrowth, not the literal groupGrowth
+    -- (which can share unitGrowth's axis; Blizzard's header can't express that as
+    -- a column direction). Keying the box off groupGrowth there mismatches the
+    -- box against what merged mode really renders. Separated mode has no such
+    -- header constraint and renders along groupGrowth literally, so it keeps the
+    -- original formula.
     local totalW, totalH
-    if groupGrowth == "DOWN" or groupGrowth == "UP" then
-        totalW = groupW
-        totalH = MOVER_GROUPS * groupH + (MOVER_GROUPS - 1) * gs
+    if merged then
+        if unitGrowth == "DOWN" or unitGrowth == "UP" then
+            totalW = MOVER_GROUPS * groupW + (MOVER_GROUPS - 1) * gs
+            totalH = groupH
+        else
+            totalW = groupW
+            totalH = MOVER_GROUPS * groupH + (MOVER_GROUPS - 1) * gs
+        end
     else
-        totalW = MOVER_GROUPS * groupW + (MOVER_GROUPS - 1) * gs
-        totalH = groupH
+        if groupGrowth == "DOWN" or groupGrowth == "UP" then
+            totalW = groupW
+            totalH = MOVER_GROUPS * groupH + (MOVER_GROUPS - 1) * gs
+        else
+            totalW = MOVER_GROUPS * groupW + (MOVER_GROUPS - 1) * gs
+            totalH = groupH
+        end
     end
     containerFrame:SetSize(PixelSnap(totalW), PixelSnap(totalH))
 
@@ -6989,7 +7190,11 @@ local function ReloadFrames(skipButtons)
             if d.ReanchorAbsorbToFill then d.ReanchorAbsorbToFill() end
         end
 
-        -- Power bar (always hide here; UpdateButton handles per-role show)
+        -- Power bar (always hide here; UpdateButton handles per-role show). This is a
+        -- second writer of health height alongside UpdateButton's own cached transition
+        -- (LayoutTopNameBar above sized health assuming power reserved), so drop the
+        -- cache or UpdateAllButtons below sees applied == computed and never corrects it.
+        d._appliedHidePower = nil
         if d.power then
             d.power:Hide()
             if powerH > 0 then
@@ -7269,7 +7474,11 @@ ns._RFPosTopLeft = function(pos, w, h)
     return ax - pfx * w, ay + (1 - pfy) * h
 end
 
--- Footprint of the 4-group mover box for a frame size and growth pair.
+-- Footprint of the 4-group mover box for a frame size and growth pair. Callers
+-- that also derive a corner from the same pair (ns._RFCornerTerms/_RFGrowthCorner)
+-- must self-heal (ns._RFEffectiveGrowth) BEFORE calling either, so the size and
+-- the corner agree -- this function does not self-heal internally to avoid a
+-- caller healing one but not the other.
 ns._RFFootprint = function(bw, bh, unitGrowth, groupGrowth, cs, gs)
     bw, bh = PixelSnap(bw), PixelSnap(bh)
     local groupW, groupH
@@ -7296,18 +7505,71 @@ ns._RFBaseTopLeft = function()
     if not pos then return nil end
     local cs = PixelSnap(s.cellSpacing or 2)
     local gs = PixelSnap(s.groupSpacing or 8)
-    local w, h = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46,
-        s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", cs, gs)
+    local ug, gg = ns._RFEffectiveGrowth(s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", s.mergeGroups)
+    local w, h = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46, ug, gg, cs, gs)
     local l, t = ns._RFPosTopLeft(pos, w, h)
     return l, t, w, h
+end
+
+-- Shared growth-direction helpers. A single source of truth for "is this
+-- direction vertical" and for deriving the flat header's point/xOffset/yOffset
+-- and columnAnchorPoint from a growth pair -- both _LayoutGroupsImpl and
+-- _BuildHeaderSet's header-creation bootstrap need the identical derivation,
+-- and previously hand-duplicated it.
+ns._RFGrowthIsVertical = function(g)
+    return g == "DOWN" or g == "UP"
+end
+
+-- First-button point/xOffset/yOffset for a header growing along unitGrowth.
+ns._RFHeaderPoint = function(unitGrowth, cs)
+    if unitGrowth == "DOWN" then
+        return "TOP", 0, -cs
+    elseif unitGrowth == "UP" then
+        return "BOTTOM", 0, cs
+    elseif unitGrowth == "RIGHT" then
+        return "LEFT", cs, 0
+    else -- LEFT
+        return "RIGHT", -cs, 0
+    end
+end
+
+-- Blizzard's flat header can only wrap into columns when columnAnchorPoint runs
+-- perpendicular to unitGrowth -- see ns._RFEffectiveGrowth below for why merged
+-- mode never actually reaches a same-axis pair here in practice.
+ns._RFColAnchor = function(unitGrowth, groupGrowth)
+    if groupGrowth == "DOWN" or groupGrowth == "RIGHT" then
+        if ns._RFGrowthIsVertical(unitGrowth) then return "LEFT" end
+        return "TOP"
+    else -- UP or LEFT
+        if ns._RFGrowthIsVertical(unitGrowth) then return "RIGHT" end
+        return "BOTTOM"
+    end
+end
+
+-- Self-heals a same-axis Group/Unit Growth pair when Merge Groups is on (see
+-- _RFColAnchor above), applied as a read-time backstop for a pair that reached
+-- here without a guarded write (a stale per-tier override, a spec override,
+-- hand-edited SavedVariables). Group Growth wins here; the options UI's
+-- write-time KeepGrowthPerpendicular uses the same resolution EXCEPT its Unit
+-- Growth dropdown, which deliberately lets Unit Growth win instead. No-op if
+-- not merged.
+ns._RFEffectiveGrowth = function(unitGrowth, groupGrowth, merged)
+    if not merged then return unitGrowth, groupGrowth end
+    if ns._RFGrowthIsVertical(unitGrowth) == ns._RFGrowthIsVertical(groupGrowth) then
+        unitGrowth = ns._RFGrowthIsVertical(unitGrowth) and "RIGHT" or "DOWN"
+    end
+    return unitGrowth, groupGrowth
 end
 
 -- Pinned screen corner implied by a growth pair: frames grow AWAY from this corner, so
 -- it stays fixed when a tier's footprint differs from the base. Horizontal side = whichever
 -- growth is horizontal (RIGHT pins LEFT edge, LEFT pins RIGHT edge); vertical side likewise
--- (DOWN pins TOP, UP pins BOTTOM). Growths are perpendicular (UI-enforced); degenerate
--- imported data still resolves deterministically (UP beats BOTTOM, LEFT beats RIGHT,
--- default TOP+LEFT). Merged-groups fills from the same corner, no special case.
+-- (DOWN pins TOP, UP pins BOTTOM). Every ns._RFEffectiveGrowth caller heals a same-axis pair
+-- before reaching here whenever merged is true, so this only ever sees one for separated mode
+-- (merged=false is a no-op for _RFEffectiveGrowth), where all 16 combinations are legitimate
+-- and this tie-break (UP beats BOTTOM, LEFT beats RIGHT, default TOP+LEFT) is what existing
+-- per-tier offsets are calibrated against -- matching Blizzard's own same-axis corner instead
+-- would be dead code here for merged and a silent position-shift regression for separated.
 ns._RFGrowthCorner = function(unitGrowth, groupGrowth)
     local h = (unitGrowth == "LEFT" or groupGrowth == "LEFT") and "RIGHT" or "LEFT"
     local v = (unitGrowth == "UP" or groupGrowth == "UP") and "BOTTOM" or "TOP"
@@ -7393,10 +7655,10 @@ ns._RFRebaseSavedCenter = function(cx, cy)
     if not ov then return cx, cy end
     local cs = PixelSnap(s.cellSpacing or 2)
     local gs = PixelSnap(s.groupSpacing or 8)
-    local bw, bh = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46,
-        s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", cs, gs)
-    local ug = ov.unitGrowth or s.unitGrowth or "DOWN"
-    local gg = ov.groupGrowth or s.groupGrowth or "RIGHT"
+    local bug, bgg = ns._RFEffectiveGrowth(s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", s.mergeGroups)
+    local bw, bh = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46, bug, bgg, cs, gs)
+    local ug, gg = ns._RFEffectiveGrowth(
+        ov.unitGrowth or s.unitGrowth or "DOWN", ov.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
     local tw, th = ns._RFFootprint(ov.width or s.frameWidth or 72,
         ov.height or s.frameHeight or 46, ug, gg, cs, gs)
     local kx, ky = ns._RFCornerTerms(tw, th, bw, bh, ug, gg)
@@ -7467,10 +7729,11 @@ ns._NormalizeTierOffsetAnchors = function()
         if pos and bl then
             for _, o in pairs(ov) do
                 if type(o) == "table" then
-                    local tw, th = ns._RFFootprint(
-                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46,
+                    local ug, gg = ns._RFEffectiveGrowth(
                         o.unitGrowth or s.unitGrowth or "DOWN",
-                        o.groupGrowth or s.groupGrowth or "RIGHT", cs, gs)
+                        o.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
+                    local tw, th = ns._RFFootprint(
+                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46, ug, gg, cs, gs)
                     local tl, tt = ns._RFPosTopLeft(pos, tw, th)
                     o.offsetX = math.floor((o.offsetX or 0) + (tl - bl) + 0.5)
                     o.offsetY = math.floor((o.offsetY or 0) + (tt - bt) + 0.5)
@@ -7483,11 +7746,11 @@ ns._NormalizeTierOffsetAnchors = function()
         if pos and bl then
             for _, o in pairs(ov) do
                 if type(o) == "table" then
-                    local ug = o.unitGrowth or s.unitGrowth or "DOWN"
-                    local gg = o.groupGrowth or s.groupGrowth or "RIGHT"
+                    local ug, gg = ns._RFEffectiveGrowth(
+                        o.unitGrowth or s.unitGrowth or "DOWN",
+                        o.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
                     local tw, th = ns._RFFootprint(
-                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46,
-                        ug, gg, cs, gs)
+                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46, ug, gg, cs, gs)
                     local kx, ky = ns._RFCornerTerms(tw, th, bw, bh, ug, gg)
                     if kx ~= 0 then
                         o.offsetX = math.floor((o.offsetX or 0) - kx + 0.5)
@@ -7545,8 +7808,9 @@ ns._ApplyTierOffset = function()
     local gs = PixelSnap(s.groupSpacing or 8)
     local fw = (ov and ov.width) or s.frameWidth or 72
     local fh = (ov and ov.height) or s.frameHeight or 46
-    local ug = (ov and ov.unitGrowth) or s.unitGrowth or "DOWN"
-    local gg = (ov and ov.groupGrowth) or s.groupGrowth or "RIGHT"
+    local ug, gg = ns._RFEffectiveGrowth(
+        (ov and ov.unitGrowth) or s.unitGrowth or "DOWN",
+        (ov and ov.groupGrowth) or s.groupGrowth or "RIGHT", s.mergeGroups)
     local tw, th = ns._RFFootprint(fw, fh, ug, gg, cs, gs)
     local x, y = ns._RFTierTopLeft(tw, th, ug, gg,
         (ov and ov.offsetX) or 0, (ov and ov.offsetY) or 0)
@@ -7939,6 +8203,27 @@ local function OnEvent(self, event, arg1, ...)
                 ns._LayoutPartyFrames()
             end
         end
+        -- Flush any power show/hide transitions deferred during combat (see UpdateButton);
+        -- only the buttons actually marked dirty get a repaint.
+        if ns._powerDirtyInCombat then
+            ns._powerDirtyInCombat = nil
+            for _, btn in ipairs(allButtons) do
+                local d = GetFFD(btn)
+                if d._powerDirtyInCombat then
+                    d._powerDirtyInCombat = nil
+                    UpdateButton(btn)
+                end
+            end
+            if ns._partyAllButtons then
+                for _, btn in ipairs(ns._partyAllButtons) do
+                    local d = GetFFD(btn)
+                    if d._powerDirtyInCombat then
+                        d._powerDirtyInCombat = nil
+                        UpdateButton(btn)
+                    end
+                end
+            end
+        end
         -- Restore child frame levels after a deferred strata change.
         if frameStrataDirty then
             if not (sizeTierDirty and framesVisible) then ReloadFrames() end
@@ -8130,7 +8415,7 @@ local function OnEvent(self, event, arg1, ...)
             if hadRez ~= nil and hadRez ~= true and not UnitIsDeadOrGhost(arg1) then
                 ns._rezPend[arg1] = nil
             end
-            ns._UpdateButtonHealth(btn)
+            ns._UpdateButtonHealth(btn, arg1)
             if hadRez then UpdateReadyCheck(btn, arg1) end
         end
     elseif event == "UNIT_MAXHEALTH" then
@@ -8142,8 +8427,12 @@ local function OnEvent(self, event, arg1, ...)
             if hadRez ~= nil and hadRez ~= true and not UnitIsDeadOrGhost(arg1) then
                 ns._rezPend[arg1] = nil
             end
-            ns._UpdateButtonHealth(btn)
+            ns._UpdateButtonHealth(btn, arg1)
             ns._ResettleButtonHealth(btn)
+            -- Max moves the absorb bars' range (see the header dispatcher's
+            -- UNIT_MAXHEALTH branch for the full rationale).
+            local dmx = GetFFD(btn)
+            if dmx._absActive then ns._MarkAbsorbDirty(btn, arg1) end
             if hadRez then UpdateReadyCheck(btn, arg1) end
         end
     elseif event == "UNIT_POWER_UPDATE" then
@@ -8172,23 +8461,31 @@ local function OnEvent(self, event, arg1, ...)
                 end
             end
         end
-    elseif event == "UNIT_AURA" then
-        local btn = unitToButton[arg1] or ns._partyUnitToButton[arg1]
-        if btn then
-                -- aura displays are engine-driven containers; the absorb
-                -- overlay (aura-granted shields) is the only consumer left here.
-                UpdateAbsorb(btn, arg1)
-        end
     elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED"
         or event == "UNIT_HEAL_PREDICTION" or event == "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then
         local btn = unitToButton[arg1] or ns._partyUnitToButton[arg1]
         if btn then
-            UpdateAbsorb(btn, arg1)
+            -- The event IS the arm: plainly observable even while the values
+            -- are secret. Paint coalesces to once per render frame.
+            -- Prediction is view-gated: with the feature off for this button's
+            -- view the event changes no pixel and must not arm.
+            local dd = GetFFD(btn)
+            if event == "UNIT_HEAL_PREDICTION" then
+                local sv = dd._isParty and ns._scaledPartyProxy
+                    or (dd._isExtra and ns._scaledExtraProxy) or ns._scaledProfile
+                if sv.healPrediction then
+                    ns._AbArm(btn, arg1, dd)
+                    ns._MarkAbsorbDirty(btn, arg1)
+                end
+            else
+            if event ~= "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then ns._AbArm(btn, arg1, dd) end
+            ns._MarkAbsorbDirty(btn, arg1)
             if event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then ns.UpdateHealAbsorbTextFor(btn, arg1) end
             if event == "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then
-                ns._UpdateButtonHealth(btn)
+                ns._UpdateButtonHealth(btn, arg1)
                 ns._ResettleButtonHealth(btn)
             end
+            end -- prediction view-gate else
         end
     elseif event == "UNIT_NAME_UPDATE" then
         local btn = unitToButton[arg1] or ns._partyUnitToButton[arg1]
@@ -8346,6 +8643,22 @@ local function OnEvent(self, event, arg1, ...)
         end
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
         if ns.BM_RebuildLookup then ns.BM_RebuildLookup(db) end
+        -- The player's effective role is spec-derived (EllesmereUI.UnitEffectiveRole),
+        -- so the player's own spec swap is a role change for every role consumer:
+        -- mirror the PLAYER_ROLES_ASSIGNED refresh and repaint role icons. The
+        -- event also fires for other units' spec updates; only the player's
+        -- changes our answers.
+        if arg1 == "player" and not inCombat then
+            if framesVisible and ns._ApplySortToHeaders then
+                ns._ApplySortToHeaders()
+            end
+            if ns._partyFramesVisible
+                and (db.profile.partyPrioritizeClass or ns._InArena())
+                and ns._LayoutPartyFrames then
+                ns._LayoutPartyFrames()
+            end
+            if ns._UpdateRoleIcons then ns._UpdateRoleIcons() end
+        end
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- Re-sync the boss-combat flag on load. IsEncounterInProgress() still
         -- reports an active encounter after a mid-fight /reload or zone (where
@@ -8809,6 +9122,9 @@ ns._BumpAbsorbGen = function()
     -- Settings writes also break the same-frame paint-stamp window: a full pass after
     -- an options write must never dedupe against a paint from before the write.
     ns._paintGen = (ns._paintGen or 0) + 1
+    -- Heal-prediction toggles ride this same funnel: re-sync the conditional
+    -- UNIT_HEAL_PREDICTION registrations (idempotent, 45 trackers).
+    if ns._RFSyncPredRegistration then ns._RFSyncPredRegistration() end
 end
 
 -- Compute the party indicator/aura scale (mirrors the raid auto-resize in
@@ -9332,7 +9648,11 @@ ns.ReloadPartyFrames = function(skipButtons)
             if d.ReanchorAbsorbToFill then d.ReanchorAbsorbToFill() end
         end
 
-        -- Power bar (always hide here; UpdateButton handles per-role show)
+        -- Power bar (always hide here; UpdateButton handles per-role show). This is a
+        -- second writer of health height alongside UpdateButton's own cached transition
+        -- (LayoutTopNameBar above sized health assuming power reserved), so drop the
+        -- cache or UpdateAllButtons below sees applied == computed and never corrects it.
+        d._appliedHidePower = nil
         if d.power then
             d.power:Hide()
             if powerH > 0 then
@@ -11448,16 +11768,10 @@ local function BuildPreviewRoles()
     for i = 1, 20 do previewRoles[i] = nil end
     wipe(previewClassTokens)
 
-    -- Use group role if in a group, otherwise fall back to spec role
-    local playerRole = UnitGroupRolesAssigned("player")
+    -- Effective role: the player's spec wins over a stale assigned role
+    local playerRole = EllesmereUI.UnitEffectiveRole("player")
     if playerRole ~= "TANK" and playerRole ~= "HEALER" then
-        local specIdx = GetSpecialization()
-        local specRole = specIdx and select(5, GetSpecializationInfo(specIdx))
-        if specRole == "TANK" or specRole == "HEALER" then
-            playerRole = specRole
-        else
-            playerRole = "DAMAGER"
-        end
+        playerRole = "DAMAGER"
     end
     previewRoles[1] = playerRole
     local _, pct = UnitClass("player")
@@ -13617,8 +13931,8 @@ ns._ShowSizePreview = function(tier)
     local bh = PixelSnap(ov.height or s.frameHeight or 60)
     local cs = PixelSnap(s.cellSpacing or 2)
     local gs = PixelSnap(s.groupSpacing or 8)
-    local unitGrowth  = ov.unitGrowth or s.unitGrowth or "DOWN"
-    local groupGrowth = ov.groupGrowth or s.groupGrowth or "RIGHT"
+    local unitGrowth, groupGrowth = ns._RFEffectiveGrowth(
+        ov.unitGrowth or s.unitGrowth or "DOWN", ov.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
     local frameCount  = tier
     local perGroup    = 5
     local numGroups   = math.ceil(frameCount / perGroup)
@@ -13720,6 +14034,8 @@ ns._ShowSizePreview = function(tier)
             health:SetPoint("TOPRIGHT")
             health:SetMinMaxValues(0, 100)
             health:SetValue(100)
+            -- Pre-paint tint (see StyleButton's health bar note).
+            health:SetStatusBarColor(0.12, 0.12, 0.12)
             if PP then PP.DisablePixelSnap(health) end
             f._health = health
 
@@ -13879,15 +14195,10 @@ local function BuildPartyPreviewRoles()
     for i = 1, 5 do ns._partyPvRoles[i] = nil end
     wipe(ns._partyPvCT)
 
-    local playerRole = UnitGroupRolesAssigned("player")
+    -- Effective role: the player's spec wins over a stale assigned role
+    local playerRole = EllesmereUI.UnitEffectiveRole("player")
     if playerRole ~= "TANK" and playerRole ~= "HEALER" then
-        local specIdx = GetSpecialization()
-        local specRole = specIdx and select(5, GetSpecializationInfo(specIdx))
-        if specRole == "TANK" or specRole == "HEALER" then
-            playerRole = specRole
-        else
-            playerRole = "DAMAGER"
-        end
+        playerRole = "DAMAGER"
     end
 
     -- Slot 1 = player
@@ -14790,12 +15101,41 @@ function ERF:OnEnable()
     eventFrame:RegisterEvent("ENCOUNTER_START")
     eventFrame:RegisterEvent("ENCOUNTER_END")
 
+    -- Heal prediction feeds ONLY the incoming-heal display, never absorbs.
+    -- Any view rendering it keeps the event; the default (all off) never
+    -- registers it at all. Materialized proxies = plain table reads.
+    function ns._RFPredWanted()
+        return (ns._scaledProfile.healPrediction
+            or ns._scaledPartyProxy.healPrediction
+            or ns._scaledExtraProxy.healPrediction) and true or false
+    end
+    -- Idempotent toggle sync, called from the _BumpAbsorbGen options funnel.
+    function ns._RFSyncPredRegistration()
+        local want = ns._RFPredWanted()
+        for unit, tracker in pairs(unitTrackers) do
+            if want then
+                tracker:RegisterUnitEvent("UNIT_HEAL_PREDICTION", unit)
+            else
+                tracker:UnregisterEvent("UNIT_HEAL_PREDICTION")
+            end
+        end
+    end
+
     -- Per-unit event trackers: one frame per unit.
     -- RegisterUnitEvent only accepts 1-2 units per call, so each unit gets
     -- its own frame. Units that don't exist simply don't fire (zero cost).
     local UNIT_EVENTS_BASE = {
-        "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_AURA",
-        "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_PREDICTION",
+        -- UNIT_AURA deliberately absent (Blizzard parity: their CompactUnitFrame
+        -- repaints prediction from health/absorb events only). The one gap --
+        -- an aura-granted shield expiring on its TIMER on an unhit, topped
+        -- unit (field report: VDH Infernal Strike) fires NO event at all --
+        -- is covered by the armed-members belt next to the absorb coalescer.
+        -- UNIT_HEAL_PREDICTION absent: it feeds ONLY the incoming-heal
+        -- display (never absorbs) and fires on every healer cast at every
+        -- target -- registered conditionally in MakeUnitTracker, synced by
+        -- ns._RFSyncPredRegistration on options writes.
+        "UNIT_HEALTH", "UNIT_MAXHEALTH",
+        "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED",
         "UNIT_MAX_HEALTH_MODIFIERS_CHANGED",
         "UNIT_NAME_UPDATE", "UNIT_THREAT_LIST_UPDATE", "UNIT_THREAT_SITUATION_UPDATE",
         "PLAYER_FLAGS_CHANGED", "UNIT_CONNECTION", "UNIT_IN_RANGE_UPDATE",
@@ -14807,6 +15147,9 @@ function ERF:OnEnable()
         local f = ns.TakeShell()
         for _, ev in ipairs(UNIT_EVENTS_BASE) do
             f:RegisterUnitEvent(ev, unit)
+        end
+        if ns._RFPredWanted() then
+            f:RegisterUnitEvent("UNIT_HEAL_PREDICTION", unit)
         end
         f:RegisterUnitEvent("UNIT_POWER_UPDATE", unit)
         f:SetScript("OnEvent", OnEvent)
@@ -14904,6 +15247,15 @@ function ERF:OnEnable()
         end
         return false
     end
+    local function RegisterMethodInternalNicknames()
+        if ns._methodInternalSurfaceNickHooked then return end
+        if EasyNicknameAPI and EasyNicknameAPI.RegisterCallback then
+            EasyNicknameAPI.RegisterCallback("SurfaceNicknamesChanged", function()
+                if ns.RefreshAllNames then ns.RefreshAllNames() end
+            end, "EllesmereUIRaidFrames")
+            ns._methodInternalSurfaceNickHooked = true
+        end
+    end
     local function RegisterTRNicknames()
         if ns._trNickHooked then return true end
         local TR = TimelineReminders
@@ -14968,6 +15320,7 @@ function ERF:OnEnable()
             if (a and b and c) or event == "PLAYER_ENTERING_WORLD" then self:UnregisterAllEvents() end
         end)
     end
+    EventUtil.ContinueOnAddOnLoaded("MethodInternal", RegisterMethodInternalNicknames)
 
     -- Init options module if it loaded before us
     if ns._InitEUIModule then
