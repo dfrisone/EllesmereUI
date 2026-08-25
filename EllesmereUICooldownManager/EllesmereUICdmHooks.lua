@@ -8739,16 +8739,23 @@ function _AC.Build(rec, barKey, bd, sids, sig)
     rec.pt = pt
     rec.curPt = pt
     if AK.SetContainerAxis then AK.SetContainerAxis(container, vertical) end
-    AK.AddGroupToContainer(container, {
-        key = "spells",
-        filter = { "HELPFUL" },
+    -- Two polarity scans, same id set: a tracked spell can be a buff (most
+    -- trinket procs) or a self-inflicted debuff (Spymaster's Web-style stacking
+    -- drain trinkets), and Blizzard's aura engine only ever scans one polarity
+    -- per group. Harmless overlap -- a given id is only ever live in one of the
+    -- two at a time, so this never double-renders.
+    local groupOpts = {
         style = styleKey,
         extraInit = _AC.InitExtra,
         maxFrameCount = #sids,
-        -- Helpful spellID includes on the player pass the identity gate
-        -- regardless of the spell's secrecy flag.
+        -- SpellID includes on the player pass the identity gate regardless
+        -- of the spell's secrecy flag.
         candidateFilters = { includeSpellIDs = includeMap },
-    })
+    }
+    groupOpts.key, groupOpts.filter = "spells", { "HELPFUL" }
+    AK.AddGroupToContainer(container, groupOpts)
+    groupOpts.key, groupOpts.filter = "spellsHarmful", { "HARMFUL" }
+    AK.AddGroupToContainer(container, groupOpts)
     if container.SetAuraGroupLayout then
         -- elementWidth/Height feed the engine's flow math (the style sizes the
         -- button itself). Without them the flow spaces icons at the engine
@@ -8756,11 +8763,13 @@ function _AC.Build(rec, barKey, bd, sids, sig)
         -- bar, whose buttons are 0.80 tall, is off on both axes.
         local st = AK.styles[styleKey]
         local gapPx = _AC.SnapPx(gap)
-        container:SetAuraGroupLayout("spells", {
+        local layout = {
             elementWidth = st and st.width, elementHeight = st and st.height,
             elementSpacing = gapPx, lineSpacing = gapPx,
             groupSpacing = gapPx, groupLineSpacing = gapPx,
-        })
+        }
+        container:SetAuraGroupLayout("spells", layout)
+        container:SetAuraGroupLayout("spellsHarmful", layout)
     end
     AK.FinishContainer(container, "player")
     rec.container = container
