@@ -54,6 +54,7 @@ ns.LVL_AURA   = 13   -- base level for every aura icon/bar (children at +1..+5)
 ns.LVL_MARKER = 26   -- raid marker icon (always on top -- above the dispel
                      -- type icon band at +21..+25, which itself sits above
                      -- the aura band so it wins a corner shared with debuffs)
+ns.LVL_PING   = 27   -- incoming ping glyph (UNIT_PING_PIN_ADDED), above even the raid marker
 
 -------------------------------------------------------------------------------
 --  Leader-icon host strata: keep the host on the button's own strata in the
@@ -3514,6 +3515,20 @@ local function StyleButton(button)
     markerCarrier:SetAllPoints(health)
     markerCarrier:SetFrameLevel(button:GetFrameLevel() + ns.LVL_MARKER)
 
+    -- Incoming ping visual: reuses Blizzard's own UnitPingIconFrameTemplate/mixin
+    -- (UNIT_PING_PIN_ADDED/REMOVED) so the atlas and animation match default raid frames.
+    -- "unit" is read live off the button's own secure attribute -- never cache it, the
+    -- header reassigns it on every sort/roster change.
+    local pingIcon = CreateFrame("Frame", nil, button, "UnitPingIconFrameTemplate")
+    pingIcon:SetAllPoints(health)
+    pingIcon:SetFrameLevel(button:GetFrameLevel() + ns.LVL_PING)
+    pingIcon.isRaidFrame = true
+    d.pingIcon = pingIcon
+    pingIcon:SetGUIDMatch(function(guid)
+        local unit = button:GetAttribute("unit")
+        return unit and UnitExists(unit) and guid == UnitGUID(unit)
+    end)
+
     -- Leader/assistant icon. Own host frame (strata/level contract in ns.ApplyLeaderStrata) --
     -- NOT the marker carrier, whose high level keeps the raid marker always on top. Parented to
     -- the button so it tracks the frame; SetAllPoints(health) anchors it to the health bar.
@@ -3879,6 +3894,9 @@ local function StyleButton(button)
             if d._lastUnit ~= u then
                 d._lastUnit = u
                 d._appliedHidePower = nil
+                -- The header recycles this button to a new occupant; a ping shown for
+                -- the previous occupant must not carry over onto whoever lands here.
+                if d.pingIcon then d.pingIcon:ClearPing() end
             end
             -- Extra Frames duplicates never enter the real routing maps (one button per unit);
             -- XF_Apply owns ns._xfUnitToButton. The repaint/range/private-aura work below is 1:1.
