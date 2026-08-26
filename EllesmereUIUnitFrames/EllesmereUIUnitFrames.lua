@@ -7797,37 +7797,6 @@ local function CreateTargetAuras(frame, unit)
     end
 end
 
--- Incoming ping visual, built by hand rather than inheriting Blizzard's
--- UnitPingIconFrameTemplate: that template is defined inside a
--- <ScopedModifier forbidden="true"> block in Blizzard_PingUI.xml, so any
--- frame created from it is itself forbidden and errors on touch from addon
--- code (this broke Unlock Mode selection for the whole module -- the error
--- aborted StyleFullFrame/StyleFocusFrame before RegisterUnlockElements ran).
-local function CreatePingIcon(parent, guidMatch)
-    local pingIcon = CreateFrame("Frame", nil, parent)
-    local iconFrame = CreateFrame("Frame", nil, pingIcon)
-    iconFrame:SetAllPoints(pingIcon)
-    iconFrame:Hide()
-    local bg = iconFrame:CreateTexture(nil, "BACKGROUND")
-    bg:SetPoint("CENTER")
-    local icon = iconFrame:CreateTexture(nil, "ARTWORK")
-    icon:SetPoint("CENTER")
-    pingIcon:RegisterEvent("UNIT_PING_PIN_ADDED")
-    pingIcon:RegisterEvent("UNIT_PING_PIN_REMOVED")
-    pingIcon:SetScript("OnEvent", function(_, event, guid, uiTextureKit)
-        if not guidMatch(guid) then return end
-        if event == "UNIT_PING_PIN_ADDED" then
-            bg:SetAtlas(("Ping_Frame_BG_%s"):format(uiTextureKit), true)
-            icon:SetAtlas(("Ping_Frame_%s"):format(uiTextureKit), true)
-            iconFrame:Show()
-        else
-            iconFrame:Hide()
-        end
-    end)
-    pingIcon.ClearPing = function() iconFrame:Hide() end
-    return pingIcon
-end
-
 local function StyleFullFrame(frame, unit)
     local settings = GetSettingsForUnit(unit)
     local powerPos = settings.powerPosition or "below"
@@ -7987,20 +7956,6 @@ local function StyleFullFrame(frame, unit)
         else
             raidIcon:Hide()
         end
-    end
-
-    -- Incoming ping visual (target only -- Blizzard's own default UI does not show this
-    -- on the player frame either).
-    if unit == "target" then
-        local pingIcon = CreatePingIcon(frame, function(guid)
-            return UnitExists("target") and guid == UnitGUID("target")
-        end)
-        pingIcon:SetAllPoints(frame)
-        -- Stays one level above the raid marker holder, which is itself relifted above
-        -- the text overlay on every SetFrameStrata reapply (see those call sites) --
-        -- otherwise the two ties and one can render over the other unpredictably.
-        pingIcon:SetFrameLevel(frame._raidMarkerHolder:GetFrameLevel() + 1)
-        frame._pingIcon = pingIcon
     end
 
     -- Text overlay frame -- sits above the StatusBar for clean text rendering.
@@ -8322,19 +8277,6 @@ local function StyleFocusFrame(frame, unit)
         else
             raidIcon:Hide()
         end
-    end
-
-    -- Incoming ping visual.
-    do
-        local pingIcon = CreatePingIcon(frame, function(guid)
-            return UnitExists("focus") and guid == UnitGUID("focus")
-        end)
-        pingIcon:SetAllPoints(frame)
-        -- Stays one level above the raid marker holder, which is itself relifted above
-        -- the text overlay on every SetFrameStrata reapply (see those call sites) --
-        -- otherwise the two ties and one can render over the other unpredictably.
-        pingIcon:SetFrameLevel(frame._raidMarkerHolder:GetFrameLevel() + 1)
-        frame._pingIcon = pingIcon
     end
 
     -- Text overlay frame -- sits above the StatusBar and unified border.
@@ -10111,9 +10053,6 @@ local function ReloadFrames()
             -- above the text overlay so the marker is never hidden behind name/health text.
             if frame._raidMarkerHolder and frame._textOverlay then
                 frame._raidMarkerHolder:SetFrameLevel(frame._textOverlay:GetFrameLevel() + 5)
-                if frame._pingIcon then
-                    frame._pingIcon:SetFrameLevel(frame._raidMarkerHolder:GetFrameLevel() + 1)
-                end
             end
         end
     end
@@ -13715,9 +13654,6 @@ function InitializeFrames()
             -- above the text overlay so the marker is never hidden behind name/health text.
             if frame._raidMarkerHolder and frame._textOverlay then
                 frame._raidMarkerHolder:SetFrameLevel(frame._textOverlay:GetFrameLevel() + 5)
-                if frame._pingIcon then
-                    frame._pingIcon:SetFrameLevel(frame._raidMarkerHolder:GetFrameLevel() + 1)
-                end
             end
         end
     end
@@ -14185,9 +14121,6 @@ function InitializeFrames()
     frames._portraitBorderUpdater:SetScript("OnEvent", function(_, event)
         local unitKey = (event == "PLAYER_TARGET_CHANGED") and "target" or "focus"
         local frame = frames[unitKey]
-        -- A ping shown for the old target/focus must not carry over onto the new one;
-        -- Blizzard's own TargetFrame clears its ping icon on this same event.
-        if frame and frame._pingIcon then frame._pingIcon:ClearPing() end
         if frame and (unitKey == "target" or unitKey == "focus") then
             local s = db.profile[unitKey]
             if frame.LeftText and s and s.leftTextClassColor ~= nil then
