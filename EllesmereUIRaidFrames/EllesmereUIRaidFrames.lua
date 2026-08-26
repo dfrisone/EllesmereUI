@@ -3218,6 +3218,38 @@ do
     end
 end
 
+-- Incoming ping visual, built by hand rather than inheriting Blizzard's
+-- UnitPingIconFrameTemplate: that template is defined inside a
+-- <ScopedModifier forbidden="true"> block in Blizzard_PingUI.xml, so any
+-- frame created from it is itself forbidden and errors on touch from addon
+-- code (this broke Unlock Mode selection for the whole module -- the error
+-- aborted StyleButton before it finished building the button).
+local function CreatePingIcon(parent, guidMatch)
+    local pingIcon = CreateFrame("Frame", nil, parent)
+    local iconFrame = CreateFrame("Frame", nil, pingIcon)
+    iconFrame:SetAllPoints(pingIcon)
+    iconFrame:Hide()
+    local bg = iconFrame:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("CENTER")
+    local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+    icon:SetPoint("CENTER")
+    pingIcon:RegisterEvent("UNIT_PING_PIN_ADDED")
+    pingIcon:RegisterEvent("UNIT_PING_PIN_REMOVED")
+    pingIcon:SetScript("OnEvent", function(_, event, guid, uiTextureKit)
+        if not GetCVarBool("showPingsOnRaidFrames") then return end
+        if not guidMatch(guid) then return end
+        if event == "UNIT_PING_PIN_ADDED" then
+            bg:SetAtlas(("Ping_Frame_BG_%s"):format(uiTextureKit), true)
+            icon:SetAtlas(("Ping_Frame_%s"):format(uiTextureKit), true)
+            iconFrame:Show()
+        else
+            iconFrame:Hide()
+        end
+    end)
+    pingIcon.ClearPing = function() iconFrame:Hide() end
+    return pingIcon
+end
+
 -------------------------------------------------------------------------------
 --  Style a single button (called once per button at creation time)
 -------------------------------------------------------------------------------
@@ -3515,19 +3547,15 @@ local function StyleButton(button)
     markerCarrier:SetAllPoints(health)
     markerCarrier:SetFrameLevel(button:GetFrameLevel() + ns.LVL_MARKER)
 
-    -- Incoming ping visual: reuses Blizzard's own UnitPingIconFrameTemplate/mixin
-    -- (UNIT_PING_PIN_ADDED/REMOVED) so the atlas and animation match default raid frames.
-    -- "unit" is read live off the button's own secure attribute -- never cache it, the
-    -- header reassigns it on every sort/roster change.
-    local pingIcon = CreateFrame("Frame", nil, button, "UnitPingIconFrameTemplate")
-    pingIcon:SetAllPoints(health)
-    pingIcon:SetFrameLevel(button:GetFrameLevel() + ns.LVL_PING)
-    pingIcon.isRaidFrame = true
-    d.pingIcon = pingIcon
-    pingIcon:SetGUIDMatch(function(guid)
+    -- Incoming ping visual. "unit" is read live off the button's own secure
+    -- attribute -- never cache it, the header reassigns it on every sort/roster change.
+    local pingIcon = CreatePingIcon(button, function(guid)
         local unit = button:GetAttribute("unit")
         return unit and UnitExists(unit) and guid == UnitGUID(unit)
     end)
+    pingIcon:SetAllPoints(health)
+    pingIcon:SetFrameLevel(button:GetFrameLevel() + ns.LVL_PING)
+    d.pingIcon = pingIcon
 
     -- Leader/assistant icon. Own host frame (strata/level contract in ns.ApplyLeaderStrata) --
     -- NOT the marker carrier, whose high level keeps the raid marker always on top. Parented to

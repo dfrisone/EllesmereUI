@@ -7797,6 +7797,37 @@ local function CreateTargetAuras(frame, unit)
     end
 end
 
+-- Incoming ping visual, built by hand rather than inheriting Blizzard's
+-- UnitPingIconFrameTemplate: that template is defined inside a
+-- <ScopedModifier forbidden="true"> block in Blizzard_PingUI.xml, so any
+-- frame created from it is itself forbidden and errors on touch from addon
+-- code (this broke Unlock Mode selection for the whole module -- the error
+-- aborted StyleFullFrame/StyleFocusFrame before RegisterUnlockElements ran).
+local function CreatePingIcon(parent, guidMatch)
+    local pingIcon = CreateFrame("Frame", nil, parent)
+    local iconFrame = CreateFrame("Frame", nil, pingIcon)
+    iconFrame:SetAllPoints(pingIcon)
+    iconFrame:Hide()
+    local bg = iconFrame:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("CENTER")
+    local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+    icon:SetPoint("CENTER")
+    pingIcon:RegisterEvent("UNIT_PING_PIN_ADDED")
+    pingIcon:RegisterEvent("UNIT_PING_PIN_REMOVED")
+    pingIcon:SetScript("OnEvent", function(_, event, guid, uiTextureKit)
+        if not guidMatch(guid) then return end
+        if event == "UNIT_PING_PIN_ADDED" then
+            bg:SetAtlas(("Ping_Frame_BG_%s"):format(uiTextureKit), true)
+            icon:SetAtlas(("Ping_Frame_%s"):format(uiTextureKit), true)
+            iconFrame:Show()
+        else
+            iconFrame:Hide()
+        end
+    end)
+    pingIcon.ClearPing = function() iconFrame:Hide() end
+    return pingIcon
+end
+
 local function StyleFullFrame(frame, unit)
     local settings = GetSettingsForUnit(unit)
     local powerPos = settings.powerPosition or "below"
@@ -7959,18 +7990,16 @@ local function StyleFullFrame(frame, unit)
     end
 
     -- Incoming ping visual (target only -- Blizzard's own default UI does not show this
-    -- on the player frame either). Reuses Blizzard's UnitPingIconFrameTemplate/mixin so
-    -- the atlas and animation match default frames.
+    -- on the player frame either).
     if unit == "target" then
-        local pingIcon = CreateFrame("Frame", nil, frame, "UnitPingIconFrameTemplate")
+        local pingIcon = CreatePingIcon(frame, function(guid)
+            return UnitExists("target") and guid == UnitGUID("target")
+        end)
         pingIcon:SetAllPoints(frame)
         -- Stays one level above the raid marker holder, which is itself relifted above
         -- the text overlay on every SetFrameStrata reapply (see those call sites) --
         -- otherwise the two ties and one can render over the other unpredictably.
         pingIcon:SetFrameLevel(frame._raidMarkerHolder:GetFrameLevel() + 1)
-        pingIcon:SetGUIDMatch(function(guid)
-            return UnitExists("target") and guid == UnitGUID("target")
-        end)
         frame._pingIcon = pingIcon
     end
 
@@ -8295,18 +8324,16 @@ local function StyleFocusFrame(frame, unit)
         end
     end
 
-    -- Incoming ping visual. Reuses Blizzard's UnitPingIconFrameTemplate/mixin so the
-    -- atlas and animation match default frames.
+    -- Incoming ping visual.
     do
-        local pingIcon = CreateFrame("Frame", nil, frame, "UnitPingIconFrameTemplate")
+        local pingIcon = CreatePingIcon(frame, function(guid)
+            return UnitExists("focus") and guid == UnitGUID("focus")
+        end)
         pingIcon:SetAllPoints(frame)
         -- Stays one level above the raid marker holder, which is itself relifted above
         -- the text overlay on every SetFrameStrata reapply (see those call sites) --
         -- otherwise the two ties and one can render over the other unpredictably.
         pingIcon:SetFrameLevel(frame._raidMarkerHolder:GetFrameLevel() + 1)
-        pingIcon:SetGUIDMatch(function(guid)
-            return UnitExists("focus") and guid == UnitGUID("focus")
-        end)
         frame._pingIcon = pingIcon
     end
 
