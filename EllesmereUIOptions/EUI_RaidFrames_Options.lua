@@ -556,7 +556,10 @@ initFrame:SetScript("OnEvent", function(self)
     -- an unrelated one instead of honoring it. Bump the OTHER axis to a perpendicular
     -- value instead of letting an unrenderable pair through, mirroring the Spell
     -- Name/Spell Target side-conflict rule used elsewhere in these options.
+    -- Single Column never wraps into a second column at all, so Group Growth's
+    -- axis is unused and there is nothing to keep perpendicular.
     local function KeepGrowthPerpendicular(newVal, getOther, setOther)
+        if SVal("mergeSingleColumn", false) then return end
         local other = getOther()
         if GrowthIsVertical(newVal) == GrowthIsVertical(other) then
             setOther(GrowthIsVertical(newVal) and "RIGHT" or "DOWN")
@@ -5018,6 +5021,44 @@ initFrame:SetScript("OnEvent", function(self)
                       SSet("mergeGroups", v)
                       EllesmereUI:RefreshPage()
                   end });  y = y - h
+
+            if not EllesmereUI._prebuilding then
+                local rgn = showGroupsRow._rightRegion
+                local _, cogShow = EllesmereUI.BuildCogPopup({
+                    title = "Merge Groups",
+                    rows = {
+                        { type="toggle", label="Single Column",
+                          tooltip="Show every member in one continuous column instead of wrapping into a new column every 5 units. Group Growth has no effect while this is on -- Unit Growth still controls the direction.",
+                          get=function() return SVal("mergeSingleColumn", false) end,
+                          set=function(v)
+                              SSet("mergeSingleColumn", v)
+                              -- Turning this off restores the grid, where a same-axis
+                              -- Group/Unit Growth pair (allowed while Single Column
+                              -- was on) has no valid column direction again.
+                              if not v then
+                                  KeepGrowthPerpendicular(SVal("groupGrowth", "RIGHT"),
+                                      function() return SVal("unitGrowth", "DOWN") end,
+                                      function(nv) db.profile.unitGrowth = nv end)
+                                  FixTierOverridesPerpendicular()
+                                  EllesmereUI:RefreshPage()
+                              end
+                              ReloadAndUpdate()
+                          end },
+                    },
+                })
+                local cogBtn = CreateFrame("Button", nil, rgn)
+                cogBtn:SetSize(26, 26)
+                cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+                rgn._lastInline = cogBtn
+                cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+                cogBtn:SetAlpha(0.4)
+                local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
+                cogTex:SetAllPoints()
+                cogTex:SetTexture(EllesmereUI.COGS_ICON)
+                cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+                cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
+                cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
+            end
 
             -- Left dropdown becomes a checkbox dropdown for groups 1-8.
             if not EllesmereUI._prebuilding then

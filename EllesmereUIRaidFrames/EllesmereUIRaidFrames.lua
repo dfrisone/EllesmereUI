@@ -307,6 +307,7 @@ local defaults = {
         showSelfFirst    = true,
         showSelfLast     = false,
         mergeGroups      = false,
+        mergeSingleColumn = false,  -- merged mode only: one continuous column, no column wrap
         visibleGroups    = { true, true, true, true, true, true, false, false },
         hideEmptyGroups  = true,     -- collapse subgroups with no members (raid only, real frames)
         excludeHiddenGroupsFromSize = true, -- hidden Show Groups don't count toward the raid-size breakpoint
@@ -7171,6 +7172,7 @@ ns._LayoutGroupsImpl = function()
 
     local s = db.profile
     local merged = s.mergeGroups
+    local singleColumn = merged and s.mergeSingleColumn
     -- Belt: any path that flips the mode without passing through ReloadFrames
     -- still gets its header set built before this tries to show it.
     ns._BuildHeaderSet((merged and true) or false)
@@ -7247,10 +7249,16 @@ ns._LayoutGroupsImpl = function()
             if not selfOwnsHeader and ns._flatHeader:GetAttribute("groupFilter") ~= gfStr then
                 ns._flatHeader:SetAttribute("groupFilter", gfStr)
             end
+            -- Single Column: nil unitsPerColumn is Blizzard's own "infinite" value
+            -- (SecureGroupHeaders.lua), so the header never wraps into a second
+            -- column and columnAnchorPoint/groupGrowth simply goes unused.
+            local desiredUPC = 5
+            if singleColumn then desiredUPC = nil end
             if ns._flatHeader:GetAttribute("point") ~= hdrPoint
             or ns._flatHeader:GetAttribute("xOffset") ~= hdrXOff
             or ns._flatHeader:GetAttribute("yOffset") ~= hdrYOff
-            or ns._flatHeader:GetAttribute("columnAnchorPoint") ~= colAnchor then
+            or ns._flatHeader:GetAttribute("columnAnchorPoint") ~= colAnchor
+            or ns._flatHeader:GetAttribute("unitsPerColumn") ~= desiredUPC then
                 -- Clear child anchors before changing layout direction
                 local ci, child = 1, ns._flatHeader:GetAttribute("child1")
                 while child do
@@ -7262,6 +7270,7 @@ ns._LayoutGroupsImpl = function()
                 ns._flatHeader:SetAttribute("xOffset", hdrXOff)
                 ns._flatHeader:SetAttribute("yOffset", hdrYOff)
                 ns._flatHeader:SetAttribute("columnAnchorPoint", colAnchor)
+                ns._flatHeader:SetAttribute("unitsPerColumn", desiredUPC)
                 layoutChanged = true
             end
             if ns._flatHeader:GetAttribute("columnSpacing") ~= gs then
@@ -7377,7 +7386,12 @@ ns._LayoutGroupsImpl = function()
     -- header constraint and renders along groupGrowth literally, so it keeps the
     -- original formula.
     local totalW, totalH
-    if merged then
+    if singleColumn then
+        -- No column wrap: one unit wide/tall along unitGrowth, not the 4x5
+        -- grid below. Same formula ns._RFFootprint uses everywhere else, so
+        -- this box can never drift from the base/tier/preview footprints.
+        totalW, totalH = ns._RFFootprint(bw, bh, unitGrowth, groupGrowth, cs, gs, true)
+    elseif merged then
         if unitGrowth == "DOWN" or unitGrowth == "UP" then
             totalW = MOVER_GROUPS * groupW + (MOVER_GROUPS - 1) * gs
             totalH = groupH
@@ -7832,8 +7846,22 @@ end
 -- must self-heal (ns._RFEffectiveGrowth) BEFORE calling either, so the size and
 -- the corner agree -- this function does not self-heal internally to avoid a
 -- caller healing one but not the other.
-ns._RFFootprint = function(bw, bh, unitGrowth, groupGrowth, cs, gs)
+-- singleColumn (merged mode's Single Column option) has no column wrap at all,
+-- so the box is one unit wide/tall along unitGrowth -- same "actual render
+-- axis follows unitGrowth" reasoning as the merged branch in
+-- ns._LayoutGroupsImpl. Kept at the same MOVER_GROUPS*5 (20-unit) reference
+-- length the grid box already uses rather than a true 40-man length, matching
+-- this box's existing "fixed reference size, not tied to real occupancy"
+-- behavior (see the mover box comment on ns._LayoutGroupsImpl below).
+ns._RFFootprint = function(bw, bh, unitGrowth, groupGrowth, cs, gs, singleColumn)
     bw, bh = PixelSnap(bw), PixelSnap(bh)
+    if singleColumn then
+        local colUnits = MOVER_GROUPS * 5
+        if unitGrowth == "RIGHT" or unitGrowth == "LEFT" then
+            return PixelSnap(colUnits * bw + (colUnits - 1) * cs), PixelSnap(bh)
+        end
+        return PixelSnap(bw), PixelSnap(colUnits * bh + (colUnits - 1) * cs)
+    end
     local groupW, groupH
     if unitGrowth == "RIGHT" or unitGrowth == "LEFT" then
         groupW = 5 * bw + 4 * cs
@@ -7859,7 +7887,7 @@ ns._RFBaseTopLeft = function()
     local cs = PixelSnap(s.cellSpacing or 2)
     local gs = PixelSnap(s.groupSpacing or 8)
     local ug, gg = ns._RFEffectiveGrowth(s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", s.mergeGroups)
-    local w, h = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46, ug, gg, cs, gs)
+    local w, h = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46, ug, gg, cs, gs, s.mergeGroups and s.mergeSingleColumn)
     local l, t = ns._RFPosTopLeft(pos, w, h)
     return l, t, w, h
 end
@@ -7887,8 +7915,12 @@ ns._RFHeaderPoint = function(unitGrowth, cs)
 end
 
 -- Blizzard's flat header can only wrap into columns when columnAnchorPoint runs
--- perpendicular to unitGrowth -- see ns._RFEffectiveGrowth below for why merged
--- mode never actually reaches a same-axis pair here in practice.
+-- perpendicular to unitGrowth -- see ns._RFEffectiveGrowth below for why a
+-- wrapping merged grid never actually reaches a same-axis pair here in practice.
+-- Merge Groups' Single Column CAN reach one (there is no column to wrap into,
+-- so no perpendicular axis is required); the value returned here is simply
+-- unused in that case (Blizzard's header only reads columnAnchorPoint when it
+-- actually wraps, per unitsPerColumn=nil in _LayoutGroupsImpl).
 ns._RFColAnchor = function(unitGrowth, groupGrowth)
     if groupGrowth == "DOWN" or groupGrowth == "RIGHT" then
         if ns._RFGrowthIsVertical(unitGrowth) then return "LEFT" end
@@ -7905,9 +7937,10 @@ end
 -- hand-edited SavedVariables). Group Growth wins here; the options UI's
 -- write-time KeepGrowthPerpendicular uses the same resolution EXCEPT its Unit
 -- Growth dropdown, which deliberately lets Unit Growth win instead. No-op if
--- not merged.
+-- not merged. Also a no-op under Single Column: that mode never wraps into a
+-- second column, so a same-axis pair is legitimate rather than unrenderable.
 ns._RFEffectiveGrowth = function(unitGrowth, groupGrowth, merged)
-    if not merged then return unitGrowth, groupGrowth end
+    if not merged or db.profile.mergeSingleColumn then return unitGrowth, groupGrowth end
     if ns._RFGrowthIsVertical(unitGrowth) == ns._RFGrowthIsVertical(groupGrowth) then
         unitGrowth = ns._RFGrowthIsVertical(unitGrowth) and "RIGHT" or "DOWN"
     end
@@ -7919,10 +7952,11 @@ end
 -- growth is horizontal (RIGHT pins LEFT edge, LEFT pins RIGHT edge); vertical side likewise
 -- (DOWN pins TOP, UP pins BOTTOM). Every ns._RFEffectiveGrowth caller heals a same-axis pair
 -- before reaching here whenever merged is true, so this only ever sees one for separated mode
--- (merged=false is a no-op for _RFEffectiveGrowth), where all 16 combinations are legitimate
--- and this tie-break (UP beats BOTTOM, LEFT beats RIGHT, default TOP+LEFT) is what existing
--- per-tier offsets are calibrated against -- matching Blizzard's own same-axis corner instead
--- would be dead code here for merged and a silent position-shift regression for separated.
+-- or merged Single Column (merged=false, or mergeSingleColumn=true, are both no-ops for
+-- _RFEffectiveGrowth) -- where all 16 combinations are legitimate and this tie-break (UP beats
+-- BOTTOM, LEFT beats RIGHT, default TOP+LEFT) is what existing per-tier offsets are calibrated
+-- against -- matching Blizzard's own same-axis corner instead would be dead code here for a
+-- wrapping merged grid and a silent position-shift regression for separated/Single Column.
 ns._RFGrowthCorner = function(unitGrowth, groupGrowth)
     local h = (unitGrowth == "LEFT" or groupGrowth == "LEFT") and "RIGHT" or "LEFT"
     local v = (unitGrowth == "UP" or groupGrowth == "UP") and "BOTTOM" or "TOP"
@@ -8008,12 +8042,13 @@ ns._RFRebaseSavedCenter = function(cx, cy)
     if not ov then return cx, cy end
     local cs = PixelSnap(s.cellSpacing or 2)
     local gs = PixelSnap(s.groupSpacing or 8)
+    local sc = s.mergeGroups and s.mergeSingleColumn
     local bug, bgg = ns._RFEffectiveGrowth(s.unitGrowth or "DOWN", s.groupGrowth or "RIGHT", s.mergeGroups)
-    local bw, bh = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46, bug, bgg, cs, gs)
+    local bw, bh = ns._RFFootprint(s.frameWidth or 72, s.frameHeight or 46, bug, bgg, cs, gs, sc)
     local ug, gg = ns._RFEffectiveGrowth(
         ov.unitGrowth or s.unitGrowth or "DOWN", ov.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
     local tw, th = ns._RFFootprint(ov.width or s.frameWidth or 72,
-        ov.height or s.frameHeight or 46, ug, gg, cs, gs)
+        ov.height or s.frameHeight or 46, ug, gg, cs, gs, sc)
     local kx, ky = ns._RFCornerTerms(tw, th, bw, bh, ug, gg)
     return cx - (ov.offsetX or 0) - kx - (tw - bw) / 2,
         cy - (ov.offsetY or 0) - ky - (bh - th) / 2
@@ -8086,7 +8121,8 @@ ns._NormalizeTierOffsetAnchors = function()
                         o.unitGrowth or s.unitGrowth or "DOWN",
                         o.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
                     local tw, th = ns._RFFootprint(
-                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46, ug, gg, cs, gs)
+                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46, ug, gg, cs, gs,
+                        s.mergeGroups and s.mergeSingleColumn)
                     local tl, tt = ns._RFPosTopLeft(pos, tw, th)
                     o.offsetX = math.floor((o.offsetX or 0) + (tl - bl) + 0.5)
                     o.offsetY = math.floor((o.offsetY or 0) + (tt - bt) + 0.5)
@@ -8103,7 +8139,8 @@ ns._NormalizeTierOffsetAnchors = function()
                         o.unitGrowth or s.unitGrowth or "DOWN",
                         o.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
                     local tw, th = ns._RFFootprint(
-                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46, ug, gg, cs, gs)
+                        o.width or s.frameWidth or 72, o.height or s.frameHeight or 46, ug, gg, cs, gs,
+                        s.mergeGroups and s.mergeSingleColumn)
                     local kx, ky = ns._RFCornerTerms(tw, th, bw, bh, ug, gg)
                     if kx ~= 0 then
                         o.offsetX = math.floor((o.offsetX or 0) - kx + 0.5)
@@ -8164,7 +8201,7 @@ ns._ApplyTierOffset = function()
     local ug, gg = ns._RFEffectiveGrowth(
         (ov and ov.unitGrowth) or s.unitGrowth or "DOWN",
         (ov and ov.groupGrowth) or s.groupGrowth or "RIGHT", s.mergeGroups)
-    local tw, th = ns._RFFootprint(fw, fh, ug, gg, cs, gs)
+    local tw, th = ns._RFFootprint(fw, fh, ug, gg, cs, gs, s.mergeGroups and s.mergeSingleColumn)
     local x, y = ns._RFTierTopLeft(tw, th, ug, gg,
         (ov and ov.offsetX) or 0, (ov and ov.offsetY) or 0)
     if not x then return end
@@ -14320,8 +14357,12 @@ ns._ShowSizePreview = function(tier)
     local gs = PixelSnap(s.groupSpacing or 8)
     local unitGrowth, groupGrowth = ns._RFEffectiveGrowth(
         ov.unitGrowth or s.unitGrowth or "DOWN", ov.groupGrowth or s.groupGrowth or "RIGHT", s.mergeGroups)
-    local frameCount  = tier
-    local perGroup    = 5
+    local frameCount   = tier
+    local singleColumn = s.mergeGroups and s.mergeSingleColumn
+    -- Single Column: one "group" holding the whole tier collapses the grid
+    -- math below to a straight line, matching the real flat header's nil
+    -- unitsPerColumn (no separate code path needed).
+    local perGroup    = singleColumn and frameCount or 5
     local numGroups   = math.ceil(frameCount / perGroup)
 
     -- Group bounding box (same logic as LayoutGroups)
@@ -14364,7 +14405,7 @@ ns._ShowSizePreview = function(tier)
     -- can never drift). MOVER_GROUPS stays 4 for the group normalization below -- it
     -- must keep matching the real LayoutGroups container, which also normalizes over 4.
     local MOVER_GROUPS = 4
-    local totalW, totalH = ns._RFFootprint(bw, bh, unitGrowth, groupGrowth, cs, gs)
+    local totalW, totalH = ns._RFFootprint(bw, bh, unitGrowth, groupGrowth, cs, gs, singleColumn)
 
     -- Tier offset
     local tierOX = ov.offsetX or 0
