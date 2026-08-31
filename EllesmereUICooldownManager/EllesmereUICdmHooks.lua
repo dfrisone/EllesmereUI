@@ -4632,7 +4632,8 @@ ns._presetFrames = _presetFrames
 -- sizes and CENTERS its own content under full secrecy, so the container
 -- hangs off the bar GROWTH-AWARE: directional bars get a tail flowing off
 -- the growth edge (reads as the bar simply extending), CENTER bars get a
--- centered strip below/above (the only centered shape physics allows).
+-- strip on the PERPENDICULAR axis (below a horizontal bar, beside a
+-- vertical one): a tail on the growth axis skews a centered bar one way.
 -- Actives compact engine-side; when none are up it renders nothing.
 --
 -- The container lives on a UIParent-anchored holder: engine aura buttons
@@ -4660,9 +4661,10 @@ function _AC.Anchor(barKey, rec)
     local gap = (bd and bd.spacing) or 2
     local grow = (bd and bd.growDirection) or "CENTER"
     local cx, cy = bl + bw / 2, bb + bh / 2
-    -- END-OF-BAR TAIL for every growth mode (user-directed): customs flow
-    -- off the bar's end -- left-grow bars extend left, everything else
-    -- extends right; vertical bars extend past their up/down end.
+    -- END-OF-BAR TAIL for DIRECTIONAL growth (user-directed): customs flow
+    -- off the bar's end -- left-grow bars extend left, right/up/down-grow
+    -- bars extend past their own end. CENTER growth takes the perpendicular
+    -- strip instead, so the customs never skew the bar to one side.
     --
     -- EMPTY BAR (live content width 0, published by LayoutCDMBar -- the
     -- bar's own rect is deliberately stale then): the tail BECOMES the bar.
@@ -4682,6 +4684,8 @@ function _AC.Anchor(barKey, rec)
             holder:SetPoint("BOTTOM", UIParent, "BOTTOMLEFT", cx, empty and bb or (bb + bh + gap))
         elseif empty and grow == "CENTER" then
             holder:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx, cy)
+        elseif grow == "CENTER" then
+            holder:SetPoint("LEFT", UIParent, "BOTTOMLEFT", bl + bw + gap, cy)
         else
             holder:SetPoint("TOP", UIParent, "BOTTOMLEFT", cx, empty and (bb + bh) or (bb - gap))
         end
@@ -4689,6 +4693,8 @@ function _AC.Anchor(barKey, rec)
         holder:SetPoint("RIGHT", UIParent, "BOTTOMLEFT", empty and (bl + bw) or (bl - gap), cy)
     elseif empty and grow == "CENTER" then
         holder:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx, cy)
+    elseif grow == "CENTER" then
+        holder:SetPoint("TOP", UIParent, "BOTTOMLEFT", cx, bb - gap)
     else
         holder:SetPoint("LEFT", UIParent, "BOTTOMLEFT", empty and bl or (bl + bw + gap), cy)
     end
@@ -8787,13 +8793,17 @@ function _AC.Build(rec, barKey, bd, sids, sig)
     local vertical = (bd and bd.verticalOrientation) and true or false
     local gap = (bd and bd.spacing) or 2
     local grow = (bd and bd.growDirection) or "CENTER"
-    -- Container point mirrors _AC.Anchor's holder placement: the tail
-    -- always flows AWAY from the bar's end (end-of-bar for all growths).
+    -- Container point mirrors _AC.Anchor's holder placement: directional
+    -- growth flows away from the bar's end, CENTER growth off its side.
     local pt
     if vertical then
-        pt = (grow == "UP") and "BOTTOM" or "TOP"
+        if grow == "UP" then pt = "BOTTOM"
+        elseif grow == "CENTER" then pt = "LEFT"
+        else pt = "TOP" end
     elseif grow == "LEFT" then
         pt = "RIGHT"
+    elseif grow == "CENTER" then
+        pt = "TOP"
     else
         pt = "LEFT"
     end
