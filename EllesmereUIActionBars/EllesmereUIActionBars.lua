@@ -8087,6 +8087,7 @@ local _range = {
     outOfRange = {},      -- [actionSlot] = true  (currently out of range)
     eventFrame = nil,     -- lazy-created event frame
     slotPending = false,  -- debounce for per-slot range re-enable
+    sweepPending = false, -- debounce for the deferred whole-bar range poll
 }
 
 -- Resolve a button's action slot without reading btn.action: protected
@@ -8290,6 +8291,7 @@ function EAB:ApplyRangeColoring()
         _range.eventFrame:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
         _range.eventFrame:RegisterEvent("ACTION_USABLE_CHANGED")
         _range.eventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        _range.eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
         _range.eventFrame:SetScript("OnEvent", function(_, event, slot, inRange, checksRange)
             if event == "ACTION_RANGE_CHECK_UPDATE" then
                 if not _range.slots[slot] then return end
@@ -8455,33 +8457,19 @@ function EAB:ApplyRangeColoring()
                         end
                     end
                 end
-            elseif event == "UPDATE_SHAPESHIFT_FORM" then
+            elseif event == "UPDATE_SHAPESHIFT_FORM" or event == "SPELL_UPDATE_ICON" then
                 -- Form shifts can fire ACTION_RANGE_CHECK_UPDATE with stale data
-                -- before Blizzard settles, so defer a manual IsActionInRange
-                -- poll. anyEnabled gate: feature fully off = no closure, no poll.
-                if not _range.anyEnabled then return end
+                -- before Blizzard settles, and an override swapping under a slot
+                -- changes that slot's range with no range event at all, so both
+                -- need a manual IsActionInRange poll. anyEnabled gate: feature
+                -- fully off = no closure, no poll; the pending flag collapses the
+                -- override flips a rotation fires every GCD into one sweep.
+                if not _range.anyEnabled or _range.sweepPending then return end
+                _range.sweepPending = true
                 C_Timer_After(0, function()
-                    local bars = EAB.db.profile.bars
+                    _range.sweepPending = false
                     for _, info in ipairs(BAR_CONFIG) do
-                        local s = bars[info.key]
-                        if s and s.outOfRangeColoring
-                            and not ns._eabBarDormant[info.key] then
-                            local btns = barButtons[info.key]
-                            if btns then
-                                for _, btn in ipairs(btns) do
-                                    local sl = GetButtonActionSlot(btn)
-                                    if sl and HasAction(sl) then
-                                        local inRange = IsActionInRange(sl)
-                                        local isOut = (inRange == false)
-                                        _range.outOfRange[sl] = isOut or nil
-                                        ApplyRangeTint(btn, isOut, s)
-                                    else
-                                        if sl then _range.outOfRange[sl] = nil end
-                                        ApplyRangeTint(btn, false, s)
-                                    end
-                                end
-                            end
-                        end
+                        ns._eabRangeSweepBar(info.key)
                     end
                 end)
             end
