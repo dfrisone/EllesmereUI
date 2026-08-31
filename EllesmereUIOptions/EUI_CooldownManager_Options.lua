@@ -8621,6 +8621,17 @@ initFrame:SetScript("OnEvent", function(self)
                     --  local (AB) instead of individual locals: this function is enormous and Lua 5.1 caps active locals at 200.
                     -----------------------------------------------------------
                     local AB = {}
+                    -- Where a PER-ICON write lands, and whether anything sits below it (tiered),
+                    -- which is what makes Exclude/Include meaningful. Regular spells use the family
+                    -- entry, chained to the bar tiers; the isCustomInjected branch replaces this
+                    -- with the customActiveStates entry its rows and the engine actually read.
+                    AB.own = {
+                        get     = function() return ss end,
+                        ensure  = function() return EnsureSS() end,
+                        rechain = function() ns.ChainSettings(ss, ns.GetBarTierSettings(sd, barKey)) end,
+                        refresh = function() end,
+                        tiered  = true,
+                    }
                     -- Run fn(sid, entry) for every per-spell entry belonging to a bar in the
                     -- given spec profile. The DEFAULT buffs bar owns every buff-store entry not claimed by another buff bar (Blizzard-tracked buffs aren't in assignedSpells).
                     AB.ForEachMemberEntry = function(prof, bsX, fn)
@@ -9018,23 +9029,25 @@ initFrame:SetScript("OnEvent", function(self)
                         return false
                     end
 
-                    -- True when the SPELL holds its OWN value for any of these keys (a
-                    -- per-spell override in THIS spec's store) -- the "excluded from the bar"
-                    -- state, having broken out of the bar apply. Inherently per spell AND spec (store is the active spec's profile).
+                    -- True when the ICON holds its OWN value for any of these keys (an override in
+                    -- its own store) -- the "excluded from the bar" state, having broken
+                    -- out of the bar apply. For a family entry that is inherently per spell AND spec (the store is the active spec's profile).
                     AB.SpellHasOwn = function(keys)
-                        if not (keys and ss) then return false end
+                        local t = keys and AB.own.get()
+                        if not t then return false end
                         for _, k in ipairs(keys) do
-                            if rawget(ss, k) ~= nil then return true end
+                            if rawget(t, k) ~= nil then return true end
                         end
                         return false
                     end
 
-                    -- Include This Spell: drop this spell's own value for these keys so it
-                    -- rejoins the bar apply (per spell+spec; caller does the UI refresh). Shared by the b3 button and by Apply to Bar/All Specs on an already-excluded spell (same thing).
+                    -- Include This Spell: drop this icon's own value for these keys so it
+                    -- rejoins the bar apply (caller does the UI refresh). Shared by the b3 button and by Apply to Bar/All Specs on an already-excluded spell (same thing).
                     AB.IncludeSpell = function(keys)
-                        if not (keys and ss) then return end
-                        for _, k in ipairs(keys) do rawset(ss, k, nil) end
-                        ns.ChainSettings(ss, ns.GetBarTierSettings(sd, barKey))
+                        local t = keys and AB.own.get()
+                        if not t then return end
+                        for _, k in ipairs(keys) do rawset(t, k, nil) end
+                        AB.own.rechain()
                     end
 
                     -- Remove an active apply from one scope: clears the setting's keys from that
@@ -9198,6 +9211,7 @@ initFrame:SetScript("OnEvent", function(self)
                         local b2 = MakeScopeItem(EllesmereUI.L("Apply to Bar (All Specs)"))
                         local b3 = MakeScopeItem(EllesmereUI.L("Exclude This Spell"))
                         b3._shown = false
+                        thisBtn._shown = true
                         -- Exclude/Include This Spell reads apart from the scope rows: soft red
                         -- when it will Exclude, soft green when it will Include, and NO persistent
                         -- white overlay when active (hover overlay only) -- b3._excluded (set in _updateActive) picks the colour.
@@ -9219,10 +9233,10 @@ initFrame:SetScript("OnEvent", function(self)
                             b3._rest()
                         end)
                         -- (Re)stack the visible rows top-to-bottom and size the frame.
-                        -- Row 1 is "Apply to This Spell" normally, but a bar apply
-                        -- REPLACES it with "Exclude / Include This Spell" (b3._shown) --
-                        -- the two are mutually exclusive there. Then Apply to Bar / All
-                        -- Specs.
+                        -- Row 1 is the per-icon scope: "Apply to This Spell" normally,
+                        -- "Exclude / Include This Spell" once a bar apply drives the
+                        -- setting (b3._shown), and empty where that leaves nothing to
+                        -- offer. Then Apply to Bar / All Specs.
                         local function Relayout()
                             local y = 4
                             local function place(it)
@@ -9232,7 +9246,9 @@ initFrame:SetScript("OnEvent", function(self)
                                 it:Show()
                                 y = y + ITEM_H
                             end
-                            if b3._shown then place(b3); thisBtn:Hide() else place(thisBtn); b3:Hide() end
+                            if b3._shown then place(b3); thisBtn:Hide()
+                            elseif thisBtn._shown then place(thisBtn); b3:Hide()
+                            else thisBtn:Hide(); b3:Hide() end
                             place(b1); place(b2)
                             local total = y + 4
                             sInner:SetHeight(total)
@@ -9272,24 +9288,29 @@ initFrame:SetScript("OnEvent", function(self)
                             -- Excluded = the spell holds its OWN value for these keys. Exactly
                             -- ONE scope is the effective source: this spell when excluded, otherwise
                             -- whichever bar tier drives it -- so the overlay never sits on Apply to Bar while the spell is off on its own (even though the bar still holds it for others).
-                            local excluded = false
+                            -- Being excluded needs a tier to be excluded FROM: with nothing below
+                            -- the entry a bar apply stamps that very entry, so holding an own value
+                            -- and carrying the bar's value are the same state.
+                            local ownT = AB.own.get()
+                            local hasOwn = false
                             for _, k in ipairs(keys) do
-                                if rawget(ss, k) ~= nil then excluded = true; break end
+                                if rawget(ownT, k) ~= nil then hasOwn = true; break end
                             end
+                            local excluded = hasOwn and AB.own.tiered
                             -- "Apply to This Spell" only shows when NO bar apply drives the setting
                             -- (a bar apply REPLACES it with Exclude/Include -- see Relayout), so it
                             -- just lights on the value the spell owns. Toggles light whenever the spell has its own value (on OR off); OR settings match the specific value.
                             if ctx and ctx.isToggle then
-                                thisBtn._active = excluded
+                                thisBtn._active = hasOwn
                             else
-                                thisBtn._active = holds(ss, true)
+                                thisBtn._active = holds(ownT, true)
                             end
                             b1._active = (not excluded) and holds(sd.barSettings, true)
                             b2._active = (not excluded) and holds(bdSel and bdSel.barSpellSettings, false)
                             thisBtn._rest(); b1._rest(); b2._rest()
                             -- Exclude/Include This Spell: shown whenever a bar apply drives the
                             -- setting (so this spell+spec can opt out/back in). Label + soft red/green colour flip on the excluded state (b3._excluded drives the colour -- see b3._rest above).
-                            if AB.KeysBarApplied(keys) then
+                            if AB.KeysBarApplied(keys) and AB.own.tiered then
                                 b3._excluded = excluded
                                 b3._setText(excluded and ("+ " .. EllesmereUI.L("Include This Spell"))
                                     or ("+ " .. EllesmereUI.L("Exclude This Spell")))
@@ -9298,6 +9319,10 @@ initFrame:SetScript("OnEvent", function(self)
                                 b3._excluded = false
                                 b3._shown = false
                             end
+                            -- Row 1 is the per-icon scope, and a bar apply always takes it over:
+                            -- Exclude/Include where the icon's store has a tier, nothing at all where
+                            -- it does not (the apply stamped that entry, so "set my own value" would write back the value already there).
+                            thisBtn._shown = not AB.KeysBarApplied(keys)
                             b3._rest()
                             Relayout()
                         end
@@ -9348,7 +9373,7 @@ initFrame:SetScript("OnEvent", function(self)
                             -- off. Items with a payload the flyout val doesn't capture (scalar
                             -- Threshold Seconds; custom colour, where "custom" is fixed and the RGB
                             -- lives in ss; + Border Color's flag + RGBA): rejoin ONLY when the payload matches this scope; otherwise fall through and push it -- rejoining would silently discard it.
-                            if AB.KeysBarApplied(keys) and AB.SpellHasOwn(keys)
+                            if AB.KeysBarApplied(keys) and AB.own.tiered and AB.SpellHasOwn(keys)
                                and (not (ctx.scalarApply or ctx.payloadValue)
                                     or (scopeActive and valuesMatch)) then
                                 AB.IncludeSpell(keys)
@@ -9368,20 +9393,30 @@ initFrame:SetScript("OnEvent", function(self)
                                 -- the per-icon originals, so this scope holds the ONLY copy of the
                                 -- value -- a plain un-apply would discard it and snap the setting to
                                 -- default. Seed the removed value back into the spell in hand first, so toggle-off is an undo (recreates its pre-apply own value) instead of a silent reset.
-                                if (ctx.scalarApply or ctx.payloadValue) and ss and scopeT then
-                                    -- EnsureSS, not ss directly: the apply's member sweep prunes an
-                                    -- entry it empties from the store (a spell whose ONLY settings were
-                                    -- the swept keys), leaving this closure's ss orphaned -- a seed into it
-                                    -- would be lost. EnsureSS re-persists the same table (no-op when it is still in the store).
-                                    local target = EnsureSS()
+                                local seed
+                                if (ctx.scalarApply or ctx.payloadValue) and scopeT then
+                                    seed = {}
                                     for _, k in ipairs(keys) do
-                                        local own
-                                        if allSpecs then own = scopeT[k]
-                                        else own = rawget(scopeT, k) end
-                                        if own ~= nil then rawset(target, k, own) end
+                                        if allSpecs then seed[k] = scopeT[k]
+                                        else seed[k] = rawget(scopeT, k) end
                                     end
                                 end
                                 AB.RunBarUnapply(keys, allSpecs)
+                                -- Seeded AFTER the unapply, which un-stamps preset entries whose value
+                                -- still equals the removed one -- the seed is exactly that value, so
+                                -- writing it first would hand it straight back. ensure(), not the table
+                                -- directly: the apply's member sweep prunes an entry it empties from the
+                                -- store (a spell whose ONLY settings were the swept keys), leaving this closure's copy orphaned. ensure() re-persists the same table (no-op when it is still in the store).
+                                if seed then
+                                    local target = AB.own.ensure()
+                                    for _, k in ipairs(keys) do
+                                        if seed[k] ~= nil then rawset(target, k, seed[k]) end
+                                    end
+                                    -- The unapply's own repaint ran before this write.
+                                    AB.own.refresh()
+                                    if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                                    if ns.QueueReanchor then ns.QueueReanchor() end
+                                end
                                 if ctx.refresh then ctx.refresh() end
                                 if s._updateActive then s._updateActive() end
                                 return
@@ -9443,13 +9478,13 @@ initFrame:SetScript("OnEvent", function(self)
                                 onConfirm   = go,
                             })
                         end
-                        -- Apply to This Spell: write the hovered value into the spell's OWN entry
-                        -- in THIS spec's store (a per-spell override = excluding this spell+spec from the bar). No dissolve, no popup -- only this one spell changes; the bar apply stays for every other spell.
+                        -- Apply to This Spell: write the hovered value into the icon's OWN entry
+                        -- (a per-icon override = excluding it from the bar). No dissolve, no popup -- only this one icon changes; the bar apply stays for every other spell.
                         thisBtn:SetScript("OnClick", function()
                             local ctx = s._ctx
                             if not (ctx and ctx.write) then return end
-                            EnsureSS()
-                            ctx.write(ss, ctx.valueOf and ctx.valueOf())
+                            ctx.write(AB.own.ensure(), ctx.valueOf and ctx.valueOf())
+                            AB.own.refresh()
                             if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
                             if ns.QueueReanchor then ns.QueueReanchor() end
                             if ctx.refresh then ctx.refresh() end
@@ -9457,23 +9492,23 @@ initFrame:SetScript("OnEvent", function(self)
                         end)
                         b1:SetScript("OnClick", function() DoApply(false) end)
                         b2:SetScript("OnClick", function() DoApply(true) end)
-                        -- Exclude / Include This Spell (per spell+spec, via ss).
+                        -- Exclude / Include This Spell (via the icon's own store for these keys).
                         b3:SetScript("OnClick", function()
                             local ctx = s._ctx
                             if not (ctx and ctx.write) then return end
                             local keys = ctx.keys or {}
                             if AB.SpellHasOwn(keys) then
-                                -- Include: drop this spell's own value -> rejoin the bar.
+                                -- Include: drop this icon's own value -> rejoin the bar.
                                 AB.IncludeSpell(keys)
                             else
-                                -- Exclude: break this spell out with its own value. OR
+                                -- Exclude: break this icon out with its own value. OR
                                 -- settings copy the current value (look unchanged); the
-                                -- "+" toggles exclude by turning OFF for this spell.
-                                EnsureSS()
+                                -- "+" toggles exclude by turning OFF for this icon.
                                 local v
                                 if ctx.isToggle then v = false else v = ctx.valueOf and ctx.valueOf() end
-                                ctx.write(ss, v)
+                                ctx.write(AB.own.ensure(), v)
                             end
+                            AB.own.refresh()
                             if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
                             if ns.QueueReanchor then ns.QueueReanchor() end
                             if ctx.refresh then ctx.refresh() end
@@ -10995,6 +11030,20 @@ initFrame:SetScript("OnEvent", function(self)
                                 e[key] = false
                             end
                         end
+                        -- Every row in this branch reads and writes cas, so the Apply strip's
+                        -- per-icon scopes must too -- a write into the family entry is one the rows
+                        -- and the Fake-Active engine never read back. refresh: whether a rule exists
+                        -- at all is decided in AddUserRule, which only runs on a rearm. tiered: only
+                        -- a trinket SLOT has anything below its entry, the slot entry a bar apply stamps.
+                        AB.own = {
+                            get     = function() return cas end,
+                            ensure  = EnsureCAS,
+                            rechain = function() end,
+                            refresh = function()
+                                if ns.FakeActive_Rearm then ns.FakeActive_Rearm() end
+                            end,
+                            tiered  = casSlot ~= nil,
+                        }
                         local hasActive = (cas.duration or 0) > 0
 
                         -- (The divider above the per-icon settings is already drawn
