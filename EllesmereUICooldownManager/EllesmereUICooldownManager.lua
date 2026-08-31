@@ -3452,30 +3452,23 @@ local function ApplyBarPositionCentered(frame, pos, barKey)
     local anchor = pos.point
     local bd = barKey and barDataByKey[barKey]
 
-    -- Corner-capable re-derivation, taken ONLY when a row growth direction is in play (or the
-    -- stored point is a leftover corner): recover the frame center from the stored anchor coord,
-    -- then re-project onto the anchor resolved from the bar's CURRENT growth + row growth.
-    -- Lossless round-trip -- the bar does not move, only the pinned edge/corner changes. Bars without a row growth direction take the conversion below. No persistence: positions are only saved by unlock mode's Save & Exit.
-    local storedIsCorner = (anchor:find("TOP", 1, true) or anchor:find("BOTTOM", 1, true))
-        and (anchor:find("LEFT", 1, true) or anchor:find("RIGHT", 1, true))
-    if (bd and bd.rowGrowDirection) or storedIsCorner then
-        local cx, cy = ns.AnchorCoordToCenter(anchor, px, py, fw, fh)
-        anchor = ns.ResolveGrowAnchorPoint(bd)
-        px, py = ns.CenterToAnchorCoord(anchor, cx, cy, fw, fh)
-    elseif anchor == "CENTER" and barKey then
-        -- Runtime conversion: a non-CENTER-grow bar with a CENTER position (legacy data,
-        -- Blizzard import) converts to edge format for SetPoint so it grows from the correct edge.
-        local grow = bd and bd.growDirection or "CENTER"
-        if grow ~= "CENTER" then
-            if grow == "RIGHT" and fw > 0 then
-                anchor = "LEFT"; px = px - fw / 2
-            elseif grow == "LEFT" and fw > 0 then
-                anchor = "RIGHT"; px = px + fw / 2
-            elseif grow == "DOWN" and fh > 0 then
-                anchor = "TOP"; py = py + fh / 2
-            elseif grow == "UP" and fh > 0 then
-                anchor = "BOTTOM"; py = py - fh / 2
-            end
+    -- Re-project the stored coord onto the anchor this bar's CURRENT growth + row growth
+    -- resolves to, whenever the two disagree. Lossless round-trip through the frame center --
+    -- the bar does not move, only its pinned edge/corner changes. Runs BOTH directions:
+    -- positions are stored at the growth edge, so a bar that grew RIGHT (DOWN) carries a LEFT
+    -- (TOP) point on disk and stays pinned there once set to Centered, growing one way forever;
+    -- a CENTER position (legacy data, Blizzard import) still converts to the edge a directional
+    -- bar needs. Skipped while an axis the conversion reads has no extent (empty bar) -- the
+    -- post-layout re-apply takes it. Not persisted: only unlock mode's Save & Exit writes.
+    local resolved = ns.ResolveGrowAnchorPoint(bd)
+    if resolved ~= anchor then
+        local both = resolved .. anchor
+        local needW = both:find("LEFT", 1, true) or both:find("RIGHT", 1, true)
+        local needH = both:find("TOP", 1, true) or both:find("BOTTOM", 1, true)
+        if (not needW or fw > 0) and (not needH or fh > 0) then
+            local cx, cy = ns.AnchorCoordToCenter(anchor, px, py, fw, fh)
+            px, py = ns.CenterToAnchorCoord(resolved, cx, cy, fw, fh)
+            anchor = resolved
         end
     end
 
