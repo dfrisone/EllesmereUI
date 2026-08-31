@@ -3477,7 +3477,18 @@ function EAB_VTABLE.ForceButtonRefresh(btn, action)
         -- on CHANGES, so nothing repaints until hover. Mirrors Blizzard's
         -- UpdateUsable; pcall-guarded in case the usability booleans are
         -- restricted (tint then left for the usable-event path).
-        pcall(ns._TintUsableIcon, icon, action)
+        -- Skipped while the range system owns the color, same rule as
+        -- DispWalkUsable: a spell override changes the texture and lands here,
+        -- and painting the usable tint over a live range tint strands a white
+        -- icon that only a hover undoes -- this path bypasses UpdateUsable, so
+        -- the re-apply hook never sees it, and the range cache still reads
+        -- out-of-range so no later event repaints either.
+        local rfd = EFD(btn)
+        if rfd.rangeTinted then
+            rfd.usableState = nil
+        else
+            pcall(ns._TintUsableIcon, icon, action)
+        end
     end
     if btn.Count and C_ActionBar and C_ActionBar.GetActionDisplayCount then
         -- No `or ""` on the raw return: it is secret while cooldowns are

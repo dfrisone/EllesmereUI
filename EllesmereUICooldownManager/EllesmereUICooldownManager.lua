@@ -9871,6 +9871,36 @@ function ns.RefreshItemCountOOCBars()
     end
 end
 
+-- Blizzard enables an icon's range check on its BASE spell and filters
+-- SPELL_RANGE_CHECK_UPDATE on that id, so anything the engine reports for the
+-- override is dropped, and spellOutOfRange is re-polled only in OnCooldownIDSet.
+-- An override that swaps the live spell (Raptor Strike <-> Raptor Swipe) then
+-- leaves the icon painted for whichever spell was up at the last range crossing.
+function ns.ResyncCdmRange(baseSpellID, overrideSpellID)
+    -- Secret payload fails open, before any truthiness test or comparison
+    -- touches it: same guard the action bar dispatcher puts on this event.
+    if issecretvalue and (issecretvalue(baseSpellID) or issecretvalue(overrideSpellID)) then
+        return
+    end
+    local IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+    if not (baseSpellID and IsSpellInRange) then return end
+    -- Poll the live override id: a base id whose spell is currently replaced
+    -- can answer nil.
+    local inRange = IsSpellInRange(overrideSpellID or baseSpellID)
+    -- A secret answer (instanced content) leaves the icon on Blizzard's own
+    -- state rather than guessing.
+    if issecretvalue and issecretvalue(inRange) then return end
+    local outOfRange = (inRange == false)
+    for _, icons in pairs(cdmBarIcons) do
+        for _, icon in ipairs(icons) do
+            if icon.rangeCheckSpellID == baseSpellID then
+                icon.spellOutOfRange = outOfRange
+                icon:RefreshIconColor()
+            end
+        end
+    end
+end
+
 -------------------------------------------------------------------------------
 --  Event-Driven Runtime Maintenance
 --
@@ -10030,6 +10060,8 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
     if event == "COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED" then
         -- Bump-only: painting is driven by the cooldown/desat hooks, which re-resolve on their next fire. No repaint request from here.
         ns._cdmResGen = ns._cdmResGen + 1
+        -- Payload here is (baseSpellID, overrideSpellID).
+        ns.ResyncCdmRange(unit, updateInfo)
         return
     end
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
