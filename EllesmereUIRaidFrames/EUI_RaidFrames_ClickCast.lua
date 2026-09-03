@@ -2105,6 +2105,12 @@ local function OnCCEvent(self, event)
         -- so stuck frame-bindings need clearing); waits for spec via
         -- ReapplyWhenSpecReady so login doesn't drop spec-scoped bindings to global.
         ReapplyWhenSpecReady()
+    elseif event == "UPDATE_MACROS" then
+        -- Macro-type bindings cache GetMacroBody() into the frame/hover
+        -- attributes at apply time; without this, editing, renaming, or
+        -- recreating the underlying macro leaves those attributes stale
+        -- until something else (spec/zone/roster change) reapplies.
+        if not InCombatLockdown() then ns.CC_ApplyBindings() else pendingApply = true end
     end
 end
 
@@ -2154,6 +2160,7 @@ function ns.CC_Init()
     ccEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     ccEventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     ccEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    ccEventFrame:RegisterEvent("UPDATE_MACROS")
     ccEventFrame:SetScript("OnEvent", OnCCEvent)
 
     ccInitialized = true
