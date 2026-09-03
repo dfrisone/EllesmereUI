@@ -3948,7 +3948,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                     fLbl:SetText(EllesmereUI.L("Friendly"))
                     centerY = centerY - ROW_H
                 end
-                if selectedBinding.type == "spell" or selectedBinding.type == "item" then
+                if selectedBinding.type == "spell" or selectedBinding.type == "item" or selectedBinding.type == "macro" then
                     local note = MakeFont(bodyHost, 11, 1, 1, 1, 0.45)
                     note:SetPoint("TOPLEFT", bodyHost, "TOPLEFT", C_PAD + SIDE_PAD + 20, centerY - 5)
                     note:SetText(EllesmereUI.L("Disabling both disables this binding."))
