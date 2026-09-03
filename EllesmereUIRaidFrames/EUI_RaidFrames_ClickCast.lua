@@ -204,6 +204,7 @@ local ccEventFrame     = nil
 local lastBindingCount = 0
 local lastHoverCount   = 0
 local pendingSetEnabled = nil  -- deferred CC_SetEnabled value when toggled in combat
+local macrosApplyQueued = false  -- coalesces a burst of UPDATE_MACROS into one reapply
 
 -------------------------------------------------------------------------------
 --  Data access
@@ -2068,6 +2069,13 @@ local function ReapplyWhenSpecReady()
     end)
 end
 
+-- UPDATE_MACROS fires once per line changed while the macro UI is open
+-- (typing, reordering, icon picks) -- coalesce a burst into one reapply.
+local function ApplyBindingsFromMacroUpdate()
+    macrosApplyQueued = false
+    if not InCombatLockdown() then ns.CC_ApplyBindings() else pendingApply = true end
+end
+
 local function OnCCEvent(self, event)
     if event == "PLAYER_REGEN_ENABLED" then
         local cc = GetClickCastDB()
@@ -2110,7 +2118,10 @@ local function OnCCEvent(self, event)
         -- attributes at apply time; without this, editing, renaming, or
         -- recreating the underlying macro leaves those attributes stale
         -- until something else (spec/zone/roster change) reapplies.
-        if not InCombatLockdown() then ns.CC_ApplyBindings() else pendingApply = true end
+        if not macrosApplyQueued then
+            macrosApplyQueued = true
+            C_Timer.After(0, ApplyBindingsFromMacroUpdate)
+        end
     end
 end
 
