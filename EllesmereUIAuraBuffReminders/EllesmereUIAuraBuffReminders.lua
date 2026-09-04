@@ -1307,12 +1307,19 @@ SlashCmdList["EUIAURAPROBE"] = function()
     local AK = EllesmereUI and EllesmereUI.AuraKit
     if not (AK and AK.CreateContainer) then print("EUI probe: AuraKit unavailable"); return end
     if not EABR._probeContainer then
+        -- Bare style: the initializer indexes styleButtons by the style key, so
+        -- a nil key errors, and a style without noRegions builds unstyled font
+        -- strings that hard-error inside the engine. This one creates nothing.
+        AK.styles["euiauraprobe"] = AK.styles["euiauraprobe"] or { noRegions = true }
         -- The engine parses from a run-when-visible OnUpdate, so the host must
         -- be anchored and shown; alpha 0 keeps it invisible without parking it.
-        local host = CreateFrame("Frame", nil, UIParent)
-        host:SetPoint("CENTER", UIParent, "CENTER", 0, -300)
-        host:SetSize(1, 1)
-        host:SetAlpha(0)
+        local host = EABR._probeHost
+        if not host then
+            host = CreateFrame("Frame", nil, UIParent)
+            host:SetPoint("CENTER", UIParent, "CENTER", 0, -300)
+            host:SetSize(1, 1)
+            host:SetAlpha(0)
+        end
         host:Show()
         local include = {}
         for id in pairs(FLASK_BUFF_ID_SET) do include[id] = true end
@@ -1320,7 +1327,8 @@ SlashCmdList["EUIAURAPROBE"] = function()
         EABR._probeContainer = AK.CreateContainer(host, "player", {
             point = { "CENTER", host, "CENTER", 0, 0 },
             groups = {
-                { key = "flask", filter = { "HELPFUL" }, maxFrameCount = 4,
+                { key = "flask", filter = { "HELPFUL" }, style = "euiauraprobe",
+                  maxFrameCount = 4,
                   candidateFilters = { includeSpellIDs = include } },
             },
         })
