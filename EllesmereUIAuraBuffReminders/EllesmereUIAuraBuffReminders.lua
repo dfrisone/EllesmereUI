@@ -1337,10 +1337,23 @@ SlashCmdList["EUIAURAPROBE"] = function()
     end
     local c = EABR._probeContainer
     local okC, n = pcall(c.GetAuraGroupFrameCount, c, "flask")
+    -- Owned is the pool's batch size and never moves. Only the frames the
+    -- engine actually acquired for a matching aura are shown, so that is the
+    -- presence signal; the buttons are engine-owned, hence the pcall.
+    local shown, ferr = 0, nil
+    if okC and type(n) == "number" then
+        for i = 1, n do
+            local okF, f = pcall(c.GetAuraGroupFrame, c, "flask", i)
+            if not okF then ferr = "getframe"; break end
+            local okS, vis = pcall(function() return f and f:IsShown() end)
+            if not okS then ferr = "isshown"; break end
+            if vis then shown = shown + 1 end
+        end
+    end
     local okD, direct = pcall(C_UnitAuras.GetPlayerAuraBySpellID, 1235057)
-    print("EUI probe -- container:", okC, tostring(n),
-        "secret:", tostring(issecretvalue and issecretvalue(n)),
-        "| direct:", okD and (direct ~= nil) or "err",
+    print("EUI probe -- owned:", tostring(n), "shown:", tostring(shown),
+        "frameerr:", tostring(ferr),
+        "| direct ok:", tostring(okD), "nonnil:", tostring(okD and direct ~= nil),
         "| restricted:", tostring(AK.AurasRestricted()))
 end
 
