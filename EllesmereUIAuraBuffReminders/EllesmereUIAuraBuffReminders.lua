@@ -1304,8 +1304,11 @@ end
 -------------------------------------------------------------------------------
 function EABR.FlaskPresenceSecret()
     local AK = EllesmereUI.AuraKit
-    if not (AK and AK.AurasRestricted and AK.AurasRestricted()) then return false end
-    if not AK.CreateContainer then return false end
+    EABR._flaskWhy = nil
+    if not (AK and AK.AurasRestricted and AK.AurasRestricted()) then
+        EABR._flaskWhy = "not restricted"; return false
+    end
+    if not AK.CreateContainer then EABR._flaskWhy = "no CreateContainer"; return false end
     local slot = EABR._flaskSlot
     if not slot then
         -- Bare style: the initializer keys styleButtons by the style key, and a
@@ -1331,15 +1334,33 @@ function EABR.FlaskPresenceSecret()
                   candidateFilters = { includeSpellIDs = include } },
             },
         })
-        if not ok then return false end
+        if not ok then EABR._flaskWhy = "build err: " .. tostring(container); return false end
         EABR._flaskContainer = container
         slot = slots and slots.flask
         EABR._flaskSlot = slot
     end
-    if not slot then return false end
+    if not slot then EABR._flaskWhy = "no slot frame"; return false end
     local okv, vis = pcall(slot.IsShown, slot)
-    if not okv then return false end
+    if not okv then EABR._flaskWhy = "IsShown err"; return false end
+    EABR._flaskWhy = "ok"
     return true, vis
+end
+
+-- TEMPORARY DIAGNOSTIC -- /euiflaskdiag. Not for merge.
+SLASH_EUIFLASKDIAG1 = "/euiflaskdiag"
+SlashCmdList["EUIFLASKDIAG"] = function()
+    local avail = EABR.FlaskPresenceSecret()
+    local slot = EABR._flaskSlot
+    print("EUI flask diag -- available:", tostring(avail), "| why:", tostring(EABR._flaskWhy),
+        "| slot:", tostring(slot ~= nil),
+        "| restricted:", tostring(EllesmereUI.AuraKit and EllesmereUI.AuraKit.AurasRestricted()))
+    if slot then
+        local okS, vis = pcall(slot.IsShown, slot)
+        local okA, alpha = pcall(slot.GetAlpha, slot)
+        print("  IsShown ok:", tostring(okS),
+            "secret:", tostring(okS and issecretvalue and issecretvalue(vis)),
+            "| alpha:", tostring(okA), tostring(okA and alpha))
+    end
 end
 
 -- Food Items (Midnight)
