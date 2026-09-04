@@ -1294,6 +1294,48 @@ for _, id in ipairs({1235113, 1235114, 1235115, 1235116}) do
     FLASK_BUFF_ID_SET[id] = true
 end
 
+-------------------------------------------------------------------------------
+--  TEMPORARY PROBE -- /euiauraprobe. DELETE once answered.
+--  Asks whether an engine-side aura group can see the player's flask while
+--  aura reads are restricted, since GetPlayerAuraBySpellID returns nil there
+--  and the UNIT_AURA payload is SecretWhenAurasRestricted. The engine does the
+--  spell-ID matching internally, so nothing secret crosses to us; we only read
+--  a frame count. State hangs on EABR (this chunk is at the 200-local cap).
+-------------------------------------------------------------------------------
+SLASH_EUIAURAPROBE1 = "/euiauraprobe"
+SlashCmdList["EUIAURAPROBE"] = function()
+    local AK = EllesmereUI and EllesmereUI.AuraKit
+    if not (AK and AK.CreateContainer) then print("EUI probe: AuraKit unavailable"); return end
+    if not EABR._probeContainer then
+        -- The engine parses from a run-when-visible OnUpdate, so the host must
+        -- be anchored and shown; alpha 0 keeps it invisible without parking it.
+        local host = CreateFrame("Frame", nil, UIParent)
+        host:SetPoint("CENTER", UIParent, "CENTER", 0, -300)
+        host:SetSize(1, 1)
+        host:SetAlpha(0)
+        host:Show()
+        local include = {}
+        for id in pairs(FLASK_BUFF_ID_SET) do include[id] = true end
+        EABR._probeHost = host
+        EABR._probeContainer = AK.CreateContainer(host, "player", {
+            point = { "CENTER", host, "CENTER", 0, 0 },
+            groups = {
+                { key = "flask", filter = { "HELPFUL" }, maxFrameCount = 4,
+                  candidateFilters = { includeSpellIDs = include } },
+            },
+        })
+        print("EUI probe: built. Run /euiauraprobe again in a few seconds.")
+        return
+    end
+    local c = EABR._probeContainer
+    local okC, n = pcall(c.GetAuraGroupFrameCount, c, "flask")
+    local okD, direct = pcall(C_UnitAuras.GetPlayerAuraBySpellID, 1235057)
+    print("EUI probe -- container:", okC, tostring(n),
+        "secret:", tostring(issecretvalue and issecretvalue(n)),
+        "| direct:", okD and (direct ~= nil) or "err",
+        "| restricted:", tostring(AK.AurasRestricted()))
+end
+
 -- Food Items (Midnight)
 local FOOD_ITEMS = {
     { key="royal_roast",           itemID=242275, name="Royal Roast" },
