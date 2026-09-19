@@ -776,35 +776,6 @@ do
     local hookedFrames = {}
     local looseFrames = {}
     local pendingParents = {}
-    local suppressedStatusBars = setmetatable({}, { __mode = "k" })
-
-    local function suppressStatusBar(bar)
-        if not bar then return end
-        suppressedStatusBars[bar] = true
-        bar.lockValues = true
-        bar:UnregisterAllEvents()
-        bar:SetScript("OnUpdate", nil)
-    end
-
-    local function shouldSuppressStatusBar(bar)
-        return bar and (suppressedStatusBars[bar]
-            or (ns._blizzPartySuppressed and bar.partyFrame))
-    end
-
-    -- UnitFrameHealthBar_SetUnit restores frequent health updates whenever
-    -- Blizzard rebuilds a party member for Edit Mode. Re-suppress bars already
-    -- tracked here and newly pooled party bars while EUI party suppression is
-    -- active; otherwise untouched Blizzard bars retain stock behavior.
-    if type(UnitFrameHealthBar_SetUnit) == "function" then
-        hooksecurefunc("UnitFrameHealthBar_SetUnit", function(bar)
-            if shouldSuppressStatusBar(bar) then suppressStatusBar(bar) end
-        end)
-    end
-    if type(UnitFrameHealthBar_RefreshUpdateEvent) == "function" then
-        hooksecurefunc("UnitFrameHealthBar_RefreshUpdateEvent", function(bar)
-            if shouldSuppressStatusBar(bar) then suppressStatusBar(bar) end
-        end)
-    end
 
     local function applyHiddenParent(frame)
         pendingParents[frame] = nil
@@ -852,9 +823,9 @@ do
         end
         local health = frame.healthBar or frame.healthbar or frame.HealthBar
             or (frame.HealthBarsContainer and frame.HealthBarsContainer.healthBar)
-        suppressStatusBar(health)
+        if health then health:UnregisterAllEvents() end
         local power = frame.manabar or frame.ManaBar
-        suppressStatusBar(power)
+        if power then power:UnregisterAllEvents() end
         local castbar = frame.castBar or frame.spellbar or frame.CastingBarFrame
         if castbar then castbar:UnregisterAllEvents() end
         local altpower = frame.powerBarAlt or frame.PowerBarAlt
@@ -906,9 +877,14 @@ do
         if not ns._blizzPartySuppressed then
             ns._blizzPartySuppressed = true
             handleFrame(PartyFrame)
-            local MEMBERS_PER_GROUP = _G.MEMBERS_PER_RAID_GROUP or 5
-            for i = 1, MEMBERS_PER_GROUP do
-                handleFrame(_G["CompactPartyFrameMember" .. i])
+            -- Forever exposes party health as secret. Touching the pooled member
+            -- frames taints Blizzard's Edit Mode refresh, so suppress only their
+            -- parent containers on that client.
+            if not EUI_IS_FOREVER then
+                local MEMBERS_PER_GROUP = _G.MEMBERS_PER_RAID_GROUP or 5
+                for i = 1, MEMBERS_PER_GROUP do
+                    handleFrame(_G["CompactPartyFrameMember" .. i])
+                end
             end
             -- Party Edit Mode overlay: only while we own the party frames (from
             -- UpdateVisibility), so untouched Blizzard party frames keep movers.
@@ -916,10 +892,7 @@ do
             suppressEditModeOverlay(PartyFrame)
             suppressEditModeOverlay(_G["CompactPartyFrame"])
         end
-        -- The standard party frame uses a pool, so members created after the
-        -- first suppression pass also need their stock health and mana updates
-        -- locked before Edit Mode refreshes them.
-        if PartyFrame.PartyMemberFramePool then
+        if not EUI_IS_FOREVER and PartyFrame.PartyMemberFramePool then
             for mf in PartyFrame.PartyMemberFramePool:EnumerateActive() do
                 handleFrame(mf, true)
             end
