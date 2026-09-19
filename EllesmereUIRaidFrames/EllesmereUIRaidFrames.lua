@@ -873,18 +873,17 @@ do
 
     -- Callable from UpdateVisibility when "Show When: In a Group" is active
     ns._SuppressBlizzParty = function()
+        -- Forever rebuilds the standard party members with secret health values
+        -- when Edit Mode opens. Any addon write to their PartyFrame parent taints
+        -- that rebuild, so the standard party frame must remain Blizzard-owned.
+        if EUI_IS_FOREVER then return end
         if not PartyFrame then return end
         if not ns._blizzPartySuppressed then
             ns._blizzPartySuppressed = true
             handleFrame(PartyFrame)
-            -- Forever exposes party health as secret. Touching the pooled member
-            -- frames taints Blizzard's Edit Mode refresh, so suppress only their
-            -- parent containers on that client.
-            if not EUI_IS_FOREVER then
-                local MEMBERS_PER_GROUP = _G.MEMBERS_PER_RAID_GROUP or 5
-                for i = 1, MEMBERS_PER_GROUP do
-                    handleFrame(_G["CompactPartyFrameMember" .. i])
-                end
+            local MEMBERS_PER_GROUP = _G.MEMBERS_PER_RAID_GROUP or 5
+            for i = 1, MEMBERS_PER_GROUP do
+                handleFrame(_G["CompactPartyFrameMember" .. i])
             end
             -- Party Edit Mode overlay: only while we own the party frames (from
             -- UpdateVisibility), so untouched Blizzard party frames keep movers.
@@ -892,7 +891,7 @@ do
             suppressEditModeOverlay(PartyFrame)
             suppressEditModeOverlay(_G["CompactPartyFrame"])
         end
-        if not EUI_IS_FOREVER and PartyFrame.PartyMemberFramePool then
+        if PartyFrame.PartyMemberFramePool then
             for mf in PartyFrame.PartyMemberFramePool:EnumerateActive() do
                 handleFrame(mf, true)
             end
@@ -907,8 +906,10 @@ do
         -- Manager omitted on purpose: the shared "Hide Blizzard Party Panel" toggle owns it.
         suppressEditModeOverlay(CompactRaidFrameContainer)
         -- Party overlays unconditional: Blizzard's party frame is empty/hidden when solo, so no group gate is needed.
-        suppressEditModeOverlay(PartyFrame)
-        suppressEditModeOverlay(_G["CompactPartyFrame"])
+        if not EUI_IS_FOREVER then
+            suppressEditModeOverlay(PartyFrame)
+            suppressEditModeOverlay(_G["CompactPartyFrame"])
+        end
     end
     ns._ApplyEditModeOverlaySuppression = applyEditModeOverlaySuppression
 
