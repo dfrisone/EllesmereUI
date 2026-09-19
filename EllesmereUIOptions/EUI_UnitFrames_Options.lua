@@ -5804,7 +5804,9 @@ initFrame:SetScript("OnEvent", function(self)
                 hbItems[#hbItems + 1] = {
                     key = "playerThreat",
                     label = "Player Threat (Non-Tank)",
-                    tooltip = "Adds a Shadow border to your player frame when you pull or hold threat as a non-tank. Only active in dungeons, raids and delves.",
+                    tooltip = EUI_IS_FOREVER
+                        and "Adds a Shadow border to your player frame when you pull or hold threat as a non-tank. Only active in dungeons and raids."
+                        or "Adds a Shadow border to your player frame when you pull or hold threat as a non-tank. Only active in dungeons, raids and delves.",
                 }
             end
             local UpdateHBSwatchVis  -- forward declare; assigned after swatches
