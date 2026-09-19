@@ -6632,7 +6632,10 @@ local function CreateBlizzOwnedOverlay(def, parent)
         if InCombatLockdown() then return end
         if EditModeManagerFrame then
             ns.RequestClose(false, function()
-                ShowUIPanel(EditModeManagerFrame)
+                -- Edit Mode refreshes Blizzard unit frames while opening. Forever
+                -- exposes their health as secret, so keep that stock refresh out of
+                -- this addon's execution context.
+                securecallfunction(ShowUIPanel, EditModeManagerFrame)
             end)
         end
     end)
@@ -9746,7 +9749,9 @@ local function CreateMover(barKey)
                     if InCombatLockdown() then return end
                     if EditModeManagerFrame then
                         ns.RequestClose(false, function()
-                            ShowUIPanel(EditModeManagerFrame)
+                            -- Edit Mode refreshes Blizzard unit frames while opening.
+                            -- Keep its secret-value reads in secure execution.
+                            securecallfunction(ShowUIPanel, EditModeManagerFrame)
                         end)
                     end
                 else
