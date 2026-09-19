@@ -823,9 +823,15 @@ do
         end
         local health = frame.healthBar or frame.healthbar or frame.HealthBar
             or (frame.HealthBarsContainer and frame.HealthBarsContainer.healthBar)
-        if health then health:UnregisterAllEvents() end
+        if health then
+            health.lockValues = true
+            health:UnregisterAllEvents()
+        end
         local power = frame.manabar or frame.ManaBar
-        if power then power:UnregisterAllEvents() end
+        if power then
+            power.lockValues = true
+            power:UnregisterAllEvents()
+        end
         local castbar = frame.castBar or frame.spellbar or frame.CastingBarFrame
         if castbar then castbar:UnregisterAllEvents() end
         local altpower = frame.powerBarAlt or frame.PowerBarAlt
@@ -873,15 +879,10 @@ do
 
     -- Callable from UpdateVisibility when "Show When: In a Group" is active
     ns._SuppressBlizzParty = function()
-        if ns._blizzPartySuppressed then return end
-        ns._blizzPartySuppressed = true
-        if PartyFrame then
+        if not PartyFrame then return end
+        if not ns._blizzPartySuppressed then
+            ns._blizzPartySuppressed = true
             handleFrame(PartyFrame)
-            if PartyFrame.PartyMemberFramePool then
-                for mf in PartyFrame.PartyMemberFramePool:EnumerateActive() do
-                    handleFrame(mf, true)
-                end
-            end
             local MEMBERS_PER_GROUP = _G.MEMBERS_PER_RAID_GROUP or 5
             for i = 1, MEMBERS_PER_GROUP do
                 handleFrame(_G["CompactPartyFrameMember" .. i])
@@ -891,6 +892,14 @@ do
             -- PartyFrame = standard; CompactPartyFrame = raid-style (may be absent).
             suppressEditModeOverlay(PartyFrame)
             suppressEditModeOverlay(_G["CompactPartyFrame"])
+        end
+        -- The standard party frame uses a pool, so members created after the
+        -- first suppression pass also need their stock health and mana updates
+        -- locked before Edit Mode refreshes them.
+        if PartyFrame.PartyMemberFramePool then
+            for mf in PartyFrame.PartyMemberFramePool:EnumerateActive() do
+                handleFrame(mf, true)
+            end
         end
     end
 
