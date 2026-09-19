@@ -1322,6 +1322,13 @@ local wrappedFrames = {}
 local externalFrames = {}
 local ccHookInstalled = false
 
+local function IsForeverPartyMemberFrame(frame)
+    if not EUI_IS_FOREVER or not PartyFrame or not frame or not frame.GetParent then return false end
+    local parent = frame:GetParent()
+    if parent == PartyFrame then return true end
+    return parent and parent.GetParent and parent:GetParent() == PartyFrame and parent.PetFrame == frame
+end
+
 -- Third-party interop: while OFF, frames are handed to any other ClickCastFrames
 -- consumer via the global table without touching their click attributes, so
 -- right-click stays Blizzard-default. No-ops once our proxy owns the table.
@@ -1389,6 +1396,10 @@ end
 local function DoRegisterFrame(frame)
     if not frame or not frame.RegisterForClicks then return end
     if not header then return end
+    -- Forever exposes secret health values while Edit Mode rebuilds its pooled
+    -- party frames. Secure click writes taint Blizzard's later health update, so
+    -- leave the standard party member and pet buttons entirely Blizzard-owned.
+    if IsForeverPartyMemberFrame(frame) then return end
     -- Hard guarantee: while disabled, ZERO frames touched (no RegisterForClicks/
     -- WrapScript/attribute writes) -- clicks never change unless the user enables.
     local cc = GetClickCastDB()
