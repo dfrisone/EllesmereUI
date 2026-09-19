@@ -39,9 +39,9 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 -- on protected frames). Geometry, mouse flags and the producers' container
 -- shifts are deferred to PLAYER_REGEN_ENABLED, then one full pass repacks.
 --
--- Secrecy: GetTemporaryEnchantmentInfo's returns carry NO Secret* flags in
--- the generated API docs (equipment state, not unit-aura data) -- plain
--- numbers in restricted combat too.
+-- Secrecy: the generated API docs do not mark TemporaryItemEnchantInfo fields
+-- NeverSecret. Restricted results are therefore treated as presence-only;
+-- duration and charge details recover after combat.
 --
 -- Cost model: WEAPON_ENCHANT_CHANGED / WEAPON_SLOT_CHANGED (the pair
 -- Blizzard's BuffFrame registers) are the only wake-ups, registered only
@@ -57,11 +57,29 @@ local _, ns = ...
 local EllesmereUI = _G.EllesmereUI
 
 local SLOTS = { INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17, INVSLOT_RANGED or 18 }
+local issecretvalue = _G.issecretvalue
+local issecrettable = _G.issecrettable
 
 local hosts = {}   -- "pab"/"uf" -> { frame, buttons = {}, rec }
 local evFrame, regenFrame, textTicker
 local activeInfos, activeCount = {}, 0   -- packed active list (MH first)
 local activeBySlot = {}                  -- slot -> info
+
+local function IsSecretValue(value)
+    if not issecretvalue then return false end
+    local ok, secret = pcall(issecretvalue, value)
+    return ok and secret or false
+end
+
+local function IsSecretEnchantInfo(info)
+    if issecrettable then
+        local ok, secret = pcall(issecrettable, info)
+        if ok and secret then return true end
+    end
+    return IsSecretValue(info.hasExpirationTime)
+        or IsSecretValue(info.remainingTimeMs)
+        or IsSecretValue(info.chargesRemaining)
+end
 
 -- Raw active-enchant count. Producers gate on their own record/filters and
 -- shift their container inward by this many cells.
@@ -248,18 +266,31 @@ end
 
 local function ReadEnchants()
     local n = 0
+    local degraded = false
     for k in pairs(activeBySlot) do activeBySlot[k] = nil end
     for i = 1, #SLOTS do
         local info = C_PaperDollInfo and C_PaperDollInfo.GetTemporaryEnchantmentInfo
             and C_PaperDollInfo.GetTemporaryEnchantmentInfo(SLOTS[i])
-        if info and info.hasExpirationTime then
+        local displayInfo
+        if info then
+            if IsSecretEnchantInfo(info) then
+                -- Presence is safe to observe; fields are not. Keep the icon
+                -- accurate and suppress details until the regen refresh.
+                displayInfo = {}
+                degraded = true
+            elseif info.hasExpirationTime then
+                displayInfo = info
+            end
+        end
+        if displayInfo then
             n = n + 1
-            activeInfos[n] = { slot = SLOTS[i], slotIndex = i, info = info }
-            activeBySlot[SLOTS[i]] = info
+            activeInfos[n] = { slot = SLOTS[i], slotIndex = i, info = displayInfo }
+            activeBySlot[SLOTS[i]] = displayInfo
         end
     end
     for i = n + 1, #activeInfos do activeInfos[i] = nil end
     activeCount = n
+    return degraded
 end
 
 -- Fills one button's CONTENT (legal on protected frames in combat).
@@ -407,18 +438,18 @@ end
 
 local function OnEnchantEvent()
     local prev = activeCount
-    ReadEnchants()
+    local degraded = ReadEnchants()
+    local combat = InCombatLockdown()
     if activeCount ~= prev then
-        local combat = InCombatLockdown()
         PokeProducers(combat)
-        if combat then
-            -- Secure-button geometry can't follow until regen: repack then.
-            if not regenFrame then
-                regenFrame = CreateFrame("Frame")
-                regenFrame:SetScript("OnEvent", OnRegen)
-            end
-            regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    end
+    if combat and (degraded or activeCount ~= prev) then
+        -- Secure-button geometry and secret details both recover at regen.
+        if not regenFrame then
+            regenFrame = CreateFrame("Frame")
+            regenFrame:SetScript("OnEvent", OnRegen)
         end
+        regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     end
     Paint()
 end
