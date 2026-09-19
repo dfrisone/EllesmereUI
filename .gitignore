@@ -1,5 +1,7 @@
-# Libraries are pulled by the packager via .pkgmeta externals
-Libs/
+# Libraries are pulled by the packager via .pkgmeta externals. Forever's
+# specialization IDs require the locally patched LibSpecialization copy.
+Libs/*
+!Libs/LibSpecialization/
 EllesmereUIUnitFrames/Libs/
 
 # Kiro workspace files
