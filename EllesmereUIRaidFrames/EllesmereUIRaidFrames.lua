@@ -786,17 +786,23 @@ do
         bar:SetScript("OnUpdate", nil)
     end
 
+    local function shouldSuppressStatusBar(bar)
+        return bar and (suppressedStatusBars[bar]
+            or (ns._blizzPartySuppressed and bar.partyFrame))
+    end
+
     -- UnitFrameHealthBar_SetUnit restores frequent health updates whenever
-    -- Blizzard rebuilds a party member for Edit Mode. Re-suppress only bars this
-    -- module already owns; untouched Blizzard party bars retain stock behavior.
+    -- Blizzard rebuilds a party member for Edit Mode. Re-suppress bars already
+    -- tracked here and newly pooled party bars while EUI party suppression is
+    -- active; otherwise untouched Blizzard bars retain stock behavior.
     if type(UnitFrameHealthBar_SetUnit) == "function" then
         hooksecurefunc("UnitFrameHealthBar_SetUnit", function(bar)
-            if suppressedStatusBars[bar] then suppressStatusBar(bar) end
+            if shouldSuppressStatusBar(bar) then suppressStatusBar(bar) end
         end)
     end
     if type(UnitFrameHealthBar_RefreshUpdateEvent) == "function" then
         hooksecurefunc("UnitFrameHealthBar_RefreshUpdateEvent", function(bar)
-            if suppressedStatusBars[bar] then suppressStatusBar(bar) end
+            if shouldSuppressStatusBar(bar) then suppressStatusBar(bar) end
         end)
     end
 
