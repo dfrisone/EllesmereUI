@@ -775,23 +775,38 @@ ns._blizzHiddenParent:Hide()
 do
     local hookedFrames = {}
     local looseFrames = {}
+    local pendingParents = {}
+
+    local function applyHiddenParent(frame)
+        pendingParents[frame] = nil
+        if frame:GetParent() == ns._blizzHiddenParent then return end
+        if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+            pendingParents[frame] = true
+            C_Timer.After(0.25, function() applyHiddenParent(frame) end)
+        elseif InCombatLockdown() and frame:IsProtected() then
+            looseFrames[frame] = true
+        else
+            frame:SetParent(ns._blizzHiddenParent)
+        end
+    end
 
     local watcher = ns.TakeShell()
     watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
     watcher:SetScript("OnEvent", function()
         for frame in next, looseFrames do
-            frame:SetParent(ns._blizzHiddenParent)
+            applyHiddenParent(frame)
         end
         wipe(looseFrames)
     end)
 
     local function resetParent(self, parent)
-        if parent ~= ns._blizzHiddenParent then
-            if InCombatLockdown() and self:IsProtected() then
-                looseFrames[self] = true
-            else
-                self:SetParent(ns._blizzHiddenParent)
-            end
+        if parent ~= ns._blizzHiddenParent and not pendingParents[self] then
+            -- Edit Mode reparents managed frames while updating Blizzard's party
+            -- frames. Reparenting inline taints the rest of that secure pass, which
+            -- cannot inspect Forever's secret health values. Restore on a timer and
+            -- wait until Edit Mode finishes its layout work.
+            pendingParents[self] = true
+            C_Timer.After(0, function() applyHiddenParent(self) end)
         end
     end
 
