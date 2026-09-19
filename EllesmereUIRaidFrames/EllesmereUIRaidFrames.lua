@@ -776,6 +776,29 @@ do
     local hookedFrames = {}
     local looseFrames = {}
     local pendingParents = {}
+    local suppressedStatusBars = setmetatable({}, { __mode = "k" })
+
+    local function suppressStatusBar(bar)
+        if not bar then return end
+        suppressedStatusBars[bar] = true
+        bar.lockValues = true
+        bar:UnregisterAllEvents()
+        bar:SetScript("OnUpdate", nil)
+    end
+
+    -- UnitFrameHealthBar_SetUnit restores frequent health updates whenever
+    -- Blizzard rebuilds a party member for Edit Mode. Re-suppress only bars this
+    -- module already owns; untouched Blizzard party bars retain stock behavior.
+    if type(UnitFrameHealthBar_SetUnit) == "function" then
+        hooksecurefunc("UnitFrameHealthBar_SetUnit", function(bar)
+            if suppressedStatusBars[bar] then suppressStatusBar(bar) end
+        end)
+    end
+    if type(UnitFrameHealthBar_RefreshUpdateEvent) == "function" then
+        hooksecurefunc("UnitFrameHealthBar_RefreshUpdateEvent", function(bar)
+            if suppressedStatusBars[bar] then suppressStatusBar(bar) end
+        end)
+    end
 
     local function applyHiddenParent(frame)
         pendingParents[frame] = nil
@@ -823,15 +846,9 @@ do
         end
         local health = frame.healthBar or frame.healthbar or frame.HealthBar
             or (frame.HealthBarsContainer and frame.HealthBarsContainer.healthBar)
-        if health then
-            health.lockValues = true
-            health:UnregisterAllEvents()
-        end
+        suppressStatusBar(health)
         local power = frame.manabar or frame.ManaBar
-        if power then
-            power.lockValues = true
-            power:UnregisterAllEvents()
-        end
+        suppressStatusBar(power)
         local castbar = frame.castBar or frame.spellbar or frame.CastingBarFrame
         if castbar then castbar:UnregisterAllEvents() end
         local altpower = frame.powerBarAlt or frame.PowerBarAlt
