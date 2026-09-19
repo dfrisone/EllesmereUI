@@ -1906,6 +1906,51 @@ initFrame:SetScript("OnEvent", function(self)
 
         local REQ = "Enable Run Summary"
 
+        -----------------------------------------------------------------
+        --  Top action buttons: Show Preview + Clear Run History, the same
+        --  pair layout as the Action Bars page's Quick Keybind / Blizzard
+        --  Style buttons.
+        -----------------------------------------------------------------
+        do
+            local PPn = EllesmereUI.PanelPP
+            local BTN_W = 312
+            local BTN_H = 38
+            local GAP = 40
+            local ROW_H = BTN_H + 20
+            local rowFrame = CreateFrame("Frame", nil, parent)
+            local totalW = parent:GetWidth() - EllesmereUI.CONTENT_PAD * 2
+            PPn.Size(rowFrame, totalW, ROW_H)
+            PPn.Point(rowFrame, "TOPLEFT", parent, "TOPLEFT", EllesmereUI.CONTENT_PAD, y)
+
+            local previewBtn = CreateFrame("Button", nil, rowFrame)
+            PPn.Size(previewBtn, BTN_W, BTN_H)
+            PPn.Point(previewBtn, "RIGHT", rowFrame, "CENTER", -(GAP / 2), 0)
+            previewBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 1)
+            EllesmereUI.MakeStyledButton(previewBtn, "Show Preview", 14,
+                EllesmereUI.WB_COLOURS, function()
+                    if ns.RS_ShowPreview then ns.RS_ShowPreview() end
+                end)
+
+            local clearBtn = CreateFrame("Button", nil, rowFrame)
+            PPn.Size(clearBtn, BTN_W, BTN_H)
+            PPn.Point(clearBtn, "LEFT", rowFrame, "CENTER", GAP / 2, 0)
+            clearBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 1)
+            EllesmereUI.MakeStyledButton(clearBtn, "Clear Run History", 14,
+                EllesmereUI.WB_COLOURS, function()
+                    EllesmereUI:ShowConfirmPopup({
+                        title = "Clear Run History",
+                        message = "Delete every recorded Mythic+ run for this character?",
+                        confirmText = "Delete",
+                        cancelText = "Cancel",
+                        onConfirm = function()
+                            if ns.RS_ClearHistory then ns.RS_ClearHistory() end
+                        end,
+                    })
+                end)
+
+            y = y - ROW_H
+        end
+
         row, h = W:SectionHeader(parent, "RUN SUMMARY", y); y = y - h
 
         row, h = W:DualRow(parent, y,
@@ -1928,6 +1973,14 @@ initFrame:SetScript("OnEvent", function(self)
               disabled=RSOff, disabledTooltip=REQ,
               getValue=function() return RSGet("scale", 1) end,
               setValue=function(v) RSSet("scale", v) end });  y = y - h
+
+        row, h = W:DualRow(parent, y,
+            { type="slider", text="Text Size", min=10, max=20, step=1,
+              tooltip="Size of the player rows. The title and column headers keep their own size.",
+              disabled=RSOff, disabledTooltip=REQ,
+              getValue=function() return RSGet("textSize", 14) end,
+              setValue=function(v) RSSet("textSize", v) end },
+            { type="label", text="" });  y = y - h
 
         row, h = W:SectionHeader(parent, "COLUMNS", y); y = y - h
 
@@ -1975,39 +2028,24 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return RSGet("colDeaths", true) == true end,
               setValue=function(v) RSSet("colDeaths", v and true or false) end });  y = y - h
 
-        row, h = W:WideButton(parent, "Show Preview", y, function()
-            if ns.RS_ShowPreview then ns.RS_ShowPreview() end
-        end);  y = y - h
-
-        row, h = W:WideButton(parent, "Clear Run History", y, function()
-            EllesmereUI:ShowConfirmPopup({
-                title = "Clear Run History",
-                message = "Delete every recorded Mythic+ run for this character?",
-                confirmText = "Delete",
-                cancelText = "Cancel",
-                onConfirm = function()
-                    if ns.RS_ClearHistory then ns.RS_ClearHistory() end
-                end,
-            })
-        end);  y = y - h
-
         row, h = W:Spacer(parent, y, 20); y = y - h
         parent:SetHeight(math.abs(y - yOffset))
     end
 
     -- RegisterModule
     EllesmereUI:RegisterModule("EllesmereUIMythicTimer", {
-        title       = "Mythic+ Tools",
-        description = "Mythic+ timer, targeted spell bars, and standalone cast bars.",
-        pages    = { PAGE_DISPLAY, PAGE_TSB, PAGE_TFB, PAGE_RS },
+        title       = EUI_IS_FOREVER and "Cast Bars" or "Mythic+ Tools",
+        description = EUI_IS_FOREVER and "Targeted spell bars and target/focus cast bars." or "Mythic+ timer, targeted spell bars, and standalone cast bars.",
+        pages    = EUI_IS_FOREVER and { PAGE_TSB, PAGE_TFB } or { PAGE_DISPLAY, PAGE_TSB, PAGE_TFB, PAGE_RS },
         buildPage = function(pageName, parent, yOffset)
             if pageName == PAGE_TSB then
                 return BuildTSBPage(pageName, parent, yOffset)
             elseif pageName == PAGE_TFB then
                 return BuildTFBPage(pageName, parent, yOffset)
-            elseif pageName == PAGE_RS then
+            elseif not EUI_IS_FOREVER and pageName == PAGE_RS then
                 return BuildRSPage(pageName, parent, yOffset)
             end
+            if EUI_IS_FOREVER then return 0 end
             return BuildPage(pageName, parent, yOffset)
         end,
         onReset  = function()

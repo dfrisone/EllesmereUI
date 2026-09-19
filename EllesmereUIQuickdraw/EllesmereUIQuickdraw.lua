@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Stands down where the client cannot compile secure snippets: quickdraw is secure click-casting: without snippets it can bind keys but never cast.
+if EllesmereUI and EllesmereUI.SecureSnippetsWork
+    and not EllesmereUI.SecureSnippetsWork() then return end
 -------------------------------------------------------------------------------
 --  EllesmereUIQuickdraw.lua  --  hold-to-open action palette for EllesmereUI
 --
@@ -1218,6 +1221,13 @@ do
           button = "HelpMicroButton",
           label = "HELP_BUTTON",                default = "Customer Support" },
     }
+
+    if EUI_IS_FOREVER then
+        for i = #PANELS, 1, -1 do
+            local entry = PANELS[i]
+            if entry.key == "housing" or entry.key == "greatvault" then table.remove(PANELS, i) end
+        end
+    end
 
     local byKey = {}
     for _, def in ipairs(PANELS) do byKey[def.key] = def end

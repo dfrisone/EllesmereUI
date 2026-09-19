@@ -11,6 +11,69 @@ local EUILite = {}
 EllesmereUI = EllesmereUI or {}
 EllesmereUI.Lite = EUILite
 
+-- Forever's cooldown Edit Mode preview can exhaust its spellbook-only icons
+-- and read the shared base icon cache without initializing it. Retain our own
+-- full provider so that cache exists for the lifetime of this UI session.
+do
+    local interface = select(4, GetBuildInfo())
+    if interface == 16001 and IconDataProviderMixin and IconDataProviderExtraType
+        and CreateAndInitFromMixin and GetLooseMacroIcons and GetLooseMacroItemIcons
+        and GetMacroIcons and GetMacroItemIcons then
+        EUILite._foreverIconProvider = CreateAndInitFromMixin(
+            IconDataProviderMixin, IconDataProviderExtraType.None, false)
+    end
+end
+
+-- Check the compiler before probing secure snippet execution. Blizzard's
+-- RestrictedExecution.lua calls loadstring_untainted; when it is missing,
+-- executing a probe reports an error even inside pcall. Keep the existing
+-- fallback path without attempting compilation on those clients.
+local secureSnippets
+function EllesmereUI.SecureSnippetsWork()
+    if secureSnippets ~= nil then return secureSnippets end
+    secureSnippets = false
+    if type(loadstring_untainted) ~= "function" then return false end
+    local made, probe = pcall(CreateFrame, "Frame", nil, UIParent,
+        "SecureHandlerAttributeTemplate")
+    if made and probe then
+        local restore = geterrorhandler and geterrorhandler()
+        if seterrorhandler then seterrorhandler(function() end) end
+        pcall(probe.Execute, probe, [[ self:SetAttribute("euiSnippetProbe", 1) ]])
+        secureSnippets = probe:GetAttribute("euiSnippetProbe") == 1
+        if seterrorhandler and restore then seterrorhandler(restore) end
+    end
+    return secureSnippets
+end
+
+-- Unit watches and the built-in visibility state are implemented by Blizzard's
+-- precompiled SecureStateDriverManager; they do not need the addon snippet
+-- compiler. Keep using them on Forever so unit and combat visibility remain
+-- secure in combat.
+function EllesmereUI.WatchUnitFrame(frame, stop)
+    if stop then return UnregisterUnitWatch(frame) end
+    return RegisterUnitWatch(frame)
+end
+
+-- For the scattered secure calls inside modules that otherwise work. Standing a whole
+-- module down over one visibility driver would cost far more than it saves.
+function EllesmereUI.SecureCall(fn, frame, attribute, ...)
+    if EllesmereUI.SecureSnippetsWork() then
+        return fn(frame, attribute, ...)
+    end
+    if fn == RegisterUnitWatch or fn == UnregisterUnitWatch then
+        return fn(frame, attribute, ...)
+    end
+    if (fn == RegisterStateDriver or fn == UnregisterStateDriver)
+        and attribute == "visibility" then
+        return fn(frame, attribute, ...)
+    end
+    if (fn == RegisterAttributeDriver or fn == UnregisterAttributeDriver)
+        and attribute == "state-visibility" then
+        return fn(frame, attribute, ...)
+    end
+end
+
+
 -- The options-panel scale is exposed as a fixed-step dropdown ("EUI Options
 -- Panel Scale"), NOT a free slider, and its getValue matches exact percentages
 -- and falls through to "Normal (100%)" for anything else. So a seeded value
@@ -380,7 +443,6 @@ logoutFrame:SetScript("OnEvent", function()
         end
     end
 end)
-
 --------------------------------------------------------------------------------
 --  Lifecycle driver (replaces AceAddon's ADDON_LOADED / PLAYER_LOGIN handler)
 --------------------------------------------------------------------------------
@@ -545,4 +607,4 @@ lifecycleFrame:SetScript("OnEvent", function(self, event, arg1)
             end)
         end
     end
-end)
+end) -- Initialize the lifecycle event bridge.

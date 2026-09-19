@@ -1468,6 +1468,13 @@ local SIDEBAR_ICON_REFS = {
 local SIDEBAR_CHAIN_KEYS = {
     "showFriends", "showGuild", "showDurability", "showCopy", "showPortals", "showVoice", "showSettings",
 }
+if EUI_IS_FOREVER then
+    for i = #SIDEBAR_CHAIN_KEYS, 1, -1 do
+        local entry = SIDEBAR_CHAIN_KEYS[i]
+        if entry == "showPortals" then table.remove(SIDEBAR_CHAIN_KEYS, i) end
+    end
+end
+
 local SIDEBAR_FALLBACK_ORDER = {
     showFriends = -20, showGuild = -15, showDurability = -10,
     showCopy = 1, showPortals = 2, showVoice = 3, showSettings = 4,

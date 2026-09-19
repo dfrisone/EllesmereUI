@@ -774,6 +774,7 @@ local function TileMythicTimer(parent, y, W, tile)
     local function tsb() local p = db(); return p and p.tsb end
     local function tfbT() local p = db(); return p and p.tfb and p.tfb.target end
     local function tfbF() local p = db(); return p and p.tfb and p.tfb.focus end
+if not EUI_IS_FOREVER then
     local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
     _, h = W:DualRow(parent, y, ModuleOutlineCfg(tile.folder, tile.display),
         { type = "dropdown", text = "Timer Font",
@@ -800,6 +801,7 @@ local function TileMythicTimer(parent, y, W, tile)
     _, h = W:DualRow(parent, y,
         size("+1 Threshold Text Size", "thresholdPlusOneSize", 6, 20, 12, "thresholdSize"),
         size("Enemy Forces Text Size", "enemyForcesTextSize", 8, 24, 12, "objectivesSize"));  y = y - h
+end
     _, h = W:DualRow(parent, y,
         subSize("Targeted Bars Name Size", tsb, 6, 20, 10, "nameSize", "TSB_Refresh"),
         subSize("Targeted Bars Timer Size", tsb, 6, 20, 10, "timerSize", "TSB_Refresh"));  y = y - h
@@ -813,7 +815,7 @@ local function TileMythicTimer(parent, y, W, tile)
         subSize("Focus Cast Bar Name Size", tfbF, 6, 22, 11, "nameSize", "TFB_Refresh"),
         subSize("Focus Cast Bar Timer Size", tfbF, 6, 22, 11, "timerSize", "TFB_Refresh"));  y = y - h
     _, h = W:DualRow(parent, y,
-        subSize("Focus Cast Bar Target Size", tfbF, 6, 20, 10, "targetSize", "TFB_Refresh"), BLANK());  y = y - h
+        subSize("Focus Cast Bar Target Size", tfbF, 6, 20, 10, "targetSize", "TFB_Refresh"), EUI_IS_FOREVER and ModuleOutlineCfg(tile.folder, tile.display) or BLANK());  y = y - h
     return y
 end
 
@@ -1047,7 +1049,7 @@ local function TileBlizzardSkin(parent, y, W, tile)
               EllesmereUIDB.charSheetEnchantSize = v
               if EllesmereUI._refreshCharSheetSlotLabels then EllesmereUI._refreshCharSheetSlotLabels() end
           end },
-        { type = "slider", text = "Dragonriding Speed Text Size", min = 6, max = 32, step = 1,
+        EUI_IS_FOREVER and BLANK() or { type = "slider", text = "Dragonriding Speed Text Size", min = 6, max = 32, step = 1,
           getValue = function()
               local p = ns.edrDB and ns.edrDB.profile and ns.edrDB.profile.speedText
               return (p and p.size) or 12
@@ -1113,9 +1115,9 @@ local TILE_BUILDERS = {
     EllesmereUIResourceBars      = { TileResourceBars,     "Health, power, class resource, cast and totem bar text" },
     EllesmereUIAuraBuffReminders = { TileAuraBuffReminders,"Reminder names, item counts and the mana warning" },
     EllesmereUIQoL               = { TileQoL,              "Alerts, trackers, battle res and popup text" },
-    EllesmereUIBlizzardSkin      = { TileBlizzardSkin,     "Tooltip text scale, enchant text and dragonriding speed" },
+    EllesmereUIBlizzardSkin      = { TileBlizzardSkin,     EUI_IS_FOREVER and "Tooltip text scale and enchant text" or "Tooltip text scale, enchant text and dragonriding speed" },
     EllesmereUIFriends           = { TileFontOnly,         "Font face and outline only" },
-    EllesmereUIMythicTimer       = { TileMythicTimer,      "M+ timer, objectives, thresholds and spell bar text" },
+    EllesmereUIMythicTimer       = { TileMythicTimer,      EUI_IS_FOREVER and "Cast bar text" or "M+ timer, objectives, thresholds and spell bar text" },
     EllesmereUIQuestTracker      = { TileQuestTracker,     "Tracker font and per-line text sizes" },
     EllesmereUIMinimap           = { TileMinimap,          "Clock, zone, coordinates, FPS and difficulty text" },
     EllesmereUIChat              = { TileChat,             "Chat windows, tabs and the input field" },

@@ -66,7 +66,7 @@ local CHANNEL_EVENTS = {
     -- exactly that moment. (The "Short" variants ride the Override's
     -- _absGate lockstep instead, which the absorb channel already covers.)
     text     = { "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_POWER_UPDATE", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER",
-                 "UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION",
+                 "UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION", "UNIT_FACTION",
                  "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED",
                  "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" },
     -- (UNIT_HEAL_PREDICTION deliberately absent: the absorb painter never
@@ -619,7 +619,7 @@ end
 -- during pet battles.
 local petBattleHider = CreateFrame("Frame", "EllesmereUIUnitFrames_Hider", UIParent, "SecureHandlerStateTemplate")
 petBattleHider:SetAllPoints(UIParent)
-RegisterStateDriver(petBattleHider, "visibility", "[petbattle] hide; show")
+EllesmereUI.SecureCall(RegisterStateDriver, petBattleHider, "visibility", "[petbattle] hide; show")
 
 -- The live unit a secure button is presenting: the modified unit with the
 -- pet-vs-vehicle distinction resolved (a pet button whose real unit is not
@@ -730,7 +730,7 @@ function Engine.SpawnUnitFrame(unit, name)
             EvalActiveUnit(self)
         end
     end)
-    RegisterUnitWatch(frame)
+    EllesmereUI.WatchUnitFrame(frame)
     return frame
 end
 

@@ -148,6 +148,7 @@ do
 end
 
 function EllesmereUI.GetBlizzWindowStyle(winKey)
+    if EUI_IS_FOREVER and (winKey == "greatvault" or winKey == "housing" or winKey == "delves" or winKey == "delvepicker") then return "off" end
     -- Third-party virtual keys ("tp:<AddonName>", RegisterSkin API) resolve by majority
     -- vote and bypass the kill switch: third-party skinning is its own opt-in, so window-skin settings only pick WHICH theme, never whether it runs.
     if type(winKey) == "string" and winKey:sub(1, 3) == "tp:" then

@@ -540,6 +540,57 @@ initFrame:SetScript("OnEvent", function(self)
             }
         end
 
+        -- Blizzard Style: the stock button art on a preview button, laid out as
+        -- the live buttons lay it (they keep Blizzard's own textures, scaled
+        -- with the button): the rounded icon-frame mask centred on the icon and
+        -- the icon-frame ring at its stock 46x45-on-45 ratio; no EUI border,
+        -- shape or backdrop. Built once per button, re-sized per pass.
+        local blizzMaskInfo
+        local function ApplyBlizzPreviewButton(entry, bf, icon)
+            local bT, bB, bL, bR = entry.borders[1], entry.borders[2], entry.borders[3], entry.borders[4]
+            bT:Hide(); bB:Hide(); bL:Hide(); bR:Hide()
+            if entry._bdPreview then entry._bdPreview:Hide() end
+            if entry.shapeBorderTex then entry.shapeBorderTex:Hide() end
+            if entry.shapeMask and entry._prevMasked then
+                pcall(icon.RemoveMaskTexture, icon, entry.shapeMask)
+                entry.shapeMask:Hide()
+                entry._prevMasked = false
+            end
+            icon:ClearAllPoints()
+            icon:SetAllPoints(bf)
+            local mask = entry.blizzMask
+            if not mask then
+                mask = bf:CreateMaskTexture()
+                mask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask")
+                icon:AddMaskTexture(mask)
+                entry.blizzMask = mask
+                -- Above the icon, below the OVERLAY texts (a NormalTexture on
+                -- the live button sits under its font strings the same way).
+                local ring = bf:CreateTexture(nil, "ARTWORK", nil, 2)
+                ring:SetAtlas("UI-HUD-ActionBar-IconFrame")
+                UnsnapTex(ring)
+                entry.blizzRing = ring
+            end
+            if blizzMaskInfo == nil then
+                blizzMaskInfo = C_Texture.GetAtlasInfo("UI-HUD-ActionBar-IconFrame-Mask") or false
+            end
+            local w, h = bf:GetSize()
+            local sx, sy = w / 45, h / 45
+            mask:ClearAllPoints()
+            mask:SetPoint("CENTER", icon, "CENTER", 0, 0)
+            if blizzMaskInfo then
+                mask:SetSize(blizzMaskInfo.width * sx, blizzMaskInfo.height * sy)
+            else
+                mask:SetSize(w, h)
+            end
+            mask:Show()
+            local ring = entry.blizzRing
+            ring:ClearAllPoints()
+            ring:SetPoint("TOPLEFT", bf, "TOPLEFT", 0, 0)
+            ring:SetSize(46 * sx, 45 * sy)
+            ring:Show()
+        end
+
         -- Preview background texture (behind all buttons)
         local previewBG = pf:CreateTexture(nil, "BACKGROUND", nil, -1)
         local previewBGBorder = CreateFrame("Frame", nil, pf, "BackdropTemplate")
@@ -603,6 +654,9 @@ initFrame:SetScript("OnEvent", function(self)
             local brdClassColor = settings.borderClassColor
             local zoom = ((settings.iconZoom or EAB.db.profile.iconZoom or 5.5)) / 100
             local square    = EAB.db.profile.squareIcons
+            -- Blizzard Style: stock button art (see ApplyBlizzPreviewButton);
+            -- shapes, zoom and EUI borders do not apply, as on the live bars.
+            local blizzAB   = EAB.db.profile.useBlizzardStyle or false
             local hideKB    = settings.hideKeybind
 
             -- Font path (global setting)
@@ -634,13 +688,13 @@ initFrame:SetScript("OnEvent", function(self)
             local scaledBtnW = SnapS(btnW * (self._blizzEditScale or 1))
             local scaledBtnH = SnapS(btnH * (self._blizzEditScale or 1))
             -- Expand button size for custom shapes (mirrors SHAPE_BTN_EXPAND in main file)
-            if btnShape ~= "none" and btnShape ~= "cropped" then
+            if not blizzAB and btnShape ~= "none" and btnShape ~= "cropped" then
                 local shapeExp = SnapS(ns.SHAPE_BTN_EXPAND * (self._blizzEditScale or 1))
                 scaledBtnW = scaledBtnW + shapeExp
                 scaledBtnH = scaledBtnH + shapeExp
             end
             -- Shrink button height for "cropped" mode (10% top + 10% bottom)
-            if btnShape == "cropped" then
+            if not blizzAB and btnShape == "cropped" then
                 scaledBtnH = SnapS(scaledBtnH * 0.80)
             end
 
@@ -792,7 +846,7 @@ initFrame:SetScript("OnEvent", function(self)
                         icon:SetTexCoord(0, 1, 0, 1)
                     else
                         icon:SetTexture(iconTex)
-                        if square or zoom > 0 or btnShape == "cropped" then
+                        if not blizzAB and (square or zoom > 0 or btnShape == "cropped") then
                             local z = zoom
                             if btnShape == "cropped" then
                                 -- Preserve aspect ratio: trim top/bottom by 10%
@@ -805,6 +859,13 @@ initFrame:SetScript("OnEvent", function(self)
                         end
                     end
 
+                    if blizzAB then
+                        ApplyBlizzPreviewButton(entry, bf, icon)
+                    else
+                    -- The style's ring and mask step aside on the EUI look (the
+                    -- flag is a live read: a profile switch can flip it mid-page).
+                    if entry.blizzRing then entry.blizzRing:Hide() end
+                    if entry.blizzMask then entry.blizzMask:Hide() end
                     local bT, bB, bL, bR = entry.borders[1], entry.borders[2], entry.borders[3], entry.borders[4]
                     local brdTexKey = settings.borderTexture or "solid"
                     local brdIsSolid = (brdTexKey == "solid")
@@ -980,6 +1041,7 @@ initFrame:SetScript("OnEvent", function(self)
                             end
                         end
                     end
+                    end -- close Blizzard Style / EUI look split
                     local keybindFS = entry.keybind
                     if hideKB then
                         keybindFS:SetText("")
@@ -3096,6 +3158,7 @@ initFrame:SetScript("OnEvent", function(self)
             --  ICON APPEARANCE
             -------------------------------------------------------------------
             iconsSectionHeader, h = W:SectionHeader(parent, SECTION_ICON_APPEARANCE, y);  y = y - h
+            y = EllesmereUI.BlizzStyle.Note(parent, y, "actionbars")
 
             local function BlizzStyleOn()
                 return EAB.db.profile.useBlizzardStyle or false
@@ -3127,7 +3190,7 @@ initFrame:SetScript("OnEvent", function(self)
             do
                 local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
                 abBsRow, h = W:DualRow(parent, y,
-                    { type="dropdown", text="Border Style",
+                    EllesmereUI.BlizzStyle.Gate("actionbars", { type="dropdown", text="Border Style",
                       disabled=function() return BlizzStyleOn() or ShapeIsCustom() end,
                       disabledTooltip=function() if ShapeIsCustom() then return "This option requires a non-custom button shape" end return "This option requires Blizzard Style Action Bars to be disabled" end,
                       rawTooltip=true,
@@ -3163,8 +3226,8 @@ initFrame:SetScript("OnEvent", function(self)
                           end)
                           SUpdatePreview()
                           EllesmereUI:RefreshPage()
-                      end },
-                    { type="dropdown", text="Border Size",
+                      end }),
+                    EllesmereUI.BlizzStyle.Gate("actionbars", { type="dropdown", text="Border Size",
                       disabled=BlizzStyleOn, disabledTooltip="Blizzard Style Action Bars", requireState="disabled",
                       values=ns.BORDER_THICKNESS_LABELS, order=ns.BORDER_THICKNESS_ORDER,
                       itemDisabled=function(val)
@@ -3197,7 +3260,7 @@ initFrame:SetScript("OnEvent", function(self)
                               EAB:ApplyShapesForBar(k)
                           end)
                           SUpdatePreview()
-                      end });  y = y - h
+                      end }));  y = y - h
                 do
                     local rgn = abBsRow._leftRegion
                     local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -3518,7 +3581,7 @@ initFrame:SetScript("OnEvent", function(self)
 
             local classColorBorderRow
             classColorBorderRow, h = W:DualRow(parent, y,
-                { type="dropdown", text="Custom Button Shape",
+                EllesmereUI.BlizzStyle.Gate("actionbars", { type="dropdown", text="Custom Button Shape",
                   disabled=BlizzStyleOn, disabledTooltip="Blizzard Style Action Bars", requireState="disabled",
                   values=SHAPE_VALUES, order=SHAPE_ORDER,
                   itemDisabled=function(val)
@@ -3575,8 +3638,8 @@ initFrame:SetScript("OnEvent", function(self)
                       EAB:RefreshProcGlows()
                       SUpdatePreview()
                       EllesmereUI:RefreshPage()
-                  end },
-                { type="slider", text="Icon Zoom", min=0, max=10, step=0.5,
+                  end }),
+                EllesmereUI.BlizzStyle.Gate("actionbars", { type="slider", text="Icon Zoom", min=0, max=10, step=0.5,
                   disabled=BlizzStyleOn, disabledTooltip="Blizzard Style Action Bars", requireState="disabled",
                   getValue=function() return SVal("iconZoom", EAB.db.profile.iconZoom or 5.5) end,
                   setValue=function(v)
@@ -3585,7 +3648,7 @@ initFrame:SetScript("OnEvent", function(self)
                           EAB:ApplyShapesForBar(k)
                       end)
                       SUpdatePreview()
-                  end });  y = y - h
+                  end }));  y = y - h
             borderRow = classColorBorderRow
             do
                 local rgn = classColorBorderRow._leftRegion
@@ -3817,7 +3880,7 @@ initFrame:SetScript("OnEvent", function(self)
 
             local slotBgRow
             slotBgRow, h = W:DualRow(parent, y,
-                { type="slider", text="Icon Background", min=0, max=100, step=1,
+                EllesmereUI.BlizzStyle.Gate("actionbars", { type="slider", text="Icon Background", min=0, max=100, step=1,
                   tooltip="Controls the opacity of the flat color background behind action button icons.",
                   disabled=BlizzStyleOn, disabledTooltip="Blizzard Style Action Bars", requireState="disabled",
                   getValue=function()
@@ -3828,15 +3891,15 @@ initFrame:SetScript("OnEvent", function(self)
                   setValue=function(v)
                       EAB.db.profile.slotBgOpacity = v
                       EAB:ApplySlotBackgroundColor()
-                  end },
-                { type="toggle", text="One Button Assist Icon",
+                  end }),
+                EUI_IS_FOREVER and { type="label", text="" } or { type="toggle", text="One Button Assist Icon",
                   tooltip="Shows the rotation-helper ring on the button holding the One Button Assist action.",
                   getValue=function() return EAB.db.profile.obaIconEnabled ~= false end,
                   setValue=function(v)
                       EAB.db.profile.obaIconEnabled = v
                       if ns.RefreshAssistSpinners then ns.RefreshAssistSpinners() end
                   end });  y = y - h
-            do
+            if not EUI_IS_FOREVER then
                 local rgn = slotBgRow._rightRegion
                 local _, obaCogShow = EllesmereUI.BuildCogPopup({
                     title = "One Button Assist Icon",
@@ -4217,12 +4280,19 @@ initFrame:SetScript("OnEvent", function(self)
 
                     -- Row 0: Auto-paging opt-outs (MainBar only -- the only bar the engine pages off
                     -- bonusbar). Suppresses implicit swaps only; an explicit page below still applies.
+                    local foreverFormPaging
                     if selKey == "MainBar" then
                         local function SetAutoPageOptOut(key, v)
                             SSet(key, v, function(k)
                                 if ns.RebuildBarPaging then ns.RebuildBarPaging(k) end
                             end)
                         end
+                        if EUI_IS_FOREVER then
+                            foreverFormPaging = { type="toggle", text="Disable Form Paging",
+                              getValue=function() return SGet("disableFormPaging") or false end,
+                              setValue=function(v) SetAutoPageOptOut("disableFormPaging", v) end,
+                              tooltip="Keep Action Bar 1 on its current page when you shapeshift, stealth, or change stance, instead of swapping to that form's bar.\n\nKeybinds follow what the bar shows, so the key always casts the icon you see. Press-and-hold repeat casting is turned off on Action Bar 1 while this is enabled." }
+                        else
                         _, h = W:DualRow(parent, y,
                             { type="toggle", text="Disable Form Paging",
                               getValue=function() return SGet("disableFormPaging") or false end,
@@ -4232,6 +4302,7 @@ initFrame:SetScript("OnEvent", function(self)
                               getValue=function() return SGet("disableSkyridingPaging") or false end,
                               setValue=function(v) SetAutoPageOptOut("disableSkyridingPaging", v) end,
                               tooltip="Keep Action Bar 1 on its current page while skyriding, instead of swapping to the skyriding bar.\n\nYour skyriding abilities live on that bar, so put them on another bar before enabling this. Press-and-hold repeat casting is turned off on Action Bar 1 while this is enabled." });  y = y - h
+                        end
                     end
 
                     local pagingArrowsWidget
@@ -4323,7 +4394,8 @@ initFrame:SetScript("OnEvent", function(self)
                                   getValue=function() return GetPagingVal(right.id) end,
                                   setValue=function(v) SetPagingVal(right.id, v) end }
                             else
-                                rightWidget = { type="label", text="" }
+                                rightWidget = foreverFormPaging or { type="label", text="" }
+                                foreverFormPaging = nil
                             end
                             _, h = W:DualRow(parent, y,
                                 { type="dropdown", text=left.label,
@@ -4332,6 +4404,9 @@ initFrame:SetScript("OnEvent", function(self)
                                   setValue=function(v) SetPagingVal(left.id, v) end },
                                 rightWidget);  y = y - h
                         end
+                    end
+                    if foreverFormPaging then
+                        _, h = W:DualRow(parent, y, foreverFormPaging, { type="label", text="" }); y = y - h
                     end
                 end
             end
@@ -5795,6 +5870,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
         y = y - h
 
+        if not EUI_IS_FOREVER then
         -- Assisted Highlight. Blizzard's ring sits on the same button edge as
         -- the proc glow and has no size control of its own, so we offer two
         -- ways to tell them apart: push the ring clear with an outset, or drop
@@ -5862,6 +5938,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="spacer" });  y = y - h
 
+        end -- Assisted Combat is unavailable in Forever.
         return math.abs(y)
     end
 

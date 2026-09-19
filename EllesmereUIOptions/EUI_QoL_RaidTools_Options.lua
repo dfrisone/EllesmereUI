@@ -78,10 +78,14 @@ initFrame:SetScript("OnEvent", function(self)
         return Disabled() or ShowAsVal() == "markers"
     end
 
+    -- The options page can be assembled before the runtime publishes its
+    -- namespace constants, so own the immutable fallback values here.
+    local PULL_DEFAULTS = { 3, 5, 10 }
+
     -- Pull durations live in a fixed 3-slot array; each slider owns one slot.
     local function PullGet(i)
         local t = Cfg("pullTimes")
-        return (t and t[i]) or ns.PULL_DEFAULTS[i]
+        return (t and t[i]) or PULL_DEFAULTS[i]
     end
 
     local function PullSet(i, v)
@@ -422,6 +426,10 @@ initFrame:SetScript("OnEvent", function(self)
                         end
                         return
                     end
+                    -- Only a plain left click arms the capture: with AnyUp
+                    -- registered, an idle side-button click would otherwise
+                    -- fall through here and start listening.
+                    if mouseButton ~= "LeftButton" then return end
                     if listening then return end
                     listening = true
                     label:SetText(EllesmereUI.L("Press a key..."))

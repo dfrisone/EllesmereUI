@@ -1,4 +1,9 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose item globals are gone on newer clients.
+local GetItemCount = (C_Item and C_Item.GetItemCount) or GetItemCount
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -------------------------------------------------------------------------------
 --  EUI_MacroFactory.lua
 --  Builds the Macro Factory UI for the Quality of Life options page.

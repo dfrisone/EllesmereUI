@@ -1,4 +1,7 @@
 ﻿if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -- EUI_RaidFrames_BuffManager2.lua
 -- 12.1 Buff Manager v2: the spell -> filter -> indicator model.
 -- FILTERS are named spell sets: presets ship with the addon (rename/delete
@@ -24,6 +27,7 @@
 -- false) and indicators are always the system (BM_CustomActive true).
 
 local _, ns = ...
+if ns.standDown then return end -- raid frames stood down: secure group headers need a snippet compiler
 local EllesmereUI = _G.EllesmereUI
 
 -------------------------------------------------------------------------------

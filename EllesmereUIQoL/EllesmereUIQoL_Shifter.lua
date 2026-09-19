@@ -96,6 +96,14 @@ local ADDON_FRAMES = {
 
 -- For these frames the drag target is a child header element, not the frame
 -- itself (avoids fighting model-rotate or interior click regions).
+if EUI_IS_FOREVER then
+    for name in pairs(ADDON_FRAMES) do
+        if name == "Blizzard_WeeklyRewards" or name:find("^Blizzard_Housing") or name:find("^Blizzard_Delves") then
+            ADDON_FRAMES[name] = nil
+        end
+    end
+end
+
 local DRAG_HEADERS = {
     ["WorldMapFrame"] = "WorldMapTitleButton",
 }
@@ -189,12 +197,12 @@ end
 local securePositioner = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
 local function SecureSetPoint(frame, point, relPoint, x, y)
     if InCombatLockdown() then return false end
-    securePositioner:SetFrameRef("f", frame)
+    EllesmereUI.SecureCall(securePositioner.SetFrameRef, securePositioner, "f", frame)
     securePositioner:SetAttribute("p", point)
     securePositioner:SetAttribute("rp", relPoint)
     securePositioner:SetAttribute("x", x)
     securePositioner:SetAttribute("y", y)
-    securePositioner:Execute([[
+    EllesmereUI.SecureCall(securePositioner.Execute, securePositioner, [[
         local f = self:GetFrameRef("f")
         if not f then return end
         f:ClearAllPoints()
@@ -231,9 +239,9 @@ local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.5, 2, 0.1
 
 local function SecureSetScale(frame, scale)
     if InCombatLockdown() then return false end
-    securePositioner:SetFrameRef("f", frame)
+    EllesmereUI.SecureCall(securePositioner.SetFrameRef, securePositioner, "f", frame)
     securePositioner:SetAttribute("s", scale)
-    securePositioner:Execute([[
+    EllesmereUI.SecureCall(securePositioner.Execute, securePositioner, [[
         local f = self:GetFrameRef("f")
         if f then f:SetScale(self:GetAttribute("s")) end
     ]])

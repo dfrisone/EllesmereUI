@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Stands down where the client cannot compile secure snippets: the raid tool buttons are secure action buttons driven by snippets.
+if EllesmereUI and EllesmereUI.SecureSnippetsWork
+    and not EllesmereUI.SecureSnippetsWork() then return end
 -------------------------------------------------------------------------------
 --  EllesmereUIQoL_RaidTools.lua -- Raid control panels (QoL: Raid Tools page)
 --

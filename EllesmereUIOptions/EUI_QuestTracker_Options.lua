@@ -201,13 +201,22 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return Cfg("showQuestIcons") or false end,
               setValue=function(v)
                   Set("showQuestIcons", v)
+                  -- Forever reloads through Blizzard's action handler, not addon Lua.
+                  local macroReload = select(4, GetBuildInfo()) == 16001
+                  local manualReload = macroReload and InCombatLockdown()
                   EllesmereUI:ShowConfirmPopup({
                       title       = "Reload Required",
-                      message     = "Changing quest icons requires a UI reload to apply.",
-                      confirmText = "Reload Now",
+                      message     = manualReload and "Quest icons changed. Type /reload in chat to apply."
+                          or "Changing quest icons requires a UI reload to apply.",
+                      confirmText = manualReload and "Okay" or "Reload Now",
                       cancelText  = "Later",
-                      onConfirm   = function() ReloadUI() end,
+                      confirmMacro = macroReload and not manualReload and "/reload" or nil,
+                      onConfirm   = not macroReload and function() ReloadUI() end or nil,
                   })
+                  if macroReload and not manualReload then
+                      -- Match the overlay's default mouse-up click registration.
+                      EUIConfirmMacroOverlay:SetAttribute("useOnKeyDown", false)
+                  end
               end },
             { type="toggle", text="Hide All Objectives",
               tooltip="Hides the master header and its minimize button at the top of the tracker. When shown, it's skinned to match the section headers below it (Quests, Achievements, ...).",

@@ -1701,12 +1701,13 @@ initFrame:SetScript("OnEvent", function(self)
 
     local function WSReloadPopup(message)
         if EllesmereUI.ShowConfirmPopup then
+            local forever = EUI_IS_FOREVER
             EllesmereUI:ShowConfirmPopup({
                 title       = "Reload Required",
-                message     = message,
-                confirmText = "Reload Now",
-                cancelText  = "Later",
-                onConfirm   = function() ReloadUI() end,
+                message     = forever and (message .. "\n\nRun /reload to apply this change.") or message,
+                confirmText = forever and "Okay" or "Reload Now",
+                cancelText  = forever and "Close" or "Later",
+                onConfirm   = not forever and function() ReloadUI() end or nil,
             })
         end
     end
@@ -2266,6 +2267,13 @@ initFrame:SetScript("OnEvent", function(self)
             end,
         },
     }
+
+    if EUI_IS_FOREVER then
+        for i = #WINDOWS, 1, -1 do
+            local entry = WINDOWS[i]
+            if entry.key == "greatvault" or entry.key == "housing" or entry.key == "delves" or entry.key == "delvepicker" then table.remove(WINDOWS, i) end
+        end
+    end
 
     local function WSGetStyle(win)
         return EllesmereUI.GetBlizzWindowStyle(win.key)
@@ -3125,11 +3133,17 @@ initFrame:SetScript("OnEvent", function(self)
         return math.abs(y)
     end
 
+    local skinSearchTerms = "blizzard skin character sheet tooltip menu popup dragon riding skyriding window skins lfg group finder premade queue pause game menu great vault inspect collections mounts pets toys spellbook talents adventure guide encounter journal professions guild communities calendar achievements mail catalyst gem socket item upgrade upgrades crest loot window loot toast you received popup micro menu modern delves companion brann loot roll need greed pass disenchant loot rolls pending rolls group invite invited to a group role"
+    if EUI_IS_FOREVER then
+        skinSearchTerms = skinSearchTerms:gsub(" dragon riding skyriding", ""):gsub(" great vault", ""):gsub(" delves companion brann", "")
+    end
     EllesmereUI:RegisterModule("EllesmereUIBlizzardSkin", {
         title       = "Blizz UI Enhanced",
-        description = "Themed Blizzard frames: window skins, tooltips, menus, popups, Dragon Riding HUD.",
-        searchTerms = "blizzard skin character sheet tooltip menu popup dragon riding skyriding window skins lfg group finder premade queue pause game menu great vault inspect collections mounts pets toys spellbook talents adventure guide encounter journal professions guild communities calendar achievements mail catalyst gem socket item upgrade upgrades crest loot window loot toast you received popup micro menu modern delves companion brann loot roll need greed pass disenchant loot rolls pending rolls group invite invited to a group role",
-        pages       = { PAGE_WINDOWSKINS, PAGE_TOOLTIPS, PAGE_DRAGONRIDING },
+        description = EUI_IS_FOREVER and "Themed Blizzard frames: window skins, tooltips, menus and popups."
+            or "Themed Blizzard frames: window skins, tooltips, menus, popups, Dragon Riding HUD.",
+        searchTerms = skinSearchTerms,
+        pages       = EUI_IS_FOREVER and { PAGE_WINDOWSKINS, PAGE_TOOLTIPS }
+            or { PAGE_WINDOWSKINS, PAGE_TOOLTIPS, PAGE_DRAGONRIDING },
         buildPage   = function(pageName, parent, yOffset)
             if pageName == PAGE_WINDOWSKINS then
                 return BuildWindowSkinsPage(pageName, parent, yOffset)
@@ -3137,7 +3151,7 @@ initFrame:SetScript("OnEvent", function(self)
             if pageName == PAGE_TOOLTIPS then
                 return BuildTooltipsPage(pageName, parent, yOffset)
             end
-            if pageName == PAGE_DRAGONRIDING then
+            if not EUI_IS_FOREVER and pageName == PAGE_DRAGONRIDING then
                 return BuildDragonRidingPage(pageName, parent, yOffset)
             end
         end,

@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -------------------------------------------------------------------------------
 --  EUI_ResourceBars_Options.lua
 --  Registers the Resource Bars module with EllesmereUI
@@ -566,7 +569,62 @@ initFrame:SetScript("OnEvent", function(self)
             end
             pc._barBorderFrame:SetFrameLevel(sp.borderBehind and math.max(0, pc:GetFrameLevel() - 1) or (pc:GetFrameLevel() + 2))
 
-            if sp.borderOnPips and not isBar then
+            if EllesmereUI.BlizzStyle.Get("resourcebars") then
+                -- Blizzard Style: the stock bar frame (the same atlas and
+                -- overhang the live bars use) instead of the full-bar border.
+                pc._barBorderFrame:Hide()
+                local bbg = pc._blizzBarBg
+                if not bbg then
+                    bbg = pc:CreateTexture(nil, "BACKGROUND", nil, -2)
+                    if C_Texture.GetAtlasInfo("UI-HUD-CoolDownManager-Bar-BG") then bbg:SetAtlas("UI-HUD-CoolDownManager-Bar-BG") end
+                    UnsnapTex(bbg)
+                    pc._blizzBarBg = bbg
+                end
+                bbg:ClearAllPoints()
+                bbg:SetPoint("TOPLEFT", pc, "TOPLEFT", -2, 3)
+                bbg:SetPoint("BOTTOMRIGHT", pc, "BOTTOMRIGHT", 6, -7)
+                bbg:Show()
+                -- The stock fill art's footprint masks a bar-type fill and
+                -- backing inside the frame's rim, as on the live bars.
+                local bm = pc._blizzBarMask
+                if not bm and C_Texture.GetAtlasInfo("UI-HUD-CoolDownManager-Bar") then
+                    bm = pc:CreateMaskTexture()
+                    bm:SetAtlas("UI-HUD-CoolDownManager-Bar")
+                    bm:SetAllPoints(pc)
+                    pc._blizzBarMask = bm
+                end
+                if pc._barFill and pc._blizzMaskedFill ~= pc._barFill then
+                    pc._barFill:AddMaskTexture(bm); pc._blizzMaskedFill = pc._barFill
+                end
+                if pc._barBg and pc._blizzMaskedBg ~= pc._barBg then
+                    pc._barBg:AddMaskTexture(bm); pc._blizzMaskedBg = pc._barBg
+                end
+                -- The inner bevel the live rows carry: on the container itself
+                -- for a bar-type (its fill is a texture here), on an overlay
+                -- above the pips otherwise; pip textures take the mask so the
+                -- end pips round off with the frame (the preview is horizontal).
+                local shade = pc._blizzShadeFrame
+                if isBar then
+                    ns.ERB_BlizzBarShadow(pc, bm)
+                    if shade then shade:Hide() end
+                else
+                    if pc._blizzShadow then for i = 1, 4 do pc._blizzShadow[i]:Hide() end end
+                    if not shade then
+                        shade = CreateFrame("Frame", nil, pc)
+                        shade:SetAllPoints(pc)
+                        pc._blizzShadeFrame = shade
+                    end
+                    shade:SetFrameLevel(pc:GetFrameLevel() + 8)
+                    shade:Show()
+                    ns.ERB_BlizzBarShadow(shade, bm)
+                    local pvPips = _previewFrames.pips
+                    if pvPips then
+                        for i = 1, #pvPips do
+                            ns.ERB_MaskTex(pvPips[i]._bg, bm); ns.ERB_MaskTex(pvPips[i]._fill, bm)
+                        end
+                    end
+                end
+            elseif sp.borderOnPips and not isBar then
                 pc._barBorderFrame:Hide()
             else
                 EllesmereUI.ApplyBorderStyle(pc._barBorderFrame, sp.borderSize or 1,
@@ -586,6 +644,8 @@ initFrame:SetScript("OnEvent", function(self)
                 pc._pipBarBg:SetAllPoints(pc)
                 pc._pipBarBg:SetColorTexture(sp.barBgR or 0, sp.barBgG or 0, sp.barBgB or 0, sp.barBgA or 0.5)
                 pc._pipBarBg:Show()
+                -- Blizzard Style: the backdrop takes the row's bar-shape mask.
+                if pc._blizzBarMask then ns.ERB_MaskTex(pc._pipBarBg, pc._blizzBarMask) end
             elseif pc._pipBarBg then
                 pc._pipBarBg:Hide()
             end
@@ -2943,6 +3003,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         local hdr
         hdr, h = W:SectionHeader(parent, "HEALTH BAR", y);  y = y - h
+        y = EllesmereUI.BlizzStyle.Note(parent, y, "resourcebars")
 
         -- Advanced: Synced/Re-sync toggle; controls always built, overlaid when synced (built at the end) so the section height stays constant.
         local _advTop = y  -- content top; also used by the Simple override overlay
@@ -3086,7 +3147,7 @@ initFrame:SetScript("OnEvent", function(self)
             local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
             local hpBsRow
             hpBsRow, h = W:DualRow(parent, y,
-                { type="dropdown", text="Border Style",
+                EllesmereUI.BlizzStyle.Gate("resourcebars", { type="dropdown", text="Border Style",
                   disabled = healthOff,
                   disabledTooltip = "Health Bar",
                   values=texValues, order=texOrder,
@@ -3100,8 +3161,8 @@ initFrame:SetScript("OnEvent", function(self)
                       local defSz = EllesmereUI.GetBorderDefaultSize("resourcebars", v)
                       if defSz then c.borderSize = defSz end
                       RebuildHealth(); EllesmereUI:RefreshPage()
-                  end },
-                { type = "slider", text = "Border Size",
+                  end }),
+                EllesmereUI.BlizzStyle.Gate("resourcebars", { type = "slider", text = "Border Size",
                   min = 0, max = 4, step = 1,
                   disabled = healthOff,
                   disabledTooltip = "Health Bar",
@@ -3110,7 +3171,7 @@ initFrame:SetScript("OnEvent", function(self)
                       local c = cfg(); if not c then return end
                       c.borderSize = v; RebuildHealth()
                       EllesmereUI:RefreshPage()
-                  end });  y = y - h
+                  end }));  y = y - h
             if not EllesmereUI._prebuilding then
                 local rgn = hpBsRow._rightRegion
                 local ctrl = rgn._control
@@ -3855,7 +3916,7 @@ initFrame:SetScript("OnEvent", function(self)
             local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
             local pwrBsRow
             pwrBsRow, h = W:DualRow(parent, y,
-                { type="dropdown", text="Border Style",
+                EllesmereUI.BlizzStyle.Gate("resourcebars", { type="dropdown", text="Border Style",
                   disabled = powerOff,
                   disabledTooltip = powerDisTip,
                   values=texValues, order=texOrder,
@@ -3869,8 +3930,8 @@ initFrame:SetScript("OnEvent", function(self)
                       local defSz = EllesmereUI.GetBorderDefaultSize("resourcebars", v)
                       if defSz then c.borderSize = defSz end
                       RebuildPower(); EllesmereUI:RefreshPage()
-                  end },
-                { type = "slider", text = "Border Size",
+                  end }),
+                EllesmereUI.BlizzStyle.Gate("resourcebars", { type = "slider", text = "Border Size",
                   min = 0, max = 4, step = 1,
                   disabled = powerOff,
                   disabledTooltip = powerDisTip,
@@ -3879,7 +3940,7 @@ initFrame:SetScript("OnEvent", function(self)
                       local c = cfg(); if not c then return end
                       c.borderSize = v; RebuildPower()
                       EllesmereUI:RefreshPage()
-                  end });  y = y - h
+                  end }));  y = y - h
             if not EllesmereUI._prebuilding then
                 local rgn = pwrBsRow._rightRegion
                 local ctrl = rgn._control
@@ -4780,7 +4841,7 @@ initFrame:SetScript("OnEvent", function(self)
             local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
             local classBsRow
             classBsRow, h = W:DualRow(parent, y,
-                { type="dropdown", text="Border Style",
+                EllesmereUI.BlizzStyle.Gate("resourcebars", { type="dropdown", text="Border Style",
                   disabled = classOff,
                   disabledTooltip = "Class Resource",
                   values=texValues, order=texOrder,
@@ -4794,8 +4855,8 @@ initFrame:SetScript("OnEvent", function(self)
                       local defSz = EllesmereUI.GetBorderDefaultSize("resourcebars", v)
                       if defSz then c.borderSize = defSz end
                       RebuildClass(); EllesmereUI:RefreshPage()
-                  end },
-                { type = "slider", text = "Border Size",
+                  end }),
+                EllesmereUI.BlizzStyle.Gate("resourcebars", { type = "slider", text = "Border Size",
                   min = 0, max = 4, step = 1,
                   disabled = classOff,
                   disabledTooltip = "Class Resource",
@@ -4804,7 +4865,7 @@ initFrame:SetScript("OnEvent", function(self)
                       local c = cfg(); if not c then return end
                       c.borderSize = v; RebuildClass()
                       EllesmereUI:RefreshPage()
-                  end });  y = y - h
+                  end }));  y = y - h
             if not ctx.advanced and ctx.syncRows then ctx.syncRows.classBorder = classBsRow._rightRegion end
             if not EllesmereUI._prebuilding then
                 local rgn = classBsRow._rightRegion
@@ -8750,13 +8811,14 @@ initFrame:SetScript("OnEvent", function(self)
 
         local displaySection
         displaySection, h = W:SectionHeader(parent, "DISPLAY", y);  y = y - h
+        y = EllesmereUI.BlizzStyle.Note(parent, y, "castbar")
 
         -- Row: Cast Bar Border Style dropdown (+ inline offset cog)
         do
             local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
             local cbBsRow
             cbBsRow, h = W:DualRow(parent, y,
-                { type="dropdown", text="Border Style",
+                EllesmereUI.BlizzStyle.Gate("castbar", { type="dropdown", text="Border Style",
                   disabled = castOff,
                   disabledTooltip = "Player Cast Bar",
                   values=texValues, order=texOrder,
@@ -8770,8 +8832,8 @@ initFrame:SetScript("OnEvent", function(self)
                       local defSz = EllesmereUI.GetBorderDefaultSize("resourcebars", v)
                       if defSz then p.castBar.borderSize = defSz end
                       RefreshCast(); EllesmereUI:RefreshPage()
-                  end },
-                { type = "slider", text = "Border Size",
+                  end }),
+                EllesmereUI.BlizzStyle.Gate("castbar", { type = "slider", text = "Border Size",
                   min = 0, max = 4, step = 1,
                   disabled = castOff,
                   disabledTooltip = "Player Cast Bar",
@@ -8781,7 +8843,7 @@ initFrame:SetScript("OnEvent", function(self)
                   setValue = function(v)
                       local p = DB(); if not p then return end
                       p.castBar.borderSize = v; RefreshCast(); EllesmereUI:RefreshPage()
-                  end });  y = y - h
+                  end }));  y = y - h
             -- Inline border color swatch on Border slider (right region)
             if not EllesmereUI._prebuilding then
                 local rgn = cbBsRow._rightRegion
@@ -8806,12 +8868,16 @@ initFrame:SetScript("OnEvent", function(self)
                 borderSwatchBlock:SetFrameLevel(borderSwatch:GetFrameLevel() + 10)
                 borderSwatchBlock:EnableMouse(true)
                 borderSwatchBlock:SetScript("OnEnter", function()
-                    EllesmereUI.ShowWidgetTooltip(borderSwatch, EllesmereUI.DisabledTooltip("This option requires a Border Size above 0."))
+                    if EllesmereUI.BlizzStyle.Get("castbar") then
+                        EllesmereUI.ShowWidgetTooltip(borderSwatch, EllesmereUI.DisabledTooltip("Blizzard Style", "disabled"))
+                    else
+                        EllesmereUI.ShowWidgetTooltip(borderSwatch, EllesmereUI.DisabledTooltip("This option requires a Border Size above 0."))
+                    end
                 end)
                 borderSwatchBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
                 local function UpdateBorderSwatchState()
                     local p = DB()
-                    local noBorder = not p or (p.castBar.borderSize or 0) == 0
+                    local noBorder = not p or (p.castBar.borderSize or 0) == 0 or EllesmereUI.BlizzStyle.Get("castbar")
                     if noBorder then borderSwatch:SetAlpha(0.3); borderSwatchBlock:Show()
                     else borderSwatch:SetAlpha(1); borderSwatchBlock:Hide() end
                 end
@@ -8883,7 +8949,7 @@ initFrame:SetScript("OnEvent", function(self)
                 local function UpdateCogVis()
                     local p = DB()
                     local tex = p and p.castBar.borderTexture or "solid"
-                    if tex == "solid" then cogBtn:Hide() else cogBtn:Show() end
+                    if tex == "solid" or EllesmereUI.BlizzStyle.Get("castbar") then cogBtn:Hide() else cogBtn:Show() end
                 end
                 EllesmereUI.RegisterWidgetRefresh(UpdateCogVis)
                 UpdateCogVis()
@@ -8902,7 +8968,7 @@ initFrame:SetScript("OnEvent", function(self)
                   local p = DB(); if not p then return end
                   p.castBar.fillOpacity = v; RefreshCast()
               end },
-            { type = "slider", text = "Background", min = 0, max = 100, step = 1,
+            EllesmereUI.BlizzStyle.Gate("castbar", { type = "slider", text = "Background", min = 0, max = 100, step = 1,
               disabled = castOff,
               disabledTooltip = "Player Cast Bar",
               getValue = function()
@@ -8911,9 +8977,11 @@ initFrame:SetScript("OnEvent", function(self)
               setValue = function(v)
                   local p = DB(); if not p then return end
                   p.castBar.bgA = v / 100; RefreshCast()
-              end }
+              end })
         );  y = y - h
-        -- Fill Color inline swatches: gradient end / custom / class
+        -- Fill Color inline swatches: gradient end / custom / class. Blizzard Style
+        -- keeps the stock fill art, so the colour swatches are inert there.
+        local castFillBlizz = EllesmereUI.BlizzStyle.Get("castbar")
         EllesmereUI.BuildInlineSwatches(castColorRow._leftRegion, {
                   { tooltip = "Gradient End Color", hasAlpha = true,
                     disabled = function()
@@ -8922,6 +8990,7 @@ initFrame:SetScript("OnEvent", function(self)
                         return not p.castBar.gradientEnabled
                     end,
                     disabledTooltip = function()
+                        if castFillBlizz then return "This option requires Blizzard Style to be disabled" end
                         local p = DB()
                         if not p or not p.castBar.enabled then return "Player Cast Bar" end
                         return "Gradient"
@@ -8982,7 +9051,11 @@ initFrame:SetScript("OnEvent", function(self)
                         local p = DB()
                         return (not p or p.castBar.classColored == true) and 1 or 0.3
                     end },
-        }, { disabled = castOff, disabledTooltip = "Player Cast Bar" })
+        }, { disabled = function() return castFillBlizz or castOff() end,
+             disabledTooltip = function()
+                 if castFillBlizz then return "This option requires Blizzard Style to be disabled" end
+                 return "Player Cast Bar"
+             end })
         -- Inline cog on Fill Color for gradient settings
         if not EllesmereUI._prebuilding then
             local rgn = castColorRow._leftRegion
@@ -9012,12 +9085,16 @@ initFrame:SetScript("OnEvent", function(self)
             cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
             cogDis:EnableMouse(true)
             cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Player Cast Bar"))
+                if castFillBlizz then
+                    EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Blizzard Style", "disabled"))
+                else
+                    EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Player Cast Bar"))
+                end
             end)
             cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             local function UpdateCogDisGrad()
                 local p = DB()
-                if p and not p.castBar.enabled then cogDis:Show() else cogDis:Hide() end
+                if castFillBlizz or (p and not p.castBar.enabled) then cogDis:Show() else cogDis:Hide() end
             end
             cogBtn:HookScript("OnShow", UpdateCogDisGrad)
             EllesmereUI.RegisterWidgetRefresh(UpdateCogDisGrad)
@@ -9043,7 +9120,10 @@ initFrame:SetScript("OnEvent", function(self)
             PP.Point(bgSwatch, "RIGHT", ctrl, "LEFT", -8, 0)
             local function UpdateBgSwatch()
                 local p = DB()
-                if not p or not p.castBar.enabled then
+                if castFillBlizz then
+                    bgSwatch:SetAlpha(0.15); bgSwatch:Disable()
+                    bgSwatch._disabledTooltip = "This option requires Blizzard Style to be disabled"
+                elseif not p or not p.castBar.enabled then
                     bgSwatch:SetAlpha(0.15); bgSwatch:Disable()
                     bgSwatch._disabledTooltip = "Player Cast Bar"
                 else
@@ -9059,7 +9139,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Row 3: Bar Texture | Spell Text (cog RESIZE: text size + x/y)
         local textRow
         textRow, h = W:DualRow(parent, y,
-            { type = "dropdown", text = "Bar Texture",
+            EllesmereUI.BlizzStyle.Gate("castbar", { type = "dropdown", text = "Bar Texture",
               disabled = castOff,
               disabledTooltip = "Player Cast Bar",
               values = texValues, order = texOrder,
@@ -9067,7 +9147,7 @@ initFrame:SetScript("OnEvent", function(self)
               setValue = function(v)
                   local p = DB(); if not p then return end
                   p.castBar.texture = v; RefreshCast()
-              end },
+              end }),
             { type = "dropdown", text = "Spell Text",
               disabled = castOff,
               disabledTooltip = "Player Cast Bar",

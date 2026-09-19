@@ -1681,6 +1681,8 @@ local function TryApply(entry)
 end
 
 function WSkin.RegisterWindow(entry)
+    local key = entry.key
+    if EUI_IS_FOREVER and (key == "greatvault" or key == "housing" or key == "delves" or key == "delvepicker") then return end
     _windows[#_windows + 1] = entry
 end
 

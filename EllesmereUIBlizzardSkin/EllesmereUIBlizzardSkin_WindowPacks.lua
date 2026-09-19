@@ -1,4 +1,6 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose item globals are gone on newer clients.
+local GetItemQualityColor = (C_Item and C_Item.GetItemQualityColor) or GetItemQualityColor
 -------------------------------------------------------------------------------
 --  EllesmereUIBlizzardSkin_WindowPacks.lua
 --  Per-window skin packs on the shared engine (..._WindowEngine.lua):

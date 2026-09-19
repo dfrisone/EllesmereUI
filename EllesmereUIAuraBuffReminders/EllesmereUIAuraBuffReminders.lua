@@ -104,8 +104,11 @@ local function GetPlayerClass()
 end
 
 local function GetSpecID()
-    local s = GetSpecialization(); if not s then return nil end
-    return GetSpecializationInfo(s)
+    -- Through the namespace: the loose globals are gone on newer clients.
+    local api = C_SpecializationInfo
+    if not api then return nil end
+    local s = api.GetSpecialization(); if not s then return nil end
+    return api.GetSpecializationInfo(s)
 end
 
 -------------------------------------------------------------------------------
@@ -212,6 +215,7 @@ local function InRealInstancedContent()
 end
 
 local function InMythicPlusKey()
+    if EUI_IS_FOREVER then return false end
     return C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive()
 end
 
@@ -312,7 +316,7 @@ end
 function EABR.GetShowUnderMinutes()
     if not (db and db.profile) then return 0 end
     local disp = db.profile.display or {}
-    if (EABR.InMythicZeroDungeon() or InPreKeyDungeon()) and _dungeonPrePull then
+    if not EUI_IS_FOREVER and (EABR.InMythicZeroDungeon() or InPreKeyDungeon()) and _dungeonPrePull then
         return disp.showUnderMPlus or 40
     end
     return disp.showUnder or 5
@@ -910,7 +914,7 @@ local function GetWeaponCategory(slotID)
     if C_Item and C_Item.GetItemInfoInstant then
         _, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
     else
-        _, _, _, equipLoc, _, classID, subClassID = GetItemInfoInstant(itemID)
+        _, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
     end
     if not classID or classID ~= ((Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2) then return nil end
     if equipLoc == "INVTYPE_SHIELD" or equipLoc == "INVTYPE_HOLDABLE" then return nil end
@@ -930,7 +934,7 @@ function EABR.HasShieldEquipped()
     if C_Item and C_Item.GetItemInfoInstant then
         _, _, _, equipLoc = C_Item.GetItemInfoInstant(itemID)
     else
-        _, _, _, equipLoc = GetItemInfoInstant(itemID)
+        _, _, _, equipLoc = C_Item.GetItemInfoInstant(itemID)
     end
     return equipLoc == "INVTYPE_SHIELD"
 end
@@ -1235,8 +1239,8 @@ local SHAMAN_IMBUES = {
 
 -- Shaman Shields: 3 entries gated on Elemental Orbit (383010). With Orbit: Earth Shield self-buff (383648) + Lightning/Water Shield both required; without, any of the three. Cast spell by spec: Resto (264) -> Water Shield (52127), else Lightning Shield (192106).
 local function ShamanShieldCastSpell()
-    local specIdx = GetSpecialization and GetSpecialization() or 0
-    local specID = specIdx and specIdx > 0 and GetSpecializationInfo(specIdx) or 0
+    local specIdx = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization() or 0
+    local specID = specIdx and specIdx > 0 and C_SpecializationInfo.GetSpecializationInfo(specIdx) or 0
     return (specID == 264) and 52127 or 192106
 end
 
@@ -3050,7 +3054,7 @@ local function SetIconItem(btn, itemID, texture, label)
         btn:SetAttribute("macrotext1", nil)
         btn:SetAttribute("unit1", nil)
     end
-    btn._icon:SetTexture(texture or GetItemIcon(itemID) or 134400)
+    btn._icon:SetTexture(texture or C_Item.GetItemIcon(itemID) or 134400)
     btn._tooltipSpell = nil
     btn._tooltipItem = itemID
 end
@@ -3505,7 +3509,7 @@ function EABR.EmitWeaponEnchantReminders(missing, co)
             local e = AcquireEntry()
             e.mode = "macro"
             e.macro = "/use item:" .. bestItemID .. "\n/use " .. slot
-            e.texture = GetItemIcon(bestItemID) or 134400
+            e.texture = C_Item.GetItemIcon(bestItemID) or 134400
             -- Localizes the full slot name THEN shortens: ShortLabel truncates on whitespace (English -> Main/Off, space-less locales like zhTW stay intact). L() on the pre-truncated word would collide with the generic Off (disabled) translation.
             e.label = ShortLabel(EllesmereUI.L(slot == 16 and "Main Hand" or "Off Hand"))
             e.tooltipItem = bestItemID
@@ -3680,7 +3684,7 @@ local specialsActive = EABR.SectionShows(co.specialsWhereToShow, inInstance)
                 if runeItem and (co.showWithoutItem ~= false or rr.hasBags) then
                     local e = AcquireEntry()
                     e.mode = "item"; e.itemID = runeItem
-                    e.texture = GetItemIcon(runeItem); e.label = EllesmereUI.L(ShortLabel("Augment Rune"))
+                    e.texture = C_Item.GetItemIcon(runeItem); e.label = EllesmereUI.L(ShortLabel("Augment Rune"))
                     e.qualityAtlas = EABR.GetItemQualityAtlas(runeItem)
                     e.bagCount = CachedGetItemCount(runeItem)
                     e.desaturated = not rr.hasBags
@@ -3714,7 +3718,7 @@ local specialsActive = EABR.SectionShows(co.specialsWhereToShow, inInstance)
                 if flaskItemID and (co.showWithoutItem ~= false or rf.hasBags) then
                     local e = AcquireEntry()
                     e.mode = "item"; e.itemID = flaskItemID
-                    e.texture = GetItemIcon(flaskItemID) or 134830
+                    e.texture = C_Item.GetItemIcon(flaskItemID) or 134830
                     e.label = EllesmereUI.L("Flask")
                     e.qualityAtlas = EABR.GetItemQualityAtlas(flaskItemID)
                     e.bagCount = CachedGetItemCount(flaskItemID)
@@ -3732,7 +3736,7 @@ local specialsActive = EABR.SectionShows(co.specialsWhereToShow, inInstance)
                 if foodItemID and (co.showWithoutItem ~= false or EABR._resolved.food.hasBags) then
                     local e = AcquireEntry()
                     e.mode = "item"; e.itemID = foodItemID
-                    e.texture = GetItemIcon(foodItemID) or 134062
+                    e.texture = C_Item.GetItemIcon(foodItemID) or 134062
                     e.label = EllesmereUI.L("Food")
                     e.qualityAtlas = EABR.GetItemQualityAtlas(foodItemID)
                     e.bagCount = CachedGetItemCount(foodItemID)
@@ -3766,7 +3770,7 @@ local specialsActive = EABR.SectionShows(co.specialsWhereToShow, inInstance)
                     if not PlayerHasInkyBlackness() and hasPotion then
                         local e = AcquireEntry()
                         e.mode = "item"; e.itemID = INKY_BLACK_ITEM
-                        e.texture = GetItemIcon(INKY_BLACK_ITEM)
+                        e.texture = C_Item.GetItemIcon(INKY_BLACK_ITEM)
                         e.label = EllesmereUI.L(ShortLabel("Inky Black Potion"))
                         e.qualityAtlas = EABR.GetItemQualityAtlas(INKY_BLACK_ITEM)
                         e.bagCount = CachedGetItemCount(INKY_BLACK_ITEM)
@@ -3987,9 +3991,9 @@ local function Refresh()
             local petLabel = "Pet"
             local warlockEnforcedPets
             if playerClass == "HUNTER" then
-                local spec = GetSpecialization and GetSpecialization()
+                local spec = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization()
                 if spec then
-                    local sid = GetSpecializationInfo(spec)
+                    local sid = C_SpecializationInfo.GetSpecializationInfo(spec)
                     if sid == 254 and not Known(1223323) then suppress = true end
                 end
             elseif playerClass == "WARLOCK" then
@@ -5301,9 +5305,9 @@ mainFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 mainFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 mainFrame:RegisterUnitEvent("UNIT_AURA", "player")
 mainFrame:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
-mainFrame:RegisterEvent("CHALLENGE_MODE_START")
-mainFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-mainFrame:RegisterEvent("CHALLENGE_MODE_RESET")
+if not EUI_IS_FOREVER then mainFrame:RegisterEvent("CHALLENGE_MODE_START") end
+if not EUI_IS_FOREVER then mainFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED") end
+if not EUI_IS_FOREVER then mainFrame:RegisterEvent("CHALLENGE_MODE_RESET") end
 mainFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 mainFrame:RegisterEvent("WEAPON_ENCHANT_CHANGED")
 mainFrame:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
@@ -5443,7 +5447,7 @@ local SetupReadyCheckManaWarning = function()
         end
         -- READY_CHECK (only fires when out of combat AND in raid)
         if not EABR.RCWEnabled() then return end
-        local spec = GetSpecialization and GetSpecialization()
+        local spec = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization()
         if not spec then return end
         local role = GetSpecializationRole(spec)
         if role ~= "HEALER" then return end

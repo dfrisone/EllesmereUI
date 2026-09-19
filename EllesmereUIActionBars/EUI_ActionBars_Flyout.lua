@@ -5,6 +5,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  shape, borders, and zoom. Purely visual -- no secure state is touched.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+if ns.standDown then return end -- bars stood down: this reskins their flyouts and uses their frame pool
 
 local SHAPE_MASKS              = ns.SHAPE_MASKS
 local SHAPE_BORDERS            = ns.SHAPE_BORDERS

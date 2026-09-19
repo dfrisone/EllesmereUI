@@ -351,6 +351,9 @@ local DB_DEFAULTS = {
             showAfterLoot    = true,
             historySize      = 20,
             scale            = 1,
+            textSize         = 14,   -- member rows only; header/title sizes are fixed
+            sortKey          = "dps", -- dps | damageTaken | interrupts | deaths (header click)
+            sortAsc          = false,
             showSpecIcons    = true,
             colItemLevel     = true,
             colScore         = true,
@@ -1101,6 +1104,7 @@ local function LocalizePreview()
 end
 
 _G._EMT_Apply = function()
+    if EUI_IS_FOREVER then return end
     -- Render before CENTER re-apply so height is known (placeholder is 200px).
     if _G._EMT_StandaloneRefresh then _G._EMT_StandaloneRefresh() end
     if _G._EMT_ApplyStandalonePosition then
@@ -1652,6 +1656,7 @@ local function CreateStandaloneFrame()
 end
 
 local function RenderStandalone()
+    if EUI_IS_FOREVER then return end
     if not db or not db.profile.enabled then
         if standaloneFrame then standaloneFrame:Hide() end
         return
@@ -2862,6 +2867,7 @@ end
 -- so the next RenderStandalone() re-creates them from scratch. Use when a
 -- setting (e.g. text alignment) won't take effect via re-render alone.
 _G._EMT_RebuildStandalone = function()
+    if EUI_IS_FOREVER then return end
     if standaloneFrame then standaloneFrame:Hide() end
     standaloneFrame = nil
     standaloneCreated = false
@@ -2899,6 +2905,7 @@ local function _centerPosFromSaved(pos)
 end
 
 local function ApplyStandalonePosition()
+    if EUI_IS_FOREVER then return end
     if not db then return end
     if not standaloneFrame then return end
     _ensureCenterPos()
@@ -2942,7 +2949,7 @@ end
 -- done" detection (no need for a per-tick poller). Multi-event detection
 -- with GetInstanceInfo difficulty fallback (IsChallengeModeActive returns
 -- false post-completion, so map-id alone isn't reliable).
-local runtimeFrame = CreateFrame("Frame")
+local runtimeFrame = not EUI_IS_FOREVER and CreateFrame("Frame")
 
 local function _isInChallengeMode()
     if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive
@@ -3001,6 +3008,7 @@ local function _unregisterRunEvents()
     for _, ev in ipairs(_RUN_EVENTS) do runtimeFrame:UnregisterEvent(ev) end
 end
 
+if not EUI_IS_FOREVER then
 for _, ev in ipairs(_ALWAYS_EVENTS) do runtimeFrame:RegisterEvent(ev) end
 runtimeFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -3019,6 +3027,7 @@ runtimeFrame:SetScript("OnEvent", function(_, event)
         _unregisterRunEvents()
     end
 end)
+end
 
 function EMT:OnInitialize()
     db = EllesmereUI.Lite.NewDB("EllesmereUIMythicTimerDB", DB_DEFAULTS)
@@ -3037,6 +3046,8 @@ function EMT:OnInitialize()
         -- as true across reloads. Force it off at every login.
         pp.showPreview = false
     end
+
+    if EUI_IS_FOREVER then return end
 
     -- Season-based data purge: clear split records from previous seasons.
     C_Timer.After(2, function()
@@ -3072,6 +3083,7 @@ function EMT:OnEnable()
     -- timer feature turned off. Both are no-ops while their flags are off.
     if ns.TSB_OnEnable then ns.TSB_OnEnable(db) end
     if ns.TFB_OnEnable then ns.TFB_OnEnable(db) end
+    if EUI_IS_FOREVER then return end
     if ns.RS_OnEnable then ns.RS_OnEnable(db) end
     if not db or not db.profile.enabled then return end
 

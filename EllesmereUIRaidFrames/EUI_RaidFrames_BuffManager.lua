@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -------------------------------------------------------------------------------
 --  EUI_RaidFrames_BuffManager.lua
 --  Indicator-centric buff manager: icon/square/bar/healthcolor/border/framealpha
@@ -7,6 +10,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  from the indicator config; no per-frame allocs (wipe + reuse).
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+if ns.standDown then return end -- raid frames stood down: secure group headers need a snippet compiler
 
 local pairs    = pairs
 local ipairs   = ipairs

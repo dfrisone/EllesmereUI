@@ -91,7 +91,7 @@ local function ZoneShouldBeLogged()
         return true  -- timewalking and other unrecognised raid difficulties
     end
 
-    if GetTrigger(c, "log5pp") then
+    if not EUI_IS_FOREVER and GetTrigger(c, "log5pp") then
         local isMythicDungeon = (diff == 23 or diff == 8)  -- 23=Keystone, 8=Mythic
         local isRetailDungeon = mapID >= RETAIL_DUNGEON_THRESHOLD or LEGACY_DUNGEON_IDS[mapID]
         if isMythicDungeon and isRetailDungeon then return true end
@@ -149,6 +149,8 @@ local events = {
 -- feature costs nothing on zone changes. The options toggle calls
 -- _EUI_AutoLogging_Check, which re-syncs registration AND applies the logging
 -- state immediately (disabling mid-instance still stops an active log).
+if EUI_IS_FOREVER then events.CHALLENGE_MODE_START = nil end
+
 local logFrame = CreateFrame("Frame")
 local _eventsRegistered = false
 local function SyncEventRegistration()

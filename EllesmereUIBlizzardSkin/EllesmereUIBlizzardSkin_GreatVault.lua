@@ -1,4 +1,9 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+if EUI_IS_FOREVER then return end -- Unavailable in Forever.
+-- Namespaced first: the loose item globals are gone on newer clients.
+local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local GetDetailedItemLevelInfo = (C_Item and C_Item.GetDetailedItemLevelInfo) or GetDetailedItemLevelInfo
+local GetItemQualityColor = (C_Item and C_Item.GetItemQualityColor) or GetItemQualityColor
 -------------------------------------------------------------------------------
 --  EllesmereUIBlizzardSkin_GreatVault.lua
 --  Great Vault reskin.

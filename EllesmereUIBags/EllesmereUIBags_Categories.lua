@@ -1,4 +1,6 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose item globals are gone on newer clients.
+local GetItemInfoInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
 -------------------------------------------------------------------------------
 --  EllesmereUIBags_Categories.lua
 --  Category system based on Enum.ItemClass numeric IDs (locale-safe).
@@ -52,6 +54,13 @@ local DEFAULT_CATEGORIES = {
 --  Builds the runtime category list from hardcoded defaults + saved user state
 --  (renames, reorder, grouping). Saved state keyed by default name.
 -------------------------------------------------------------------------------
+if EUI_IS_FOREVER then
+    for i = #DEFAULT_CATEGORIES, 1, -1 do
+        local entry = DEFAULT_CATEGORIES[i]
+        if entry.name == "Housing" then table.remove(DEFAULT_CATEGORIES, i) end
+    end
+end
+
 function CategoryManager:InitCategories()
     -- The category list is a DERIVATION of db.profile, cached in _categories
     -- and read BACK by SaveState. In a standalone build every file executes

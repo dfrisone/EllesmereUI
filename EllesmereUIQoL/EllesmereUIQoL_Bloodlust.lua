@@ -696,7 +696,7 @@ local function ShouldShow()
     local _, instanceType = GetInstanceInfo()
     if instanceType ~= "party" and instanceType ~= "raid" then return false end
 
-    local wantMPlus = (v == "MPLUS_AND_RAID" or v == "MPLUS")
+    local wantMPlus = not EUI_IS_FOREVER and (v == "MPLUS_AND_RAID" or v == "MPLUS")
     local wantRaid  = (v == "MPLUS_AND_RAID" or v == "RAID")
     if wantMPlus and _state.inChallenge then return true end
     if wantRaid and _state.inEncounter and _state.encounterIsRaid then return true end
@@ -914,9 +914,9 @@ local function _ensureEvents(enabled)
         _eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
         _eventFrame:RegisterEvent("ENCOUNTER_START")
         _eventFrame:RegisterEvent("ENCOUNTER_END")
-        _eventFrame:RegisterEvent("CHALLENGE_MODE_START")
-        _eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-        _eventFrame:RegisterEvent("CHALLENGE_MODE_RESET")
+        if not EUI_IS_FOREVER then _eventFrame:RegisterEvent("CHALLENGE_MODE_START") end
+        if not EUI_IS_FOREVER then _eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED") end
+        if not EUI_IS_FOREVER then _eventFrame:RegisterEvent("CHALLENGE_MODE_RESET") end
         _eventFrame:RegisterEvent("WORLD_STATE_TIMER_START")
         _eventFrame:RegisterEvent("WORLD_STATE_TIMER_STOP")
         _eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")

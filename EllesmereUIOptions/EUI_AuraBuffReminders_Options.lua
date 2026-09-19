@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -------------------------------------------------------------------------------
 --  EUI_AuraBuffReminders_Options.lua
 --  Registers the AuraBuff Reminders module with EllesmereUI
@@ -702,6 +705,13 @@ initFrame:SetScript("OnEvent", function(self)
         -- section while in combat.
         { key="in_combat",         label="In Combat" },
     }
+    if EUI_IS_FOREVER then
+        for i = #WHERE_ITEMS, 1, -1 do
+            local entry = WHERE_ITEMS[i]
+            if entry.key == "delve" then table.remove(WHERE_ITEMS, i) end
+        end
+    end
+
     local SHOWWHEN_ITEMS = {
         { key="othersMissing", label="Others are missing my buff" },
         { key="iAmMissing",    label="I am missing others' buffs" },
@@ -833,6 +843,7 @@ initFrame:SetScript("OnEvent", function(self)
         if EllesmereUI._prebuilding then return end
         for _, rgn in ipairs({threshRow._leftRegion, threshRow._rightRegion}) do
             local labelText = rgn == threshRow._leftRegion and leftLabel or rightLabel
+            if labelText then
             local suffix = rgn:CreateFontString(nil, "OVERLAY")
             suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
             suffix:SetTextColor(1, 1, 1, 0.35)
@@ -847,6 +858,7 @@ initFrame:SetScript("OnEvent", function(self)
                 suffix:SetPoint("LEFT", found, "RIGHT", 5, -1)
             end
             suffix:SetText(EllesmereUI.L("(min)"))
+            end
         end
     end
 
@@ -1443,13 +1455,18 @@ initFrame:SetScript("OnEvent", function(self)
         local timingRow
         timingRow, h = W:DualRow(parent, y,
             { type="slider", text="Show Below", min=0, max=60, step=1,
-              tooltip="Show reminders when remaining buff time is below this many minutes.\n0 = only when fully expired.\nIgnored in combat and during Mythic+ keys (then only when the buff is gone).",
+              tooltip=EUI_IS_FOREVER and "Show reminders below this many minutes. Zero means expired only. In combat, only missing buffs trigger reminders." or "Show reminders when remaining buff time is below this many minutes.\n0 = only when fully expired.\nIgnored in combat and during Mythic+ keys (then only when the buff is gone).",
               getValue=function() local d = DDB(); return d and d.showUnder or 5 end,
               setValue=function(v)
                   local d = DDB(); if not d then return end; d.showUnder = v
                   RefreshAll()
               end },
-            { type="slider", text="Show Below Pre-Key", min=0, max=60, step=1,
+            EUI_IS_FOREVER and { type="slider", text="Opacity", min=0, max=1, step=0.05,
+              getValue=function() local d = DDB(); return d and d.opacity or 1 end,
+              setValue=function(v)
+                  local d = DDB(); if not d then return end; d.opacity = v
+                  RefreshAll(); UpdatePreviewHeader()
+              end } or { type="slider", text="Show Below Pre-Key", min=0, max=60, step=1,
               tooltip="Reminder threshold while you are in a dungeon before a Mythic+ key starts (Mythic 0 / keystone lobby). Set it high enough that you top up buffs and food before pulling, so you begin the key with enough duration to last it.\n0 = only when fully expired.\nIgnored once the key is active or you are in combat (then only when the buff is fully gone).",
               getValue=function() local d = DDB(); return d and d.showUnderMPlus or 40 end,
               setValue=function(v)
@@ -1457,7 +1474,7 @@ initFrame:SetScript("OnEvent", function(self)
                   RefreshAll()
               end }
         );  y = y - h
-        AddMinSuffix(timingRow, "Show Below", "Show Below Pre-Key")
+        AddMinSuffix(timingRow, "Show Below", not EUI_IS_FOREVER and "Show Below Pre-Key")
 
         -- Row 6: Show Tooltips | Opacity
         _, h = W:DualRow(parent, y,
@@ -1467,7 +1484,7 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local d = DDB(); if not d then return end; d.showTooltips = v
               end },
-            { type="slider", text="Opacity", min=0, max=1, step=0.05,
+            EUI_IS_FOREVER and { type="empty" } or { type="slider", text="Opacity", min=0, max=1, step=0.05,
               getValue=function() local d = DDB(); return d and d.opacity or 1 end,
               setValue=function(v)
                   local d = DDB(); if not d then return end; d.opacity = v

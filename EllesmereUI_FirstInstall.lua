@@ -557,6 +557,13 @@ if IS_STANDALONE then return end
 local _showPopupOnLogin = false
 
 local function ComputeShowOnLogin()
+    -- PORT WORKAROUND, forever/client-support only. Do not merge to main.
+    -- On the Forever beta this popup returns on every login even though
+    -- firstInstallPopupShown is true in the saved file, and it blocks the screen and the
+    -- chat frame while it is up. Something is resetting the database between sessions --
+    -- the saved file shrinks on every write -- and that is the bug to fix. Suppressed
+    -- here so the client is usable while it is investigated.
+    if select(4, GetBuildInfo()) == 16001 then return false end
     if not EllesmereUIDB then
         -- Truly fresh: SV not written yet.
         return true

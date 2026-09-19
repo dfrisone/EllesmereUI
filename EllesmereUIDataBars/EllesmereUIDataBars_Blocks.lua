@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -- EllesmereUIDataBars_Blocks.lua
 -- Per-instance block factories for the DataBars multi-bar engine.
 --
@@ -1649,8 +1652,8 @@ local function MakeLocationBlock(blockCfg, slot, content, barCtx, opts)
         clickBtn:EnableMouse(true)
         clickBtn:RegisterForClicks("AnyUp")
         -- Combat: drop the click ACTION only, from inside the secure env. Stays mouse-enabled so hover works; a click while *type1 is nil does nothing.
-        RegisterStateDriver(clickBtn, "combatlock", "[combat] combat; nocombat")
-        clickBtn:SetAttribute("_onstate-combatlock", [[
+        EllesmereUI.SecureCall(RegisterStateDriver, clickBtn, "combatlock", "[combat] combat; nocombat")
+        EllesmereUI.SecureCall(clickBtn.SetAttribute, clickBtn, "_onstate-combatlock", [[
             if newstate == 'combat' then
                 self:SetAttribute('*type1', nil)
             else
@@ -4437,6 +4440,13 @@ local mmButtonDefs = {
     { key = 'shop',    binding = false,               label = BLIZZARD_STORE },
     { key = 'help',    binding = false,               label = HELP_BUTTON },
 }
+if EUI_IS_FOREVER then
+    for i = #mmButtonDefs, 1, -1 do
+        local entry = mmButtonDefs[i]
+        if entry.key == 'housing' then table.remove(mmButtonDefs, i) end
+    end
+end
+
 local mmButtonOrder = {}
 local mmButtonDefsByKey = {}
 for _, def in ipairs(mmButtonDefs) do
@@ -4526,8 +4536,8 @@ local function MMGetHider(frame)
     if hider then return hider end
     if InCombatLockdown() then return nil end
     hider = CreateFrame("Frame", nil, nil, "SecureHandlerStateTemplate")
-    hider:SetFrameRef("target", frame)
-    hider:SetAttribute("_onstate-vis", [[
+    EllesmereUI.SecureCall(hider.SetFrameRef, hider, "target", frame)
+    EllesmereUI.SecureCall(hider.SetAttribute, hider, "_onstate-vis", [[
         local target = self:GetFrameRef('target')
         if newstate == 'hide' then target:Hide() else target:Show() end
     ]])
@@ -4576,8 +4586,8 @@ function ns.RefreshMicroMenuHider(force)
         for i = 1, #targets do
             local hider = MMGetHider(targets[i])
             if hider then
-                UnregisterStateDriver(hider, "vis")
-                RegisterStateDriver(hider, "vis", want)
+                EllesmereUI.SecureCall(UnregisterStateDriver, hider, "vis")
+                EllesmereUI.SecureCall(RegisterStateDriver, hider, "vis", want)
             end
         end
     end)
@@ -4872,7 +4882,7 @@ ns.BlockFactories.micromenu = function(blockCfg, slot, content, barCtx)
             ns.Tip_AddDouble('|cFFFFFFFF' .. L["ACH_POINTS"] .. '|r', '|cFF' .. hexAccent .. pts .. '|r', 1, 1, 1, r, g, b)
         end
 
-        if name == 'journal' then
+        if not EUI_IS_FOREVER and name == 'journal' then
             local hexAccent = format('%02x%02x%02x', floor(r * 255), floor(g * 255), floor(b * 255))
             ns.Tip_AddLine(" ")
             local delveRank, delveMax = 0, '?'
@@ -5005,8 +5015,8 @@ ns.BlockFactories.micromenu = function(blockCfg, slot, content, barCtx)
             frame:RegisterForClicks("AnyUp")
             -- Combat: drop the click ACTION only, from inside the secure env. Stays
             -- mouse-enabled so hover works (OnEnter shows the combat notice); a click while *type1 is nil does nothing.
-            RegisterStateDriver(frame, "combatlock", "[combat] combat; nocombat")
-            frame:SetAttribute("_onstate-combatlock", [[
+            EllesmereUI.SecureCall(RegisterStateDriver, frame, "combatlock", "[combat] combat; nocombat")
+            EllesmereUI.SecureCall(frame.SetAttribute, frame, "_onstate-combatlock", [[
                 if newstate == 'combat' then
                     self:SetAttribute('*type1', nil)
                 else
@@ -6227,6 +6237,7 @@ local function GVToggleVault()
 end
 
 ns.BlockFactories.greatvault = function(blockCfg, slot, content, barCtx)
+    if EUI_IS_FOREVER then return nil end
     local inst = { cfg = blockCfg, slot = slot, content = content, ctx = barCtx }
     inst.key = InstKey(barCtx, blockCfg)
     inst.events = { "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD" }

@@ -19,8 +19,17 @@
 -- the suite runs normally -- the failsafe must never break a healthy client.
 -- On 12.1+ this file is a single comparison and exits; no globals, no frames.
 
+-- Two separate version lines, not one ordering. Retail runs 120000 and up. World of
+-- Warcraft: Forever runs 16001 on the same client and the same API surface, so a bare
+-- "older than 12.1" test reads it as an ancient retail build and blocks it. The gate
+-- is about a client too old to hold this addon's settings shape, which Forever is not.
+local FOREVER_MIN, FOREVER_MAX = 16000, 19999
+
 local iface = select(4, GetBuildInfo())
-if not (type(iface) == "number" and iface < 120100) then return end
+if type(iface) ~= "number" then return end
+EUI_IS_FOREVER = iface >= FOREVER_MIN and iface <= FOREVER_MAX
+if iface >= 120100 then return end
+if iface >= FOREVER_MIN and iface <= FOREVER_MAX then return end
 
 EUI_CLIENT_BLOCKED = true
 

@@ -3412,6 +3412,13 @@ initFrame:SetScript("OnEvent", function(self)
                     { key = "shop",    label = "Shop" },
                     { key = "help",    label = "Help" },
                 }
+                if EUI_IS_FOREVER then
+                    for i = #MM_ELEMENTS, 1, -1 do
+                        local entry = MM_ELEMENTS[i]
+                        if entry.key == "housing" then table.remove(MM_ELEMENTS, i) end
+                    end
+                end
+
                 local mmRow
                 mmRow, h = W:DualRow(parent, y,
                     { type = "dropdown", text = "Menu Elements",

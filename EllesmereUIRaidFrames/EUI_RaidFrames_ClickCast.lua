@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Stands down where the client cannot compile secure snippets: click-casting is secure by definition; the bindings do nothing without snippets.
+if EllesmereUI and EllesmereUI.SecureSnippetsWork
+    and not EllesmereUI.SecureSnippetsWork() then return end
 -------------------------------------------------------------------------------
 --  EUI_RaidFrames_ClickCast.lua
 --  Click-casting: per-spec bindings + global target/menu/macro defaults.
@@ -8,6 +11,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  targeting @mouseover, friend/harm filtered via macro conditionals.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+if ns.standDown then return end -- raid frames stood down: secure group headers need a snippet compiler
 
 local pairs        = pairs
 local ipairs       = ipairs
@@ -27,8 +31,11 @@ local IsInInstance     = IsInInstance
 local IsShiftKeyDown   = IsShiftKeyDown
 local IsControlKeyDown = IsControlKeyDown
 local IsAltKeyDown     = IsAltKeyDown
-local GetSpecialization     = GetSpecialization
-local GetSpecializationInfo = GetSpecializationInfo
+-- Namespaced first: the loose globals are gone on newer clients.
+local GetSpecialization     = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization)
+    or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo)
+    or GetSpecializationInfo
 local C_Spell      = C_Spell
 local C_SpellBook  = C_SpellBook
 local C_Timer      = C_Timer
@@ -240,7 +247,7 @@ _G._ERF_IsHoverCastEnabled = function()
 end
 
 local function GetCurrentSpecID()
-    local idx = GetSpecialization()
+    local idx = GetSpecialization and GetSpecialization()
     return idx and (GetSpecializationInfo(idx)) or nil
 end
 local function GetCurrentSpecName()

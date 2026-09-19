@@ -1,4 +1,8 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose item globals are gone on newer clients.
+local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local GetItemInfoInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+local GetItemQualityColor = (C_Item and C_Item.GetItemQualityColor) or GetItemQualityColor
 -------------------------------------------------------------------------------
 --  Themed Inspect Sheet
 --  Mirrors the Character Sheet skinning for inspected characters.
@@ -1114,12 +1118,12 @@ local DOCK_MARGIN = 4
 local securePositioner = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
 local function SecureSetPoint(frame, point, relPoint, x, y)
     if InCombatLockdown() then return false end
-    securePositioner:SetFrameRef("f", frame)
+    EllesmereUI.SecureCall(securePositioner.SetFrameRef, securePositioner, "f", frame)
     securePositioner:SetAttribute("p", point)
     securePositioner:SetAttribute("rp", relPoint)
     securePositioner:SetAttribute("x", x)
     securePositioner:SetAttribute("y", y)
-    securePositioner:Execute([[
+    EllesmereUI.SecureCall(securePositioner.Execute, securePositioner, [[
         local f = self:GetFrameRef("f")
         if not f then return end
         f:ClearAllPoints()

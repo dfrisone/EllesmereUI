@@ -16,6 +16,14 @@ local function P()
     return d and d.profile and d.profile.battleRes
 end
 
+local function ForeverVisibility(value)
+    if EUI_IS_FOREVER then
+        if value == "MPLUS_AND_RAID" then return "RAID" end
+        if value == "MPLUS" then return "NEVER" end
+    end
+    return value
+end
+
 local function Cfg(key, fallback)
     local p = P()
     if not p then return fallback end
@@ -55,6 +63,11 @@ local VIS_VALUES = {
     NEVER          = "Never",
 }
 local VIS_ORDER = { "MPLUS_AND_RAID", "MPLUS", "RAID", "NEVER" }
+
+if EUI_IS_FOREVER then
+    VIS_VALUES = { RAID = "Raid", NEVER = "Never" }
+    VIS_ORDER = { "RAID", "NEVER" }
+end
 
 local function MakeBorderColorSwatches()
     return {
@@ -127,10 +140,10 @@ local function BuildBattleResPage(pageName, parent, yOffset)
         { type="dropdown", text="Enable BattleRes Icon",
           values=VIS_VALUES,
           order=VIS_ORDER,
-          getValue=function() return Cfg("visibility") or "MPLUS_AND_RAID" end,
+          getValue=function() return ForeverVisibility(Cfg("visibility") or "MPLUS_AND_RAID") end,
           setValue=function(v) Set("visibility", v); Refresh(); EllesmereUI:RefreshPage() end },
         { type="slider", text="Icon Size",
-          disabled=function() return Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" end,
           disabledTooltip="BattleRes Icon",
           min=16, max=120, step=1, isPercent=false,
           getValue=function() return Cfg("iconSize") or 40 end,
@@ -140,14 +153,14 @@ local function BuildBattleResPage(pageName, parent, yOffset)
     -- Shape | Border Color
     row, h = W:DualRow(parent, y,
         { type="dropdown", text="Icon Shape",
-          disabled=function() return Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" end,
           disabledTooltip="BattleRes Icon",
           values=SHAPE_VALUES,
           order=SHAPE_ORDER,
           getValue=function() return Cfg("shape") or "none" end,
           setValue=function(v) Set("shape", v); Refresh() end },
         { type="multiSwatch", text="Border Color",
-          disabled=function() return Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" end,
           disabledTooltip="BattleRes Icon",
           swatches = MakeBorderColorSwatches() })
     y = y - h
@@ -155,7 +168,7 @@ local function BuildBattleResPage(pageName, parent, yOffset)
     -- Border Size | Icon Zoom
     row, h = W:DualRow(parent, y,
         { type="dropdown", text="Border Size",
-          disabled=function() return Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" end,
           disabledTooltip="BattleRes Icon",
           values=BORDER_VALUES,
           order=BORDER_ORDER,
@@ -179,13 +192,13 @@ local function BuildBattleResPage(pageName, parent, yOffset)
     -- Duration Size | Count Size, each with inline cog (X/Y offsets)
     row, h = W:DualRow(parent, y,
         { type="slider", text="Duration Size",
-          disabled=function() return Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" end,
           disabledTooltip="BattleRes Icon",
           min=8, max=30, step=1, isPercent=false,
           getValue=function() return Cfg("durationSize") or 12 end,
           setValue=function(v) Set("durationSize", v); Refresh() end },
         { type="slider", text="Count Size",
-          disabled=function() return Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" end,
           disabledTooltip="BattleRes Icon",
           min=8, max=20, step=1, isPercent=false,
           getValue=function() return Cfg("countSize") or 11 end,
@@ -213,7 +226,7 @@ local function BuildBattleResPage(pageName, parent, yOffset)
             local cogTex = cogBtn:CreateTexture(nil, "OVERLAY")
             cogTex:SetAllPoints()
             cogTex:SetTexture(EllesmereUI.RESIZE_ICON)
-            local function isDisabled() return Cfg("visibility") == "NEVER" end
+            local function isDisabled() return ForeverVisibility(Cfg("visibility")) == "NEVER" end
             local function UpdateAlpha() cogBtn:SetAlpha(isDisabled() and 0.15 or 0.4) end
             EllesmereUI.RegisterWidgetRefresh(UpdateAlpha)
             UpdateAlpha()
@@ -270,14 +283,14 @@ _G._EUI_BuildBattleResSection = function(parent, yOffset, W, PP)
     row, h = W:DualRow(parent, y,
         { type="dropdown", text="Enable BattleRes Icon",
           values=VIS_VALUES, order=VIS_ORDER,
-          getValue=function() return Cfg("visibility") or "MPLUS_AND_RAID" end,
+          getValue=function() return ForeverVisibility(Cfg("visibility") or "MPLUS_AND_RAID") end,
           -- DependentSetValue: the rows below Row 1 are hidden while Never;
           -- only the Never <-> shown flip forces the full rebuild.
           setValue=EllesmereUI.DependentSetValue(
-              function() return Cfg("visibility") ~= "NEVER" end,
+              function() return ForeverVisibility(Cfg("visibility")) ~= "NEVER" end,
               function(v) Set("visibility", v); Refresh(); EllesmereUI:RefreshPage() end) },
         { type="slider", text="Icon Size",
-          disabled=function() return Cfg("visibility") == "NEVER" or TextModeOn() end,
+          disabled=function() return ForeverVisibility(Cfg("visibility")) == "NEVER" or TextModeOn() end,
           disabledTooltip=function()
               if Cfg("visibility") == "NEVER" then return "BattleRes Icon" end
               return ICON_ROWS_TIP
@@ -603,11 +616,11 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
     row, h = W:DualRow(parent, y,
         { type="dropdown", text="Enable Bloodlust Icon",
           values=VIS_VALUES, order=VIS_ORDER,
-          getValue=function() return BL_Cfg("visibility") or "NEVER" end,
+          getValue=function() return ForeverVisibility(BL_Cfg("visibility") or "NEVER") end,
           -- DependentSetValue: the rows below Row 1 are hidden while Never;
           -- only the Never <-> shown flip forces the full rebuild.
           setValue=EllesmereUI.DependentSetValue(
-              function() return BL_Cfg("visibility") ~= "NEVER" end,
+              function() return ForeverVisibility(BL_Cfg("visibility")) ~= "NEVER" end,
               function(v)
                   local was = BL_Cfg("visibility") or "NEVER"
                   BL_Set("visibility", v)
@@ -617,7 +630,7 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
                   BL_Refresh(); EllesmereUI:RefreshPage()
               end) },
         { type="slider", text="Icon Size",
-          disabled=function() return BL_Cfg("visibility") == "NEVER" end,
+          disabled=function() return ForeverVisibility(BL_Cfg("visibility")) == "NEVER" end,
           disabledTooltip="Bloodlust Icon",
           min=16, max=120, step=1, isPercent=false,
           getValue=function() return BL_Cfg("iconSize") or 40 end,

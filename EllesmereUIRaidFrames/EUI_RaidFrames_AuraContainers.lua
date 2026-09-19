@@ -8,6 +8,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 -- come from live-scaled proxies (never raw db.profile), state lives in external FFD.
 
 local _, ns = ...
+if ns.standDown then return end -- raid frames stood down: secure group headers need a snippet compiler
 
 local AK -- EllesmereUI.AuraKit, resolved at first use
 -- The engine's own null binding: the AuraContainer intrinsic is born on unitToken

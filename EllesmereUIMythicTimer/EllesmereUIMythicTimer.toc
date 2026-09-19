@@ -1,10 +1,10 @@
-## Interface: 120000, 120001, 120005, 120007, 120100
+## Interface: 16001, 120000, 120001, 120005, 120007, 120100
 ## Title: |cff0cd29fEllesmereUI|r Mythic+ Tools
 ## Category: |cff0cd29fEllesmere|rUI
 ## Group: EllesmereUI
 ## Notes: A simple Mythic+ timer with full tracking customizations.
 ## Author: Ellesmere
-## Version: 9.1.8
+## Version: 9.2
 ## Dependencies: EllesmereUI
 ## SavedVariables: EllesmereUIMythicTimerDB
 ## SavedVariablesPerCharacter: EllesmereUIMythicRunsDB

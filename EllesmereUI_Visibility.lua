@@ -174,6 +174,7 @@ visFrame:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
 -- PLAYER_IS_GLIDING_CHANGED, which is probed because nothing registered it before this
 -- feature. When the probe fails on a client, the dragonriding checklist items lock
 -- (EUI._hasGlidingEvent) instead of evaluating with stale edges.
+if not EUI_IS_FOREVER then
 visFrame:RegisterEvent("PLAYER_CAN_GLIDE_CHANGED")
 do
     local ok
@@ -184,6 +185,7 @@ do
         ok = pcall(visFrame.RegisterEvent, visFrame, "PLAYER_IS_GLIDING_CHANGED") and true or false
     end
     EUI._hasGlidingEvent = ok
+end
 end
 
 visFrame:SetScript("OnEvent", function(_, event)
@@ -418,6 +420,7 @@ end
 -- Haranir flight forms are shapeshifts, not mounts, so IsMounted() is false
 -- while [advflyable] still matches).
 function EUI.IsAirborneSkyriding()
+    if EUI_IS_FOREVER then return false end
     if not (IsFlying and IsFlying()) then return false end
     if C_PlayerInfo and C_PlayerInfo.GetGlidingInfo then
         local _, canGlide = C_PlayerInfo.GetGlidingInfo()
@@ -452,7 +455,65 @@ end
 -- (the override is a separate marker they never touch), so hiding the set from them made
 -- the row render a bare scalar and the next click write that rump back over the stored
 -- set. Evaluators and driver compilers pass nothing and keep the replacing behaviour.
+-- Retire unsupported visibility conditions when a saved/imported store is read.
+-- Keep the original values for recovery; other conditions and option lanes survive.
+-- Clean stores do no allocation. This reads addon settings, never unit/game data.
+function EUI.NormalizeForeverVisibility(store, legacyKey)
+    if not EUI_IS_FOREVER or not store then return end
+    local vm = store.visibilityModes
+    local scalar = legacyKey and store[legacyKey]
+    local skyScalar = scalar == "show_dragonriding" or scalar == "show_not_dragonriding"
+    local skyModes = type(vm) == "table" and (vm.show_dragonriding or vm.show_not_dragonriding
+        or vm.hide_dragonriding or vm.hide_not_dragonriding)
+    if not skyScalar and not skyModes and not store.visHideDragonriding and not store.visOnlySkyriding
+        and not store.visHideHousing and not store.visOnlyHousing then return end
+
+    if not store._foreverVisibilityBackup then
+        local backup = { visHideDragonriding = store.visHideDragonriding,
+            visOnlySkyriding = store.visOnlySkyriding }
+        if legacyKey then backup[legacyKey] = scalar end
+        if type(vm) == "table" then
+            backup.visibilityModes = {}
+            for key, value in pairs(vm) do backup.visibilityModes[key] = value end
+        end
+        store._foreverVisibilityBackup = backup
+    end
+    if legacyKey and store._foreverVisibilityBackup[legacyKey] == nil then
+        store._foreverVisibilityBackup[legacyKey] = scalar
+    end
+    local backup = store._foreverVisibilityBackup
+    if backup.visHideHousing == nil then backup.visHideHousing = store.visHideHousing end
+    if backup.visOnlyHousing == nil then backup.visOnlyHousing = store.visOnlyHousing end
+    store.visHideHousing = nil
+    store.visOnlyHousing = nil
+    store.visHideDragonriding = nil
+    store.visOnlySkyriding = nil
+    if not legacyKey then return end
+
+    if skyModes then
+        local rep = VisRepresentative(vm)
+        local authoritative = scalar == nil or scalar == rep
+            or (not rep and VisHasModeHide(vm) and scalar == "always")
+        local selection = {}
+        for key, value in pairs(vm) do
+            if key ~= "show_dragonriding" and key ~= "show_not_dragonriding"
+                and key ~= "hide_dragonriding" and key ~= "hide_not_dragonriding" then
+                selection[key] = value
+            end
+        end
+        if authoritative then
+            EUI.SetVisibilitySelection(store, legacyKey, selection)
+        else
+            store.visibilityModes = next(selection) and selection or nil
+            if skyScalar then store[legacyKey] = "always" end
+        end
+    elseif skyScalar then
+        store[legacyKey] = "always"
+    end
+end
+
 local function ActiveModes(store, legacyKey, ignoreOverride)
+    if EUI_IS_FOREVER then EUI.NormalizeForeverVisibility(store, legacyKey) end
     -- An override replaces the whole configuration, the stored set included.
     if not ignoreOverride and EUI.VisOverrideValue(store) then return nil end
     local vm = store.visibilityModes

@@ -28,6 +28,13 @@ local TRIGGER_ITEMS = {
     { key = "logScenario", label = "Scenarios" },
 }
 
+if EUI_IS_FOREVER then
+    for i = #TRIGGER_ITEMS, 1, -1 do
+        local entry = TRIGGER_ITEMS[i]
+        if entry.key == "log5pp" then table.remove(TRIGGER_ITEMS, i) end
+    end
+end
+
 local function Cfg()
     if not EllesmereUIDB then return {} end
     EllesmereUIDB.autoLogging = EllesmereUIDB.autoLogging or {}
@@ -62,6 +69,7 @@ local function BuildAutoLoggingPage(pageName, parent, yOffset)
     parent._showRowDivider = true
 
     ---------------------------------------------------------------------------
+if not EUI_IS_FOREVER then
     --  KEYSTONE CHECK POPUP
     ---------------------------------------------------------------------------
     _, h = W:SectionHeader(parent, "KEYSTONE CHECK POPUP", y); y = y - h
@@ -170,6 +178,7 @@ local function BuildAutoLoggingPage(pageName, parent, yOffset)
     _, h = W:Spacer(parent, y, 20); y = y - h
 
     ---------------------------------------------------------------------------
+end
     --  AUTO COMBAT LOGGING
     ---------------------------------------------------------------------------
     _, h = W:SectionHeader(parent, "AUTO COMBAT LOGGING", y); y = y - h

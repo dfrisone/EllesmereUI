@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -------------------------------------------------------------------------------
 --  EllesmereUI_Profiles.lua
 --
@@ -73,7 +76,7 @@ local ADDON_DB_MAP = {
     { folder = "EllesmereUIDragonRiding",      display = "Dragon Riding",       svName = "EllesmereUIDragonRidingDB",      suffix = "DragonRiding",     hostAddon = "EllesmereUIBlizzardSkin" },
     { folder = "EllesmereUIBags",              display = "Bags",                svName = "EllesmereUIBagsDB",              suffix = "Bags"              },
     { folder = "EllesmereUIFriends",           display = "Friends List",        svName = "EllesmereUIFriendsDB",           suffix = "Friends"           },
-    { folder = "EllesmereUIMythicTimer",       display = "Mythic+ Tools",       svName = "EllesmereUIMythicTimerDB",       suffix = "MythicTimer"       },
+    { folder = "EllesmereUIMythicTimer",       display = EUI_IS_FOREVER and "Cast Bars" or "Mythic+ Tools",       svName = "EllesmereUIMythicTimerDB",       suffix = "MythicTimer"       },
     { folder = "EllesmereUIQuestTracker",      display = "Quest Tracker",       svName = "EllesmereUIQuestTrackerDB",      suffix = "QuestTracker"      },
     { folder = "EllesmereUIMinimap",           display = "Minimap",             svName = "EllesmereUIMinimapDB",           suffix = "Minimap"           },
     { folder = "EllesmereUIDamageMeters",     display = "Damage Meters",       svName = "EllesmereUIDamageMetersDB",      suffix = "DamageMeters"      },
@@ -81,6 +84,11 @@ local ADDON_DB_MAP = {
     { folder = "EllesmereUIDataBars",         display = "DataBars",            svName = "EllesmereUIDataBarsDB",          suffix = "DataBars"          },
     { folder = "EllesmereUIQuickdraw",        display = "Quickdraw",           svName = "EllesmereUIQuickdrawDB",         suffix = "Quickdraw"         },
 }
+if EUI_IS_FOREVER then
+    for i = #ADDON_DB_MAP, 1, -1 do
+        if ADDON_DB_MAP[i].suffix == "DragonRiding" then table.remove(ADDON_DB_MAP, i) end
+    end
+end
 EllesmereUI._ADDON_DB_MAP = ADDON_DB_MAP
 
 -------------------------------------------------------------------------------
@@ -1594,15 +1602,18 @@ local function EnsureProfileBindBtn(profileName)
         local _, profiles = EllesmereUI.GetProfileList()
         local fontWillChange = EllesmereUI.ProfileChangesFont(profiles and profiles[profileName])
         local skinsWillChange = EllesmereUI.ProfileChangesWindowSkins(profiles and profiles[profileName])
+        local styleWillChange = EllesmereUI.ProfileChangesStyle(profiles and profiles[profileName])
         EllesmereUI.SwitchProfile(profileName)
         -- true = budgeted: manual swap site, watchdog-sliced module refresh.
         EllesmereUI.RefreshAllAddons(true)
-        if fontWillChange or skinsWillChange then
+        if fontWillChange or skinsWillChange or styleWillChange then
             EllesmereUI:ShowConfirmPopup({
                 title       = "Reload Required",
                 message     = fontWillChange
                     and "Font changed. A UI reload is needed to apply the new font."
-                    or "Window skins changed for this profile. A UI reload is needed to apply them.",
+                    or skinsWillChange
+                    and "Window skins changed for this profile. A UI reload is needed to apply them."
+                    or "Style changed for this profile. A UI reload is needed to apply it.",
                 confirmText = "Reload Now",
                 cancelText  = "Later",
                 onConfirm   = function() ReloadUI() end,
@@ -1699,6 +1710,52 @@ function EllesmereUI.ProfileChangesWindowSkins(profileData)
     local a = (cur and cur.disableWindowSkins) and true or false
     local b = profileData.disableWindowSkins and true or false
     return a ~= b
+end
+
+--- Returns true if switching to profileData would give any module a different
+--- Blizzard Style flag (Global Settings > Style) from the look it is rendering.
+--- Styles are reload-gated: each module latches its flag at load and keeps that
+--- look until the UI reloads, so callers pair this with the same reload popup as
+--- the font check above. Must be called BEFORE the switch (the Action Bars flag,
+--- which has no latch, is read live from the outgoing profile).
+local STYLE_FLAGS = {
+    { folder = "EllesmereUIActionBars",      key = "useBlizzardStyle" },
+    { folder = "EllesmereUIUnitFrames",      key = "useBlizzardStyle",     active = "UF_Blizz" },
+    { folder = "EllesmereUIUnitFrames",      key = "useBlizzardStyle", sub = "playerAuraBars", active = "PAB_Blizz" },
+    { folder = "EllesmereUINameplates",      key = "useBlizzardStyle",     active = "NP_Blizz" },
+    { folder = "EllesmereUICooldownManager", key = "useBlizzardStyle",     active = "CdmBlizzIcons" },
+    { folder = "EllesmereUICooldownManager", key = "useBlizzardStyleBars", active = "CdmBlizzBars" },
+    { folder = "EllesmereUIResourceBars",    key = "useBlizzardStyle", sub = "castBar", active = "ERB_CastBlizz" },
+    { folder = "EllesmereUIResourceBars",    key = "useBlizzardStyleBars", active = "ERB_BarsBlizz" },
+    { folder = "EllesmereUIMinimap",         key = "useBlizzardStyle", sub = "minimap", active = "MinimapBlizz" },
+    { folder = "EllesmereUIDamageMeters",    key = "useBlizzardStyle", sub = "dm",      active = "DMBlizz" },
+}
+function EllesmereUI.ProfileChangesStyle(profileData)
+    if type(profileData) ~= "table" or type(profileData.addons) ~= "table" then return false end
+    local reg = EllesmereUI._ModuleNS
+    if not reg then return false end
+    for i = 1, #STYLE_FLAGS do
+        local f = STYLE_FLAGS[i]
+        local mns = reg[f.folder]
+        if mns then
+            local cur
+            if f.active then
+                local fn = mns[f.active]
+                if fn then cur = fn() and true or false end
+            else
+                local EAB = mns.EAB
+                local p = EAB and EAB.db and EAB.db.profile
+                if p then cur = p[f.key] and true or false end
+            end
+            if cur ~= nil then
+                local incoming = profileData.addons[f.folder]
+                if f.sub and type(incoming) == "table" then incoming = incoming[f.sub] end
+                local want = (type(incoming) == "table" and incoming[f.key]) and true or false
+                if cur ~= want then return true end
+            end
+        end
+    end
+    return false
 end
 
 --[[ ADDON-SPECIFIC EXPORT DISABLED
@@ -3914,15 +3971,19 @@ do
                             EllesmereUIDB.profiles[targetProfile])
                         local skinsWillChange = EllesmereUI.ProfileChangesWindowSkins(
                             EllesmereUIDB.profiles[targetProfile])
+                        local styleWillChange = EllesmereUI.ProfileChangesStyle(
+                            EllesmereUIDB.profiles[targetProfile])
                         -- _specProfileSwitching disabled (see doSwitch comment)
                         EllesmereUI.SwitchProfile(targetProfile)
                         EllesmereUI.RefreshAllAddons()
-                        if fontWillChange or skinsWillChange then
+                        if fontWillChange or skinsWillChange or styleWillChange then
                             EllesmereUI:ShowConfirmPopup({
                                 title       = "Reload Required",
                                 message     = fontWillChange
                                     and "Font changed. A UI reload is needed to apply the new font."
-                                    or "Window skins changed for this profile. A UI reload is needed to apply them.",
+                                    or skinsWillChange
+                                    and "Window skins changed for this profile. A UI reload is needed to apply them."
+                                    or "Style changed for this profile. A UI reload is needed to apply it.",
                                 confirmText = "Reload Now",
                                 cancelText  = "Later",
                                 onConfirm   = function() ReloadUI() end,
@@ -3987,15 +4048,19 @@ do
                                     EllesmereUIDB.profiles[target])
                                 local skinsChange = EllesmereUI.ProfileChangesWindowSkins(
                                     EllesmereUIDB.profiles[target])
+                                local styleChange = EllesmereUI.ProfileChangesStyle(
+                                    EllesmereUIDB.profiles[target])
                                 -- _specProfileSwitching disabled (see doSwitch comment)
                                 EllesmereUI.SwitchProfile(target)
                                 EllesmereUI.RefreshAllAddons()
-                                if fontChange or skinsChange then
+                                if fontChange or skinsChange or styleChange then
                                     EllesmereUI:ShowConfirmPopup({
                                         title       = "Reload Required",
                                         message     = fontChange
                                             and "Font changed. A UI reload is needed to apply the new font."
-                                            or "Window skins changed for this profile. A UI reload is needed to apply them.",
+                                            or skinsChange
+                                            and "Window skins changed for this profile. A UI reload is needed to apply them."
+                                            or "Style changed for this profile. A UI reload is needed to apply it.",
                                         confirmText = "Reload Now",
                                         cancelText  = "Later",
                                         onConfirm   = function() ReloadUI() end,
@@ -4095,14 +4160,17 @@ do
                     -- EllesmereUI._specProfileSwitching = true
                     local fontWillChange = EllesmereUI.ProfileChangesFont(db.profiles[targetProfile])
                     local skinsWillChange = EllesmereUI.ProfileChangesWindowSkins(db.profiles[targetProfile])
+                    local styleWillChange = EllesmereUI.ProfileChangesStyle(db.profiles[targetProfile])
                     EllesmereUI.SwitchProfile(targetProfile)
                     EllesmereUI.RefreshAllAddons()
-                    if not isFirstLogin and (fontWillChange or skinsWillChange) then
+                    if not isFirstLogin and (fontWillChange or skinsWillChange or styleWillChange) then
                         EllesmereUI:ShowConfirmPopup({
                             title       = "Reload Required",
                             message     = fontWillChange
                                 and "Font changed. A UI reload is needed to apply the new font."
-                                or "Window skins changed for this profile. A UI reload is needed to apply them.",
+                                or skinsWillChange
+                                and "Window skins changed for this profile. A UI reload is needed to apply them."
+                                or "Style changed for this profile. A UI reload is needed to apply it.",
                             confirmText = "Reload Now",
                             cancelText  = "Later",
                             onConfirm   = function() ReloadUI() end,

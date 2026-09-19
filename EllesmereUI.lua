@@ -307,7 +307,7 @@ local ADDON_ROSTER = {
     { folder = "EllesmereUIQoL",               display = "Quality of Life",      search_name = "EllesmereUI Quality of Life"         },
     { folder = "EllesmereUIBlizzardSkin",      display = "Blizz UI Enhanced",    search_name = "EllesmereUI Blizz UI Enhanced",      syncFolder = "EllesmereUIDragonRiding", syncDisplay = "Dragon Riding" },
     { folder = "EllesmereUIFriends",           display = "Friends List",         search_name = "EllesmereUI Friends List"            },
-    { folder = "EllesmereUIMythicTimer",       display = "Mythic+ Tools",        search_name = "EllesmereUI Mythic+ Tools Timer"     },
+    { folder = "EllesmereUIMythicTimer",       display = EUI_IS_FOREVER and "Cast Bars" or "Mythic+ Tools",        search_name = "EllesmereUI Mythic+ Tools Timer"     },
     { folder = "EllesmereUIQuestTracker",      display = "Quest Tracker",        search_name = "EllesmereUI Quest Tracker"           },
     { folder = "EllesmereUIMinimap",           display = "Minimap",              search_name = "EllesmereUI Minimap"                 },
     { folder = "EllesmereUIChat",              display = "Chat",                 search_name = "EllesmereUI Chat"                    },
@@ -2089,8 +2089,7 @@ do
         -- overlapping item levels. Midnight S2 Hero/Myth: 13835/13836.
         -- Source: https://www.raidbots.com/static/data/live/bonuses.json
         local craftedColors = { [13835] = HE, [13836] = MY }
-        function EllesmereUI.GetCraftedTrackColor(itemLink)
-            if type(itemLink) ~= "string" then return nil end
+        local function ParseCraftedTrackColor(itemLink)
             local payload = itemLink:match("item:([^|]+)")
             if not payload then return nil end
             local index, lastBonus = 0, 13
@@ -2104,6 +2103,23 @@ do
                     if color then return color end
                 end
             end
+            return nil
+        end
+        -- Memoized per link: the Bags inventory/bank refresh asks for every
+        -- untracked gear item on every pass (bag-update bursts), and the parse
+        -- above concatenates and splits the link each time. Links are
+        -- per-instance, so the memo is bounded and wiped like Bags' sort cache;
+        -- `false` records a miss so the parse never repeats for one link.
+        local craftedCache, craftedCacheN = {}, 0
+        function EllesmereUI.GetCraftedTrackColor(itemLink)
+            if type(itemLink) ~= "string" then return nil end
+            local hit = craftedCache[itemLink]
+            if hit ~= nil then return hit or nil end
+            local color = ParseCraftedTrackColor(itemLink)
+            if craftedCacheN >= 4000 then wipe(craftedCache); craftedCacheN = 0 end
+            craftedCache[itemLink] = color or false
+            craftedCacheN = craftedCacheN + 1
+            return color
         end
 
         -- Item-level text color: custom override > upgrade-track hue > item rarity >
@@ -2118,7 +2134,7 @@ do
                 return upgradeColor
             end
             if (not EllesmereUIDB or EllesmereUIDB.charSheetColorItemLevel ~= false) and itemQuality then
-                local r, g, b = GetItemQualityColor(itemQuality)
+                local r, g, b = C_Item.GetItemQualityColor(itemQuality)
                 return { r = r, g = g, b = b }
             end
             return { r = 1, g = 1, b = 1 }
@@ -4527,7 +4543,7 @@ end
 -- never secret).
 function EllesmereUI.UnitEffectiveRole(unit)
     if UnitIsUnit(unit, "player") then
-        local spec = GetSpecialization and GetSpecialization()
+        local spec = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization()
         local role = spec and GetSpecializationRole and GetSpecializationRole(spec)
         if role then return role end
     end
@@ -5154,7 +5170,7 @@ EllesmereUI._rowCounters     = rowCounters
 --    clearPos   (function(key))  remove saved position
 --    applyPos   (function(key))  apply saved position to the live frame
 --
---  Optional fields:
+--  Optional fields: -- eui-style: allow comment-budget (unlock element reference)
 --    setWidth   (function(key, w))  set element width and rebuild
 --    setHeight  (function(key, h))  set element height and rebuild
 --    isHidden   (function(key)) -> bool  true if element is disabled/hidden
@@ -5164,6 +5180,16 @@ EllesmereUI._rowCounters     = rowCounters
 --               nudge. Runs before the anchor chain reads the frame's rect.
 --    linkedKeys (table)  list of element keys that move with this one
 --    noResize   (boolean) true for Blizzard elements that cannot be resized
+--    getBottomExtra (function(key) -> height)  extra height, in the frame's
+--               units, the mover extends BELOW the frame (a boss cast bar,
+--               the Blizzard Style cast bar text box)
+--    getInsets  (function(key) -> l, r, t, b)  visual insets from the frame's
+--               box to the rect the mover outlines (Blizzard Style unit frames)
+--    detachedMover (boolean) the frame refuses dependents (it carries a
+--               forbidden layout aspect), so the mover takes its screen spot by
+--               absolute anchor instead of anchoring to it
+--  This table is a WHITELIST: a field left out here never reaches the unlock
+--  module, silently.
 -------------------------------------------------------------------------------
 function EllesmereUI.MakeUnlockElement(opts)
     return {
@@ -5210,6 +5236,9 @@ function EllesmereUI.MakeUnlockElement(opts)
         moverBg           = opts.moverBg,
         moverTooltip      = opts.moverTooltip,
         subtitle          = opts.subtitle,
+        getBottomExtra    = opts.getBottomExtra,
+        getInsets         = opts.getInsets,
+        detachedMover     = opts.detachedMover,
     }
 end
 
@@ -10845,7 +10874,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "9.1.8"
+EllesmereUI.VERSION = "9.2"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -11566,7 +11595,7 @@ initFrame:SetScript("OnEvent", function(self, event)
             return true
         end
 
-        if not RegisterVaultEscapeClose() then
+        if not EUI_IS_FOREVER and not RegisterVaultEscapeClose() then
             local vaultLoader = CreateFrame("Frame")
             vaultLoader:RegisterEvent("ADDON_LOADED")
             vaultLoader:SetScript("OnEvent", function(self, event, addonName)
@@ -11960,7 +11989,7 @@ initFrame:SetScript("OnEvent", function(self, event)
             end
             if showIcon then
                 local iconID = C_Item.GetItemIconByID and C_Item.GetItemIconByID(data.id)
-                    or (GetItemIcon and GetItemIcon(data.id))
+                    or (C_Item and C_Item.GetItemIcon(data.id))
                 if iconID then
                     tooltip:AddDoubleLine("IconID", tostring(iconID), 1, 1, 1, 1, 1, 1)
                 end
@@ -12228,6 +12257,11 @@ EllesmereUI.VIS_VALUES_AB = {
     solo       = "Solo",
 }
 EllesmereUI.VIS_ORDER_AB = { "never", "always", "mouseover", "in_combat", "out_of_combat", "show_dragonriding", "show_not_dragonriding", "---", "in_raid", "in_party", "solo" }
+if EUI_IS_FOREVER then
+    EllesmereUI.VIS_VALUES_AB.show_dragonriding = nil
+    EllesmereUI.VIS_VALUES_AB.show_not_dragonriding = nil
+    EllesmereUI.VIS_ORDER_AB = EllesmereUI.VIS_ORDER
+end
 
 -- CDM variant (no mouseover -- CDM bars don't support mouseover visibility)
 EllesmereUI.VIS_VALUES_CDM = {
@@ -12261,6 +12295,16 @@ EllesmereUI.VIS_OPT_ITEMS = {
     { key = "visHideNoEnemy",      label = "Hide without Enemy Target",
       tooltip = "This bar will only show if you have an enemy targeted" },
 }
+
+if EUI_IS_FOREVER then
+    for i = #EllesmereUI.VIS_OPT_ITEMS, 1, -1 do
+        if EllesmereUI.VIS_OPT_ITEMS[i].key == "visHideDragonriding"
+            or EllesmereUI.VIS_OPT_ITEMS[i].key == "visHideHousing"
+            or EllesmereUI.VIS_OPT_ITEMS[i].key == "visOnlyHousing" then
+            table.remove(EllesmereUI.VIS_OPT_ITEMS, i)
+        end
+    end
+end
 
 -- Every visibility-option DB field, including the counter-lane keys that have
 -- no row in the legacy VIS_OPT_ITEMS list above (they exist only as Hide/Show lanes
@@ -12343,6 +12387,7 @@ end
 -- no IsFlying() term: unlike the show/hide visibility MODES, this option fires
 -- on the ground too, as soon as the skyriding bar is available.
 function EllesmereUI.IsPlayerSkyriding()
+    if EUI_IS_FOREVER then return false end
     if C_PlayerInfo and C_PlayerInfo.GetGlidingInfo then
         local _, canGlide = C_PlayerInfo.GetGlidingInfo()
         return canGlide == true
@@ -12358,6 +12403,7 @@ end
 -- (see BuildVisibilityString in EllesmereUIActionBars.lua). Such callers pass true and
 -- keep their own narrower mount check for the shapeshift forms [mounted] cannot see.
 function EllesmereUI.CheckVisibilityOptionsNonMacro(opts, skipMountAxis)
+    if EUI_IS_FOREVER then EllesmereUI.NormalizeForeverVisibility(opts) end
     if not opts then return false end
     if EllesmereUI.VisOverrideValue and EllesmereUI.VisOverrideValue(opts) then return false end
 
@@ -12444,6 +12490,7 @@ function EllesmereUI.CheckVisibilityOptionsNonMacro(opts, skipMountAxis)
 end
 
 function EllesmereUI.CheckVisibilityOptions(opts)
+    if EUI_IS_FOREVER then EllesmereUI.NormalizeForeverVisibility(opts) end
     if not opts then return false end
     -- An override replaces the whole Visibility configuration, option lanes included:
     -- "Always" set on an override means always, whatever the shared value hides.
@@ -12578,6 +12625,7 @@ end
 -- Runtime check: returns true if the element should be SHOWN based on the visibility mode
 -- dropdown value. `mode` is the dropdown string; `state` is a table: { inCombat, inRaid, inParty }.
 function EllesmereUI.CheckVisibilityMode(mode, state)
+    if EUI_IS_FOREVER and (mode == "show_dragonriding" or mode == "show_not_dragonriding") then return true end
     if mode == "disabled" then return false end
     if mode == "never" then return false end
     if mode == "in_combat" then return state.inCombat end

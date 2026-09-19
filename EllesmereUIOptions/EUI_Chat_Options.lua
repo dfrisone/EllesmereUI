@@ -774,7 +774,7 @@ initFrame:SetScript("OnEvent", function(self)
             _, h = W:DualRow(parent, y,
                 { type="slider", text="Tab Spacing", min=0, max=10, step=1,
                   disabled=function() return Cfg("extendBgBehindTabs") == true end,
-                  disabledTooltip="Tabs Inside Chat Panel",
+                  disabledTooltip="Tabs Inside Chat Panel", requireState="disabled",
                   getValue=function() return Cfg("tabSpacing") or 1 end,
                   setValue=function(v)
                       Set("tabSpacing", v)
@@ -782,7 +782,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end },
                 { type="slider", text="Bottom Spacing to Panel", min=0, max=20, step=1,
                   disabled=function() return Cfg("extendBgBehindTabs") == true end,
-                  disabledTooltip="Tabs Inside Chat Panel",
+                  disabledTooltip="Tabs Inside Chat Panel", requireState="disabled",
                   getValue=function() return Cfg("tabPadding") or 0 end,
                   setValue=function(v)
                       Set("tabPadding", v)
@@ -1201,7 +1201,7 @@ initFrame:SetScript("OnEvent", function(self)
             local borderRow
             borderRow, h = W:DualRow(parent, y,
                 { type="dropdown", text="Border Style",
-                  disabled=tabBordersDisabled, disabledTooltip=TabBorderDisabledTip,
+                  disabled=tabBordersDisabled, disabledTooltip=TabBorderDisabledTip, requireState="disabled",
                   values=texValues, order=texOrder,
                   getValue=function() return Cfg("tabBorderTexture") or "solid" end,
                   setValue=function(v)
@@ -1215,7 +1215,7 @@ initFrame:SetScript("OnEvent", function(self)
                       EllesmereUI:RefreshPage()
                   end },
                 { type="dropdown", text="Border Size",
-                  disabled=tabBordersDisabled, disabledTooltip=TabBorderDisabledTip,
+                  disabled=tabBordersDisabled, disabledTooltip=TabBorderDisabledTip, requireState="disabled",
                   values=thicknessValues, order={"none","thin","normal","heavy","strong"},
                   getValue=function() return Cfg("tabBorderThickness") or "none" end,
                   setValue=function(v)
@@ -1379,7 +1379,8 @@ initFrame:SetScript("OnEvent", function(self)
                 { type="slider", text="Edit Box Font Size", min=8, max=24, step=1,
                   getValue=function()
                       if Cfg("editBoxFontSize") then return Cfg("editBoxFontSize") end
-                      local _, size = FCF_GetChatWindowInfo and FCF_GetChatWindowInfo(1)
+                      local size
+                      if FCF_GetChatWindowInfo then size = select(2, FCF_GetChatWindowInfo(1)) end
                       return size or 12
                   end,
                   setValue=function(v)

@@ -1,4 +1,12 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose item globals are gone on newer clients.
+local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local GetItemInfoInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+local GetItemIcon = (C_Item and C_Item.GetItemIcon) or GetItemIcon
+local GetItemQualityColor = (C_Item and C_Item.GetItemQualityColor) or GetItemQualityColor
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 --------------------------------------------------------------------------------
 --  Themed Character Sheet
 --------------------------------------------------------------------------------
@@ -10,6 +18,20 @@ local activeEquipmentSetID = nil
 
 -- External weak-keyed lookup table for frame state (prevents tainting Blizzard frames)
 local FFD = setmetatable({}, { __mode = "k" })
+-- Regions 16 and 17 on the weapon slots are the ornamented border textures. They do not
+-- exist on every client, and select() past the end returns nothing rather than erroring,
+-- so the chained call indexed nil. Called from two passes, hence one function.
+local function HideWeaponOrnaments()
+    for _, slot in ipairs({ _G.CharacterMainHandSlot, _G.CharacterSecondaryHandSlot }) do
+        for _, region in ipairs({ 16, 17 }) do
+            local tex = slot and select(region, slot:GetRegions())
+            if tex and tex.SetTexCoord then
+                tex:SetTexCoord(0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8)
+            end
+        end
+    end
+end
+
 local function GetFFD(frame)
     local d = FFD[frame]
     if not d then d = {}; FFD[frame] = d end
@@ -562,24 +584,30 @@ local function PreSkinCharacterSheet()
 
 
     -- Hide the SlotFrame wrappers -- we reposition the inner slot buttons directly.
-    _G.CharacterBackSlotFrame:Hide()
-    _G.CharacterChestSlotFrame:Hide()
-    _G.CharacterFeetSlotFrame:Hide()
-    _G.CharacterFinger0SlotFrame:Hide()
-    _G.CharacterFinger1SlotFrame:Hide()
-    _G.CharacterHandsSlotFrame:Hide()
-    _G.CharacterHeadSlotFrame:Hide()
-    _G.CharacterLegsSlotFrame:Hide()
-    _G.CharacterMainHandSlotFrame:Hide()
-    _G.CharacterNeckSlotFrame:Hide()
-    _G.CharacterSecondaryHandSlotFrame:Hide()
-    _G.CharacterShirtSlotFrame:Hide()
-    _G.CharacterShoulderSlotFrame:Hide()
-    _G.CharacterTabardSlotFrame:Hide()
-    _G.CharacterTrinket0SlotFrame:Hide()
-    _G.CharacterTrinket1SlotFrame:Hide()
-    _G.CharacterWaistSlotFrame:Hide()
-    _G.CharacterWristSlotFrame:Hide()
+    for _, slot in ipairs({
+        "CharacterBackSlotFrame",
+        "CharacterChestSlotFrame",
+        "CharacterFeetSlotFrame",
+        "CharacterFinger0SlotFrame",
+        "CharacterFinger1SlotFrame",
+        "CharacterHandsSlotFrame",
+        "CharacterHeadSlotFrame",
+        "CharacterLegsSlotFrame",
+        "CharacterMainHandSlotFrame",
+        "CharacterNeckSlotFrame",
+        "CharacterSecondaryHandSlotFrame",
+        "CharacterShirtSlotFrame",
+        "CharacterShoulderSlotFrame",
+        "CharacterTabardSlotFrame",
+        "CharacterTrinket0SlotFrame",
+        "CharacterTrinket1SlotFrame",
+        "CharacterWaistSlotFrame",
+        "CharacterWristSlotFrame",
+    }) do
+        -- Not every slot exists on every client: Forever has no tabard or shirt frame.
+        local f = _G[slot]
+        if f then f:Hide() end
+    end
 
     -- Grid layout via SetPoint only. Never reparent -- slots are secure and reparenting would taint the paper-doll.
     if CharacterFrameBg then CharacterFrameBg:Show() end
@@ -647,10 +675,7 @@ local function PreSkinCharacterSheet()
 
 
     -- Weapon-slot regions 16/17 are the ornamented border/frame textures. Shifting texcoords off-atlas is cheaper than SetTexture("") and survives Blizzard re-applying the atlas.
-    select(16, _G.CharacterMainHandSlot:GetRegions()):SetTexCoord(.8,.8,.8,.8,.8,.8,.8,.8)
-    select(17, _G.CharacterMainHandSlot:GetRegions()):SetTexCoord(.8,.8,.8,.8,.8,.8,.8,.8)
-    select(16, _G.CharacterSecondaryHandSlot:GetRegions()):SetTexCoord(.8,.8,.8,.8,.8,.8,.8,.8)
-    select(17, _G.CharacterSecondaryHandSlot:GetRegions()):SetTexCoord(.8,.8,.8,.8,.8,.8,.8,.8)
+    HideWeaponOrnaments()
 
     -- Strip icon borders and crop icon texcoords so icons fill the slot cleanly.
     local slotsToHide = {
@@ -682,10 +707,7 @@ local function PreSkinCharacterSheet()
     end
 
     -- Re-apply 16/17: the loop above includes the weapon slots and clobbers them.
-    select(16, _G.CharacterMainHandSlot:GetRegions()):SetTexCoord(0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8)
-    select(17, _G.CharacterMainHandSlot:GetRegions()):SetTexCoord(0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8)
-    select(16, _G.CharacterSecondaryHandSlot:GetRegions()):SetTexCoord(0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8)
-    select(17, _G.CharacterSecondaryHandSlot:GetRegions()):SetTexCoord(0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8)
+    HideWeaponOrnaments()
 
     local slotNames = {
         "CharacterHeadSlot", "CharacterNeckSlot", "CharacterShoulderSlot", "CharacterBackSlot",

@@ -9,6 +9,11 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+
+
+-- Published below the stand-down, not above it: the options files treat a missing entry
+-- as "module disabled, no options page", which is exactly the case here. Publishing an
+-- empty namespace instead would hand them a table with nothing in it.
 EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
 local EAB = EllesmereUI.Lite.NewAddon(ADDON_NAME)
 ns.EAB = EAB
@@ -1311,14 +1316,18 @@ local SHOWGRID = {
 -- Lua-side button registry: [button] = actionSlot
 local _controllerButtons = {}
 
-ActionButtonController:Execute([[
-    _eabBtnMap = table.new()
-    _eabPendingVis = table.new()
+-- newtable(), and nothing else. The restricted environment rejects a table constructor
+-- outright -- "Direct table creation is not permitted" -- and it rejects it when the
+-- snippet is compiled, so a {} that never runs still kills the whole snippet. That rules
+-- out writing it as a fallback. newtable is the sanctioned way to make a table in there.
+EllesmereUI.SecureCall(ActionButtonController.Execute, ActionButtonController, [[
+    _eabBtnMap = newtable()
+    _eabPendingVis = newtable()
 ]])
 
 -- Secure method: SetShowGrid (bitwise flag toggle). Restricted Lua has no bit
 -- library, so modular arithmetic tests/flips individual bits in the bitmask.
-ActionButtonController:SetAttributeNoHandler("SetShowGrid", [[
+EllesmereUI.SecureCall(ActionButtonController.SetAttributeNoHandler, ActionButtonController, "SetShowGrid", [[
     local show, reason, force = ...
     local cur = self:GetAttribute("showgrid") or 0
     local prev = cur
@@ -1338,7 +1347,7 @@ ActionButtonController:SetAttributeNoHandler("SetShowGrid", [[
 ]])
 
 -- Secure method: run a named RunAttribute on every button matching an action slot
-ActionButtonController:SetAttributeNoHandler("ForActionSlot", [[
+EllesmereUI.SecureCall(ActionButtonController.SetAttributeNoHandler, ActionButtonController, "ForActionSlot", [[
     local slot, method = ...
     for btn, act in pairs(_eabBtnMap) do
         if act == slot then btn:RunAttribute(method) end
@@ -1347,9 +1356,9 @@ ActionButtonController:SetAttributeNoHandler("ForActionSlot", [[
 
 -- Deferred visibility: "flush"=0 marks dirty; the attribute driver resets it
 -- to 1 after ~200ms, applying pending changes in one batch instead of per-change.
-RegisterAttributeDriver(ActionButtonController, "flush", 1)
+EllesmereUI.SecureCall(RegisterAttributeDriver, ActionButtonController, "flush", 1)
 
-ActionButtonController:SetAttributeNoHandler("_onattributechanged", [[
+EllesmereUI.SecureCall(ActionButtonController.SetAttributeNoHandler, ActionButtonController, "_onattributechanged", [[
     if name == "flush" and value == 1 then
         for btn in pairs(_eabPendingVis) do
             btn:RunAttribute("UpdateShown")
@@ -1393,7 +1402,7 @@ local BTN_ON_SHOW_HIDE = [[
 -- (e.g. during spell drag in combat), propagate to all our buttons.
 local function InitShowGridMonitor()
     if not ActionButton1 then return end
-    ActionButtonController:WrapScript(ActionButton1, "OnAttributeChanged", [[
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, ActionButton1, "OnAttributeChanged", [[
         if name ~= "showgrid" then return end
         for r = 2, 4, 2 do
             local on = value % (r * 2) >= r
@@ -1414,11 +1423,11 @@ local function RegisterButtonWithController(btn)
         return
     end
 
-    ActionButtonController:WrapScript(btn, "OnAttributeChanged", BTN_ON_ATTRIBUTE_CHANGED)
-    ActionButtonController:WrapScript(btn, "PostClick", BTN_POST_CLICK)
-    ActionButtonController:WrapScript(btn, "OnReceiveDrag", BTN_ON_RECEIVE_DRAG_BEFORE, BTN_ON_RECEIVE_DRAG_AFTER)
-    ActionButtonController:WrapScript(btn, "OnShow", BTN_ON_SHOW_HIDE)
-    ActionButtonController:WrapScript(btn, "OnHide", BTN_ON_SHOW_HIDE)
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, btn, "OnAttributeChanged", BTN_ON_ATTRIBUTE_CHANGED)
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, btn, "PostClick", BTN_POST_CLICK)
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, btn, "OnReceiveDrag", BTN_ON_RECEIVE_DRAG_BEFORE, BTN_ON_RECEIVE_DRAG_AFTER)
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, btn, "OnShow", BTN_ON_SHOW_HIDE)
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, btn, "OnHide", BTN_ON_SHOW_HIDE)
     -- Combat drag belt: dragging FROM one of our buttons reveals empty drop
     -- targets via the controller's secure broadcast, independent of the
     -- ActionButton1 showgrid monitor (which depends on Blizzard's retained
@@ -1435,7 +1444,7 @@ local function RegisterButtonWithController(btn)
     -- seconds, or when I use the spell"). Mirror Blizzard's own condition so
     -- the reveal only fires when the drag will actually pick the action up.
     -- IsModifiedClick is whitelisted in the restricted environment.
-    ActionButtonController:WrapScript(btn, "OnDragStart", [[
+    EllesmereUI.SecureCall(ActionButtonController.WrapScript, ActionButtonController, btn, "OnDragStart", [[
         if control:GetAttribute("eab-barslocked") ~= 1 or IsModifiedClick("PICKUPACTION") then
             control:RunAttribute("SetShowGrid", true, 2)
         end
@@ -1450,7 +1459,7 @@ local function RegisterButtonWithController(btn)
     -- a visible button is never stomped). eab-withincutoff keeps icon-cutoff buttons
     -- out of the override; eab-click carries the bar's click-through setting so a
     -- reveal never turns a click-through bar clickable.
-    btn:SetAttributeNoHandler("SetShowGrid", [[
+    EllesmereUI.SecureCall(btn.SetAttributeNoHandler, btn, "SetShowGrid", [[
         local show, reason, force = ...
         local cur = self:GetAttribute("showgrid") or 0
         local prev = cur
@@ -1492,7 +1501,7 @@ local function RegisterButtonWithController(btn)
     -- Visibility: show if grid active or action exists, unless explicitly
     -- state-hidden. Same transient-grid override and edge-gated alpha/mouse
     -- restore as SetShowGrid, so a mid-drag flush cannot re-hide a revealed target.
-    btn:SetAttributeNoHandler("UpdateShown", [[
+    EllesmereUI.SecureCall(btn.SetAttributeNoHandler, btn, "UpdateShown", [[
         local cur = self:GetAttribute("showgrid") or 0
         local hasAct = HasAction(self:GetAttribute("action") or 0)
         local hidden = self:GetAttribute("statehidden")
@@ -1518,8 +1527,8 @@ local function RegisterButtonWithController(btn)
     ]])
 
     -- Add to the secure button map
-    ActionButtonController:SetFrameRef("add", btn)
-    ActionButtonController:Execute([[
+    EllesmereUI.SecureCall(ActionButtonController.SetFrameRef, ActionButtonController, "add", btn)
+    EllesmereUI.SecureCall(ActionButtonController.Execute, ActionButtonController, [[
         local b = self:GetFrameRef("add")
         _eabBtnMap[b] = b:GetAttribute("action") or 0
     ]])
@@ -1560,7 +1569,7 @@ do
     OverrideController = CreateFrame("Frame", "EABOverrideController", UIParent,
         "SecureHandlerAttributeTemplate")
 
-    OverrideController:SetAttributeNoHandler("_onattributechanged", [[
+    EllesmereUI.SecureCall(OverrideController.SetAttributeNoHandler, OverrideController, "_onattributechanged", [[
         -- Propagate known state attributes to all registered bar frames
         if name == "overrideui" or name == "petbattleui" or name == "overridepage" then
             for _, f in pairs(_eabBarFrames) do
@@ -1584,7 +1593,7 @@ do
     ]])
 
     -- Secure table of bar frames that receive state broadcasts
-    OverrideController:Execute([[ _eabBarFrames = table.new() ]])
+    EllesmereUI.SecureCall(OverrideController.Execute, OverrideController, [[ _eabBarFrames = newtable() ]])
 
     -- overrideui driven by [overridebar][vehicleui] macro instead of parenting
     -- to OverrideActionBar (which would taint the protected frame).
@@ -1598,15 +1607,15 @@ do
         vehicleui = "[vehicleui]1;0",
         petbattleui = "[petbattle]1;0",
     }) do
-        RegisterAttributeDriver(OverrideController, attr, driver)
+        EllesmereUI.SecureCall(RegisterAttributeDriver, OverrideController, attr, driver)
     end
 end
 
 -- Add a bar frame to the watch list. Deduped in the snippet: the secure list
 -- can never be pruned, so a re-registration would grow it and every sweep permanently.
 local function RegisterBarWithOverrideController(frame)
-    OverrideController:SetFrameRef("add", frame)
-    OverrideController:Execute([[
+    EllesmereUI.SecureCall(OverrideController.SetFrameRef, OverrideController, "add", frame)
+    EllesmereUI.SecureCall(OverrideController.Execute, OverrideController, [[
         local f = self:GetFrameRef("add")
         for i = 1, #_eabBarFrames do
             if _eabBarFrames[i] == f then return end
@@ -1636,12 +1645,16 @@ ns.barButtons = barButtons
 
 local _secureHandler = CreateFrame("Frame", "EABSecureSetupHandler", UIParent, "SecureHandlerAttributeTemplate")
 
+-- The same frames the snippet fetches with GetFrameRef, kept on the Lua side so the
+-- fallback below can do the work where the snippet cannot run.
+ns._eabRefs = { bars = {}, buttons = {}, blizz = {} }
+
 -- Reads encoded button data and applies SetParent + layout. Attribute format
 -- per slot: "btn-N" = "barref|x|y|w|h|show" (show="1"/"0"). Frame refs: bar
 -- frames as "bar-{key}", hidden parent as "hiddenParent", UIParent as
 -- "uiParent", Blizzard bars as "blizzbar-{name}". Trigger: set "do-setup" to
 -- any value to run the full setup.
-_secureHandler:SetAttribute("_onattributechanged", [=[
+EllesmereUI.SecureCall(_secureHandler.SetAttribute, _secureHandler, "_onattributechanged", [=[
     if name == "do-setup" then
         -- (setup code follows below)
     elseif name == "clear-binds" then
@@ -1747,8 +1760,9 @@ local function SecureSetupHandler_PrepareRefs()
     if _secureRefsReady then return end
     _secureRefsReady = true
 
-    _secureHandler:SetFrameRef("uiParent", UIParent)
-    _secureHandler:SetFrameRef("hiddenParent", hiddenParent)
+    EllesmereUI.SecureCall(_secureHandler.SetFrameRef, _secureHandler, "uiParent", UIParent)
+    EllesmereUI.SecureCall(_secureHandler.SetFrameRef, _secureHandler, "hiddenParent", hiddenParent)
+    ns._eabRefs.hiddenParent = hiddenParent
 
     -- Register all buttons (our EABButtons + Blizzard Stance/Pet)
     local btnIdx = 0
@@ -1758,7 +1772,8 @@ local function SecureSetupHandler_PrepareRefs()
             for _, btn in ipairs(btns) do
                 if btn then
                     btnIdx = btnIdx + 1
-                    _secureHandler:SetFrameRef("btn-" .. btnIdx, btn)
+                    EllesmereUI.SecureCall(_secureHandler.SetFrameRef, _secureHandler, "btn-" .. btnIdx, btn)
+                    ns._eabRefs.buttons[btnIdx] = btn
                     btn._secureSlotIdx = btnIdx
                 end
             end
@@ -1772,19 +1787,22 @@ local function SecureSetupHandler_PrepareRefs()
         local bar = _G[entry.name]
         if bar then
             blizzIdx = blizzIdx + 1
-            _secureHandler:SetFrameRef("blizzbar-" .. blizzIdx, bar)
+            EllesmereUI.SecureCall(_secureHandler.SetFrameRef, _secureHandler, "blizzbar-" .. blizzIdx, bar)
+            ns._eabRefs.blizz[blizzIdx] = bar
         end
     end
     if StatusTrackingBarManager and not (EAB.db and EAB.db.profile.useBlizzardDataBars) then
         blizzIdx = blizzIdx + 1
-        _secureHandler:SetFrameRef("blizzbar-" .. blizzIdx, StatusTrackingBarManager)
+        EllesmereUI.SecureCall(_secureHandler.SetFrameRef, _secureHandler, "blizzbar-" .. blizzIdx, StatusTrackingBarManager)
+        ns._eabRefs.blizz[blizzIdx] = StatusTrackingBarManager
     end
     _secureHandler:SetAttribute("blizzbar-count", blizzIdx)
 end
 
 -- Register our bar frames as refs. Called after CreateBarFrame.
 local function SecureSetupHandler_RegisterBarFrame(key, frame)
-    _secureHandler:SetFrameRef("bar-" .. key, frame)
+    EllesmereUI.SecureCall(_secureHandler.SetFrameRef, _secureHandler, "bar-" .. key, frame)
+    ns._eabRefs.bars[key] = frame
 end
 
 -- Encode layout data for all buttons as attributes, then trigger the snippet.
@@ -1806,6 +1824,73 @@ local function SecureSetupHandler_Execute(layoutData, barFrameData)
     _secureHandler:SetAttribute("barframe-count", barFrameCount)
     -- Trigger the snippet
     _secureHandler:SetAttribute("do-setup", GetTime())
+    if not EllesmereUI.SecureSnippetsWork() then
+        ns._eabApplyLayoutInLua(layoutData, barFrameData)
+    end
+end
+
+-- The same work the do-setup snippet does, in Lua, for clients that cannot compile it.
+--
+-- Reparenting and positioning protected frames is legal out of combat and blocked inside
+-- it, so this defers to the end of the fight rather than failing. Without it the buttons
+-- are created and never moved: a grid of empty squares nothing can position or hide.
+function ns._eabApplyLayoutInLua(layoutData, barFrameData)
+    if InCombatLockdown() then
+        ns._eabPendingLayout = { layoutData, barFrameData }
+        return
+    end
+    local refs = ns._eabRefs
+    ns._eabLastLayout = { layout = layoutData, frames = barFrameData }
+
+
+    for _, btn in pairs(refs.buttons) do btn:SetParent(UIParent) end
+    if refs.hiddenParent then
+        for _, bar in pairs(refs.blizz) do bar:SetParent(refs.hiddenParent) end
+    end
+
+    for slot, d in pairs(layoutData or {}) do
+        local btn, bar = refs.buttons[slot], refs.bars[d.barKey]
+        if btn and bar then
+            btn:SetAttribute("statehidden", nil)
+            btn:SetParent(bar)
+            btn:ClearAllPoints()
+            btn:SetPoint("TOPLEFT", bar, "TOPLEFT", tonumber(d.x) or 0, tonumber(d.y) or 0)
+            btn:SetWidth(tonumber(d.w) or 45)
+            btn:SetHeight(tonumber(d.h) or 45)
+            if d.barKey == "PetBar" then
+                btn:SetID(tonumber(d.actionSlot) or 1)
+                btn:SetAttribute("action", nil)
+            elseif d.barKey ~= "StanceBar" then
+                btn:SetID(0)
+                local a = tonumber(d.actionSlot)
+                if a and a ~= 0 then btn:SetAttribute("action", a) end
+            end
+            if d.show then btn:Show() else btn:Hide() end
+        end
+    end
+
+    for _, d in ipairs(barFrameData or {}) do
+        local bar = refs.bars[d.key]
+        if bar then
+            bar:SetWidth(tonumber(d.w) or 1)
+            bar:SetHeight(tonumber(d.h) or 1)
+            bar:ClearAllPoints()
+            bar:SetPoint(d.point or "CENTER", UIParent, d.relPoint or "CENTER",
+                tonumber(d.x) or 0, tonumber(d.y) or 0)
+            if d.hidden then bar:Hide() else bar:Show() end
+        end
+    end
+end
+
+do
+    local resume = CreateFrame("Frame")
+    resume:RegisterEvent("PLAYER_REGEN_ENABLED")
+    resume:SetScript("OnEvent", function()
+        local p = ns._eabPendingLayout
+        if not p then return end
+        ns._eabPendingLayout = nil
+        ns._eabApplyLayoutInLua(p[1], p[2])
+    end)
 end
 
 local function HideBlizzardBars()
@@ -2210,7 +2295,8 @@ local function GetOrCreateButton(slot, parent, info, index, skipProtected)
         -- A drag consumes the up edge and strands the flip; the next down
         -- click (mouse or keybind) clears it BEFORE the native handler
         -- runs, so that press still acts on its configured edge.
-        if not btn:GetAttribute("eabPickupWrap") and not InCombatLockdown() then
+        if EllesmereUI.SecureSnippetsWork()
+           and not btn:GetAttribute("eabPickupWrap") and not InCombatLockdown() then
             btn:SetAttribute("eabPickupWrap", true)
             SecureHandlerWrapScript(btn, "OnClick", btn, [[
                 local flipped = self:GetAttribute("eabPickupFlipped")
@@ -2317,7 +2403,7 @@ function EAB_VTABLE.GetAutoPagingOptOuts(barKey)
     if barKey ~= "MainBar" then return false, false end
     local bs = EAB and EAB.db and EAB.db.profile and EAB.db.profile.bars.MainBar
     if not bs then return false, false end
-    return bs.disableFormPaging and true or false, bs.disableSkyridingPaging and true or false
+    return bs.disableFormPaging and true or false, (not EUI_IS_FOREVER and bs.disableSkyridingPaging) and true or false
 end
 
 function EAB_VTABLE.BuildPagingConditions(barKey, pagingConfig, defaultPage)
@@ -2374,7 +2460,7 @@ function EAB_VTABLE.BuildPagingConditions(barKey, pagingConfig, defaultPage)
         for i = 2, NUM_AB_PAGES do
             parts[#parts + 1] = "[bar:" .. i .. "] " .. i
         end
-        if not noSky then
+        if not EUI_IS_FOREVER and not noSky then
             parts[#parts + 1] = "[bonusbar:5] 11"
         end
     end
@@ -2432,7 +2518,7 @@ local function GetClassPagingConditions()
     end
 
     -- Dragonriding (all classes; page 1 only, same rule as the forms above)
-    if not noSky then
+    if not EUI_IS_FOREVER and not noSky then
         conditions = conditions .. "[bonusbar:5] 11; "
     end
 
@@ -2844,15 +2930,15 @@ local function CreateBarFrame(info)
         -- -- Blizzard's ActionBarController drivers in the same pass inherit
         -- it and OverrideActionBar:Show() hits ADDON_ACTION_BLOCKED. Page
         -- sync instead rides ACTIONBAR_PAGE_CHANGED (paging frame OnEvent).
-        frame:SetFrameRef("blizzmainbar", MainActionBar)
-        frame:SetAttributeNoHandler("_onstate-page", [[
+        EllesmereUI.SecureCall(frame.SetFrameRef, frame, "blizzmainbar", MainActionBar)
+        EllesmereUI.SecureCall(frame.SetAttributeNoHandler, frame, "_onstate-page", [[
             local page = tonumber(newstate) or 1
             self:SetAttribute("actionpage", page)
             self:ChildUpdate("eab-page", page)
             self:GetFrameRef("blizzmainbar"):SetAttribute("actionpage", page)
         ]])
 
-        RegisterStateDriver(frame, "page", pagingConditions)
+        EllesmereUI.SecureCall(RegisterStateDriver, frame, "page", pagingConditions)
     end
 
     -- Bars 2-8 (nativeActionPage) and 9-10 (customPage): buttons have static action
@@ -2861,14 +2947,14 @@ local function CreateBarFrame(info)
     -- identical machinery either way, differing only in the default page source.
     local defaultPage = info.nativeActionPage or info.customPage
     if defaultPage then
-        frame:Execute(("self:SetAttribute('actionpage', %d)"):format(defaultPage))
+        EllesmereUI.SecureCall(frame.Execute, frame, ("self:SetAttribute('actionpage', %d)"):format(defaultPage))
 
         -- Configurable paging: install a state driver on top of the default
         -- page; when no conditions match, fall back to the bar's default.
         local barSettings = EAB and EAB.db and EAB.db.profile and EAB.db.profile.bars[key]
         local customPaging = barSettings and barSettings.paging
         if customPaging and next(customPaging) then
-            frame:SetAttributeNoHandler("_onstate-page", [[
+            EllesmereUI.SecureCall(frame.SetAttributeNoHandler, frame, "_onstate-page", [[
                 local page = tonumber(newstate) or 1
                 self:SetAttribute("actionpage", page)
                 self:ChildUpdate("eab-page", page)
@@ -2876,7 +2962,7 @@ local function CreateBarFrame(info)
             frame._eabPagingInstalled = true
             local conditions = EAB_VTABLE.BuildPagingConditions(key, customPaging, defaultPage)
             if conditions then
-                RegisterStateDriver(frame, "page", conditions)
+                EllesmereUI.SecureCall(RegisterStateDriver, frame, "page", conditions)
             end
         end
     end
@@ -2889,7 +2975,7 @@ local function CreateBarFrame(info)
     -- whose dispatcher only matches "^state%-(.+)" -> "_onstate-<id>". No
     -- _onattributechanged path exists here (that's SecureHandlerAttributeTemplate,
     -- i.e. OverrideController); a plain-attribute trigger fires NOTHING.
-    frame:SetAttributeNoHandler("_onstate-eabempower", [[
+    EllesmereUI.SecureCall(frame.SetAttributeNoHandler, frame, "_onstate-eabempower", [[
         self:ChildUpdate("eab-empower", "")
     ]])
 
@@ -2897,18 +2983,41 @@ local function CreateBarFrame(info)
     -- attribute directly. RegisterStateDriver installs the snippet at
     -- creation (out of combat); later SetAttribute("state-eabvis", "hide")
     -- triggers it from the secure environment.
-    frame:SetAttribute("_onstate-eabvis", [[
-        if newstate == "hide" then
-            self:Hide()
-        else
-            self:Show()
-        end
-    ]])
+    if info.isPetBar and EUI_IS_FOREVER and EllesmereUI.SecureSnippetsWork() then
+        -- Forever can leave the macro [pet] condition stale while replacing
+        -- one summoned demon with another. Track the pet unit through
+        -- Blizzard's secure unit watcher and combine that state with EUI's
+        -- normal visibility driver inside the protected environment.
+        EllesmereUI.SecureCall(frame.SetAttribute, frame, "_onstate-eabvis", [[
+            if newstate == "hide" or not self:GetAttribute("state-unitexists") then
+                self:Hide()
+            else
+                self:Show()
+            end
+        ]])
+        EllesmereUI.SecureCall(frame.SetAttribute, frame, "_onstate-unitexists", [[
+            if not newstate or self:GetAttribute("state-eabvis") == "hide" then
+                self:Hide()
+            else
+                self:Show()
+            end
+        ]])
+        EllesmereUI.SecureCall(frame.SetAttributeNoHandler, frame, "unit", "pet")
+        EllesmereUI.SecureCall(RegisterUnitWatch, frame, true)
+    else
+        EllesmereUI.SecureCall(frame.SetAttribute, frame, "_onstate-eabvis", [[
+            if newstate == "hide" then
+                self:Hide()
+            else
+                self:Show()
+            end
+        ]])
+    end
     -- If always-hidden or disabled, start hidden so the secure snippet hides
     -- it immediately, before combat can return after a brief reload regen.
     local s = EAB.db and EAB.db.profile.bars[key]
     local startHidden = s and (s.alwaysHidden or s.enabled == false)
-    RegisterStateDriver(frame, "eabvis", startHidden and "hide" or "show")
+    EllesmereUI.SecureCall(RegisterStateDriver, frame, "eabvis", startHidden and "hide" or "show")
 
     -- Register with the override controller so vehicle/override/petbattle
     -- state changes propagate to this bar frame.
@@ -2963,14 +3072,14 @@ function ns.RebuildBarPaging(barKey)
             pagingConditions = GetClassPagingConditions()
         end
         -- Force re-evaluation by unregistering first
-        UnregisterStateDriver(frame, "page")
-        RegisterStateDriver(frame, "page", pagingConditions)
+        EllesmereUI.SecureCall(UnregisterStateDriver, frame, "page")
+        EllesmereUI.SecureCall(RegisterStateDriver, frame, "page", pagingConditions)
     elseif info.nativeActionPage or info.customPage then
         local defaultPage = info.nativeActionPage or info.customPage
         if customPaging and next(customPaging) then
             -- Install handler if not already present
             if not frame._eabPagingInstalled then
-                frame:SetAttributeNoHandler("_onstate-page", [[
+                EllesmereUI.SecureCall(frame.SetAttributeNoHandler, frame, "_onstate-page", [[
                     local page = tonumber(newstate) or 1
                     self:SetAttribute("actionpage", page)
                     self:ChildUpdate("eab-page", page)
@@ -2983,20 +3092,20 @@ function ns.RebuildBarPaging(barKey)
                 if btns then
                     for idx, btn in ipairs(btns) do
                         if not btn:GetAttribute("_childupdate-eab-page") then
-                            btn:SetAttributeNoHandler("_childupdate-eab-page", ns._eabBuildPageChildSnippet(idx))
+                            EllesmereUI.SecureCall(btn.SetAttributeNoHandler, btn, "_childupdate-eab-page", ns._eabBuildPageChildSnippet(idx))
                         end
                     end
                 end
             end
             local conditions = EAB_VTABLE.BuildPagingConditions(barKey, customPaging, defaultPage)
             if conditions then
-                UnregisterStateDriver(frame, "page")
-                RegisterStateDriver(frame, "page", conditions)
+                EllesmereUI.SecureCall(UnregisterStateDriver, frame, "page")
+                EllesmereUI.SecureCall(RegisterStateDriver, frame, "page", conditions)
             end
         else
             -- No paging configured: remove state driver, restore fixed page
-            UnregisterStateDriver(frame, "page")
-            frame:Execute(("self:SetAttribute('actionpage', %d)"):format(defaultPage))
+            EllesmereUI.SecureCall(UnregisterStateDriver, frame, "page")
+            EllesmereUI.SecureCall(frame.Execute, frame, ("self:SetAttribute('actionpage', %d)"):format(defaultPage))
         end
     end
 
@@ -3137,13 +3246,13 @@ ns.BuildBarButtons = function(info, frame, skipProtected)
                 -- and RebuildBarPaging install byte-identical handlers.
                 if (key == "MainBar" or frame._eabPagingInstalled)
                    and not btn:GetAttribute("_childupdate-eab-page") then
-                    btn:SetAttributeNoHandler("_childupdate-eab-page", ns._eabBuildPageChildSnippet(i))
+                    EllesmereUI.SecureCall(btn.SetAttributeNoHandler, btn, "_childupdate-eab-page", ns._eabBuildPageChildSnippet(i))
                 end
                 -- Empower re-check on slot change (spec swap, drag, etc.)
                 -- The bar header's _onstate-eabempower dispatches ChildUpdate
                 -- when addon code sets "state-eabempower".
                 if not btn:GetAttribute("_childupdate-eab-empower") then
-                    btn:SetAttributeNoHandler("_childupdate-eab-empower", ns._eabEmpowerSnippet)
+                    EllesmereUI.SecureCall(btn.SetAttributeNoHandler, btn, "_childupdate-eab-empower", ns._eabEmpowerSnippet)
                 end
                 buttons[i] = btn
                 buttonToBar[btn] = { barKey = key, index = i }
@@ -3223,6 +3332,7 @@ end
 -- visible out of combat. The Blizzard frame stays permanently hidden via the
 -- UpdateAssistedCombatRotationFrame hook.
 function ns.EnsureAssistSpinner(btn, rtf)
+    if EUI_IS_FOREVER then return nil end
     local fd = EFD(btn)
     local spin = fd.assistSpin
     if not spin then
@@ -3272,6 +3382,7 @@ end
 -- suggestedSpell: the ticker's single sample for this pass, so the icon and the
 -- swipe below describe the same ability. Callers without one read it themselves.
 function ns.RepaintAssistIcons(suggestedSpell)
+    if EUI_IS_FOREVER then return 0 end
     local found = 0
     local nextSpell = suggestedSpell
     if nextSpell == nil then
@@ -3324,6 +3435,7 @@ end
 -- it), self-disarms when no assist button remains, and its host frame is
 -- born in assist-armed context, so only OBA users are billed for it.
 function ns._ArmAssistTicker()
+    if EUI_IS_FOREVER then return end
     local t = ns._assistTicker
     if not t then
         local Tick = EllesmereUI and EllesmereUI.Tick
@@ -3374,6 +3486,7 @@ end
 -- suggestedSpell: paint from this spell rather than the slot, so the per-tick
 -- refresh cannot land on a different ability than the icon is showing.
 function ns.RefreshAssistCooldowns(suggestedSpell)
+    if EUI_IS_FOREVER then return nil end
     for _, info in ipairs(BAR_CONFIG) do
         if not info.isStance and not info.isPetBar then
             local buttons = barButtons[info.key]
@@ -3399,6 +3512,7 @@ end
 -- existing spinner. Called by the options widgets; spinners on buttons that
 -- have never held the assist action don't exist and cost nothing.
 function ns.RefreshAssistSpinners()
+    if EUI_IS_FOREVER then return nil end
     local p = EAB.db and EAB.db.profile
     local enabled = not p or p.obaIconEnabled ~= false
     local outset = (p and p.obaIconOutset) or 9
@@ -6678,7 +6792,7 @@ local function MakeButtonSquare(btn)
     end
     -- Hook UpdateAssistedCombatRotationFrame to scale the rotation frame
     -- when Blizzard creates it lazily (default 45x45, needs our button size).
-    if not fd.rotHooked and btn.UpdateAssistedCombatRotationFrame then
+    if not EUI_IS_FOREVER and not fd.rotHooked and btn.UpdateAssistedCombatRotationFrame then
         hooksecurefunc(btn, "UpdateAssistedCombatRotationFrame", function(self)
             -- Fires at Blizzard's combat cadence while a rotation action is on
             -- a bar: change-guard so steady-state fires cost only the reads.
@@ -8171,7 +8285,7 @@ function EAB_VTABLE.MainBarPageSync.InstallButton(btn)
     -- Only the slot arithmetic is interpolated. The body is concatenated raw:
     -- it contains a modulo, and string.format eats a bare "%" as a broken
     -- conversion spec.
-    btn:SetAttributeNoHandler("_childupdate-eab-page", ([[
+    EllesmereUI.SecureCall(btn.SetAttributeNoHandler, btn, "_childupdate-eab-page", ([[
         local page = tonumber(message) or 1
         local slot = %d + (page - 1) * %d
         self:SetAttribute("action", slot)
@@ -9059,7 +9173,8 @@ local function BuildVisibilityString(info, s, visOverride)
         local anyPrefix, anyWrap
         if info.isPetBar then
             anyPrefix = "[petbattle] hide; "
-            anyWrap = "novehicleui,pet,nooverridebar,nopossessbar"
+            anyWrap = EUI_IS_FOREVER and "novehicleui,nooverridebar,nopossessbar"
+                or "novehicleui,pet,nooverridebar,nopossessbar"
         elseif key == "MainBar" then
             anyPrefix = "[petbattle] hide; "
         elseif info.isStance then
@@ -9103,7 +9218,8 @@ local function BuildVisibilityString(info, s, visOverride)
                 negGate = "[combat] hide; "
             end
         end
-        local bracket = "[novehicleui,pet,nooverridebar,nopossessbar"
+        local bracket = EUI_IS_FOREVER and "[novehicleui,nooverridebar,nopossessbar"
+            or "[novehicleui,pet,nooverridebar,nopossessbar"
         if conj ~= "" then bracket = bracket .. "," .. conj:sub(1, -2) end
         bracket = bracket .. "]"
         return "[petbattle] hide; " .. visOptHide .. negGate .. bracket .. " show; hide"
@@ -9158,6 +9274,40 @@ local function BuildVisibilityString(info, s, visOverride)
         return hidePrefix .. "[advflyable,flying] hide; show"
     end
     return hidePrefix .. "show"
+end
+
+-- Forever's Pet Bar combines this visibility state with RegisterUnitWatch's
+-- state-unitexists attribute. Keep both inputs on secure state handlers so a
+-- demon replacement cannot be decided by two independent Show/Hide drivers.
+function EAB.RegisterBarVisibilityDriver(frame, driver)
+    local info = frame and frame._barInfo
+    if EUI_IS_FOREVER and info and info.isPetBar then
+        if EllesmereUI.SecureSnippetsWork() then
+            EllesmereUI.SecureCall(UnregisterAttributeDriver, frame, "state-visibility")
+            EllesmereUI.SecureCall(RegisterStateDriver, frame, "eabvis", driver)
+        elseif not InCombatLockdown() then
+            -- Forever builds without a restricted-snippet compiler cannot run
+            -- _onstate handlers. The built-in unit watcher still works, so let
+            -- it own Show/Hide while the configured visibility currently allows
+            -- the bar; otherwise detach it before hiding the frame.
+            local state = SecureCmdOptionParse(driver)
+            if state == "show" then
+                if not frame._eabForeverPetWatch then
+                    frame:SetAttribute("unit", "pet")
+                    RegisterUnitWatch(frame)
+                    frame._eabForeverPetWatch = true
+                end
+            else
+                if frame._eabForeverPetWatch then
+                    UnregisterUnitWatch(frame)
+                    frame._eabForeverPetWatch = nil
+                end
+                frame:Hide()
+            end
+        end
+    else
+        EllesmereUI.SecureCall(RegisterAttributeDriver, frame, "state-visibility", driver)
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -9415,7 +9565,7 @@ local _extraBarVisProxy  -- created once, reused
 function EAB:ApplyExtraBarVisibility()
     if not _extraBarVisProxy then
         _extraBarVisProxy = CreateFrame("Frame", nil, UIParent, "SecureHandlerStateTemplate")
-        _extraBarVisProxy:SetAttribute("_onstate-extravis", [[
+        EllesmereUI.SecureCall(_extraBarVisProxy.SetAttribute, _extraBarVisProxy, "_onstate-extravis", [[
             self:CallMethod("OnExtraVisChanged", newstate)
         ]])
         _extraBarVisProxy.OnExtraVisChanged = function(_, state)
@@ -9460,7 +9610,7 @@ function EAB:ApplyExtraBarVisibility()
         end
     end
     -- Register the state driver: hide during pet battle, show otherwise
-    RegisterStateDriver(_extraBarVisProxy, "extravis", "[petbattle] hide; show")
+    EllesmereUI.SecureCall(RegisterStateDriver, _extraBarVisProxy, "extravis", "[petbattle] hide; show")
 end
 
 --  Combat Show/Hide, Runtime Visibility, Click-Through, Housing
@@ -9493,7 +9643,7 @@ function EAB:ApplyCombatVisibility()
                 if frame._eabLastVisStr ~= newStr then
 
                     frame._eabLastVisStr = newStr
-                    RegisterAttributeDriver(frame, "state-visibility", newStr)
+                    EAB.RegisterBarVisibilityDriver(frame, newStr)
                 end
             end
         end
@@ -9645,7 +9795,7 @@ function EAB:RefreshRuntimeVisibility()
             end
             if ShouldQuickKeybindSurfaceBar(s) and barFrames[key] and frame == barFrames[key] then
                 if not InCombatLockdown() then
-                    RegisterAttributeDriver(frame, "state-visibility", "show")
+                    EAB.RegisterBarVisibilityDriver(frame, "show")
                     -- Keep the cache in sync (see EAB_UpdateQuickKeybindVisibility):
                     -- a stale cache makes QKB exit skip restoring the real driver.
                     frame._eabLastVisStr = "show"
@@ -9660,7 +9810,7 @@ function EAB:RefreshRuntimeVisibility()
                     if frame._eabLastVisStr ~= "hide" then
 
                         frame._eabLastVisStr = "hide"
-                        RegisterAttributeDriver(frame, "state-visibility", "hide")
+                        EAB.RegisterBarVisibilityDriver(frame, "hide")
                     end
                 elseif info.visibilityOnly then
                     frame:Hide()
@@ -9689,7 +9839,7 @@ function EAB:RefreshRuntimeVisibility()
                     if frame._eabLastVisStr ~= newStr then
 
                         frame._eabLastVisStr = newStr
-                        RegisterAttributeDriver(frame, "state-visibility", newStr)
+                        EAB.RegisterBarVisibilityDriver(frame, newStr)
                     end
                 end
                 if not InCombatLockdown() then
@@ -9716,6 +9866,21 @@ function EAB:RefreshRuntimeVisibility()
                 end
                 if info.isDataBar and frame._updateFunc then
                     frame._updateFunc()
+                end
+            end
+            -- Without snippets, registering the driver does nothing. Apply its
+            -- current result to our bar only; protected visibility freezes in
+            -- combat and is refreshed through the existing combat-exit path.
+            if barFrames[key] == frame and not InCombatLockdown()
+               and not EllesmereUI.SecureSnippetsWork() then
+                local driver = frame._eabLastVisStr
+                if EUI_IS_FOREVER and info.isPetBar then
+                    EAB.RegisterBarVisibilityDriver(frame, driver)
+                else
+                    local state = driver and SecureCmdOptionParse(driver)
+                    if state == "show" or state == "hide" then
+                        frame:SetShown(state == "show")
+                    end
                 end
             end
         end
@@ -10144,13 +10309,13 @@ function EAB:UpdateHousingVisibility()
                     if _visToggleOv == "never" then
                         if frame._eabLastVisStr ~= "hide" then
                             frame._eabLastVisStr = "hide"
-                            RegisterAttributeDriver(frame, "state-visibility", "hide")
+                            EAB.RegisterBarVisibilityDriver(frame, "hide")
                         end
                     elseif _visToggleOv == "always" then
                         local ovStr = BuildVisibilityString(info, s, "always")
                         if frame._eabLastVisStr ~= ovStr then
                             frame._eabLastVisStr = ovStr
-                            RegisterAttributeDriver(frame, "state-visibility", ovStr)
+                            EAB.RegisterBarVisibilityDriver(frame, ovStr)
                         end
                     elseif shouldHide then
                         if isSecure then
@@ -10167,7 +10332,7 @@ function EAB:UpdateHousingVisibility()
                             if frame._eabLastVisStr ~= hideStr then
 
                                 frame._eabLastVisStr = hideStr
-                                RegisterAttributeDriver(frame, "state-visibility", hideStr)
+                                EAB.RegisterBarVisibilityDriver(frame, hideStr)
                             end
                         elseif info.blizzOwnedVisibility then
                             local bf = _G[info.frameName]
@@ -10184,7 +10349,7 @@ function EAB:UpdateHousingVisibility()
                             if frame._eabLastVisStr ~= newStr then
 
                                 frame._eabLastVisStr = newStr
-                                RegisterAttributeDriver(frame, "state-visibility", newStr)
+                                EAB.RegisterBarVisibilityDriver(frame, newStr)
                             end
                         elseif info.blizzOwnedVisibility then
                             local bf = _G[info.frameName]
@@ -10909,7 +11074,7 @@ end
 --  timing. Blizzard may still show its own frame on a hovered button
 --  (candidate re-add); we defer to it there so two identical shines never stack.
 -------------------------------------------------------------------------------
-do
+if not EUI_IS_FOREVER then
     local _assistGlowed = {}   -- btn -> true while showing our shine
     local _assistInCombat = false
     local _assistHookInstalled = false
@@ -11731,7 +11896,7 @@ local function UpdateKeybinds()
             -- fire-another split GetClassPagingConditions warns about). Cost:
             -- press-and-hold repeat on MainBar while the opt-out is on.
             if info.key == "MainBar" and bs
-               and (bs.disableFormPaging or bs.disableSkyridingPaging) then
+               and (bs.disableFormPaging or (not EUI_IS_FOREVER and bs.disableSkyridingPaging)) then
                 barHasCustomPaging = true
             end
             for i, btn in ipairs(btns) do
@@ -13796,7 +13961,7 @@ function EAB:FinishSetup()
                         end
                         if hasCondition then
                             _gridSurfacedBars[info.key] = true
-                            RegisterAttributeDriver(frame, "state-visibility", "show")
+                            EAB.RegisterBarVisibilityDriver(frame, "show")
                             -- Keep the cache in sync with the stomp (same
                             -- class as the QuickKeybind surface fix): a
                             -- stale cache holding the real string makes
@@ -14254,6 +14419,7 @@ function EAB:FinishSetup()
     -- capability edge plus the airborne edge (probed at load in
     -- EllesmereUI_Visibility.lua; the secure bars need neither -- their
     -- state driver re-evaluates [advflyable,flying] natively).
+    if not EUI_IS_FOREVER then
     self:RegisterEvent("PLAYER_CAN_GLIDE_CHANGED", function()
         self:UpdateHousingVisibility()
     end)
@@ -14261,6 +14427,7 @@ function EAB:FinishSetup()
         self:RegisterEvent("PLAYER_IS_GLIDING_CHANGED", function()
             self:UpdateHousingVisibility()
         end)
+    end
     end
     -- Immediate soft-target override: when the only "target" is a soft-interact NPC
     -- (dialogue in view cone), the [noexists] state driver instantly shows the bar.
@@ -14293,13 +14460,13 @@ function EAB:FinishSetup()
                     if softOnly and s.visHideNoTarget and s.visibilityMatch ~= "any" then
                         if frame._eabLastVisStr ~= "hide" then
                             frame._eabLastVisStr = "hide"
-                            RegisterAttributeDriver(frame, "state-visibility", "hide")
+                            EAB.RegisterBarVisibilityDriver(frame, "hide")
                         end
                     else
                         local newStr = BuildVisibilityString(info, s)
                         if frame._eabLastVisStr ~= newStr then
                             frame._eabLastVisStr = newStr
-                            RegisterAttributeDriver(frame, "state-visibility", newStr)
+                            EAB.RegisterBarVisibilityDriver(frame, newStr)
                         end
                     end
                 end
@@ -14388,7 +14555,7 @@ function EAB:FinishSetup()
                         local newStr = BuildVisibilityString(info, s)
                         if frame._eabLastVisStr ~= newStr then
                             frame._eabLastVisStr = newStr
-                            RegisterAttributeDriver(frame, "state-visibility", newStr)
+                            EAB.RegisterBarVisibilityDriver(frame, newStr)
                         end
                     end
                 end
@@ -14572,9 +14739,8 @@ function EAB:FinishSetup()
     -- changes so icon dimming stays current; UNIT_AURA "pet" can also affect usability.
     -- Coalesced: any event burst schedules ONE deferred pass per frame through a cached
     -- closure. "full" absorbs "cd": every full path repaints cooldowns too. A hidden
-    -- pet bar skips all of it -- the secure
-    -- [pet] driver keeps visibility correct engine-side -- and the show edge
-    -- reconciles with one full pass (ns._eabPetReconcile).
+    -- pet bar skips ordinary visual traffic, but pet-identity and world-entry events
+    -- still reconcile the visibility driver after a summon, dismissal, or swap.
     local _petPendingKind = nil  -- nil | "cd" | "full"
     local PetBarDeferred
     PetBarDeferred = function()
@@ -14672,8 +14838,22 @@ function EAB:FinishSetup()
                 end
                 return
             end
-            if PetActionBar and PetActionBar.Update then
-                PetActionBar:Update()
+            -- Refresh the reused buttons without updating the stock bar. Its
+            -- Update method also hides the bar when no pet is present, entering
+            -- Blizzard's Edit Mode visibility path from addon execution.
+            for i = 1, NUM_PET_ACTION_SLOTS do
+                local btn = _G["PetActionButton" .. i]
+                if btn then
+                    btn:UpdateButtonState()
+                    SharedActionButton_RefreshSpellHighlight(btn, PET_ACTION_HIGHLIGHT_MARKS and PET_ACTION_HIGHLIGHT_MARKS[i])
+                    if btn.cooldown then
+                        local start, duration, enable = GetPetActionCooldown(i)
+                        CooldownFrame_Set(btn.cooldown, start, duration, enable)
+                    end
+                    if GameTooltip:GetOwner() == btn then
+                        btn:OnEnter(btn)
+                    end
+                end
             end
             -- Layout only when the populated-slot SHAPE changed (summon,
             -- dismiss, swap): re-laying the whole bar per aura/usable event
@@ -14689,20 +14869,16 @@ function EAB:FinishSetup()
                 LayoutBar("PetBar")
                 self:ApplyAlwaysShowButtons("PetBar")
             end
-            -- Re-register the state driver so the [pet] condition is always
-            -- current after a pet summon, swap, or dismissal.
-            local petInfo = BAR_LOOKUP["PetBar"]
-            local petFrame = barFrames["PetBar"]
-            local petS = self.db.profile.bars["PetBar"]
-            if petInfo and petFrame and petS and not petS.alwaysHidden then
-                RegisterAttributeDriver(petFrame, "state-visibility", BuildVisibilityString(petInfo, petS))
-            end
         end
     end
+    local function QueuePetBarFullRefresh()
+        local prev = _petPendingKind
+        _petPendingKind = "full"
+        if not prev then C_Timer_After(0, PetBarDeferred) end
+    end
     local function UpdatePetBar(_, event)
-        -- Hidden pet bar: skip entirely. The [pet] visibility driver
-        -- evaluates engine-side regardless, and the show edge runs a full
-        -- reconcile pass, so nothing here can be missed.
+        -- The secure unit watcher owns visibility. Hidden bars reconcile
+        -- through their OnShow edge when the pet unit becomes available.
         local pf = barFrames["PetBar"]
         if pf and not pf:IsVisible() then return end
         local kind = (event == "PET_BAR_UPDATE_COOLDOWN") and "cd" or "full"
@@ -14713,9 +14889,7 @@ function EAB:FinishSetup()
     -- Bar-reveal reconcile (ApplyBarDormancy show edge): one full pass
     -- covers everything the hidden-skip above dropped.
     ns._eabPetReconcile = function()
-        local prev = _petPendingKind
-        _petPendingKind = "full"
-        if not prev then C_Timer_After(0, PetBarDeferred) end
+        QueuePetBarFullRefresh()
     end
     local _petEventFrame = ns.TakeShell()
     _petEventFrame:RegisterEvent("PET_BAR_UPDATE")
@@ -15812,8 +15986,12 @@ local function SetupBlizzardMovableFrame(barKey)
             return
         end
         for _, f in ipairs(extraFrames) do
-            f.ignoreInLayout = true
-            f.ignoreFramePositionManager = true
+            -- Blizzard reads these fields in shared layout code. The extra
+            -- ability container is positioned by our holder hooks instead.
+            if f ~= ExtraAbilityContainer then
+                f.ignoreInLayout = true
+                f.ignoreFramePositionManager = true
+            end
             if f.SetIsLayoutFrame then pcall(f.SetIsLayoutFrame, f, false) end
             f:SetParent(holder)
             f:ClearAllPoints()
@@ -15924,9 +16102,9 @@ local function SetupBlizzardMovableFrame(barKey)
                 -- taints the managed-frame-position system; a later in-combat layout
                 -- pass (e.g. leaving a queued/follower instance while in combat) then
                 -- blocks the protected ClearAllPoints on the managed containers
-                -- (ADDON_ACTION_BLOCKED naming this addon). ExtraAbilityContainer
-                -- already carries ignoreFramePositionManager and ignoreInLayout, so
-                -- Blizzard excludes it from layout without us touching showingFrames.
+                -- (ADDON_ACTION_BLOCKED naming this addon). The holder hooks
+                -- restore our position without writing layout flags or entries
+                -- in Blizzard's showingFrames table.
             end)
         end
 
@@ -16069,8 +16247,6 @@ _blizzMovableCombatFrame:SetScript("OnEvent", function()
             end
         end
         if barKey == "ExtraActionButton" and holder and ExtraAbilityContainer then
-            ExtraAbilityContainer.ignoreInLayout = true
-            ExtraAbilityContainer.ignoreFramePositionManager = true
             if ExtraAbilityContainer.SetIsLayoutFrame then
                 pcall(ExtraAbilityContainer.SetIsLayoutFrame, ExtraAbilityContainer, false)
             end
@@ -16945,7 +17121,7 @@ local function EAB_UpdateQuickKeybindVisibility(show)
         local frame = barFrames[key]
 
         if show and frame and ShouldQuickKeybindSurfaceBar(s) then
-            RegisterAttributeDriver(frame, "state-visibility", "show")
+            EAB.RegisterBarVisibilityDriver(frame, "show")
             -- Keep the visibility cache in sync with the driver we just set.
             -- Otherwise RefreshRuntimeVisibility on QKB exit sees the stale
             -- pre-QKB string still equal to the recomputed real string and

@@ -1281,7 +1281,7 @@ qolFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  Auto Insert Keystone
     ---------------------------------------------------------------------------
-    do
+    if not EUI_IS_FOREVER then
         local function InsertKeystone()
             if EllesmereUIDB and EllesmereUIDB.autoInsertKeystone == false then return end
             if C_ChallengeMode.GetSlottedKeystoneInfo() then return end
@@ -3161,29 +3161,29 @@ do
             SecureStateDriverManager:RegisterEvent("PLAYER_REGEN_DISABLED")
             SecureStateDriverManager:RegisterEvent("PLAYER_REGEN_ENABLED")
             -- Handlers before drivers so the initial evaluation lands on them.
-            stateFrame:SetAttribute("_onstate-mov", ONSTATE_MOV)
-            stateFrame:SetAttribute("_onstate-rc", ONSTATE_RC)
-            stateFrame:SetAttribute("_onstate-combatclear", ONSTATE_COMBATCLEAR)
-            stateFrame:SetAttribute("_onstate-rcclear", ONSTATE_RCCLEAR)
-            RegisterStateDriver(stateFrame, "mov", macro)
-            RegisterStateDriver(stateFrame, "combatclear", "[combat]1;0")
+            EllesmereUI.SecureCall(stateFrame.SetAttribute, stateFrame, "_onstate-mov", ONSTATE_MOV)
+            EllesmereUI.SecureCall(stateFrame.SetAttribute, stateFrame, "_onstate-rc", ONSTATE_RC)
+            EllesmereUI.SecureCall(stateFrame.SetAttribute, stateFrame, "_onstate-combatclear", ONSTATE_COMBATCLEAR)
+            EllesmereUI.SecureCall(stateFrame.SetAttribute, stateFrame, "_onstate-rcclear", ONSTATE_RCCLEAR)
+            EllesmereUI.SecureCall(RegisterStateDriver, stateFrame, "mov", macro)
+            EllesmereUI.SecureCall(RegisterStateDriver, stateFrame, "combatclear", "[combat]1;0")
             if ruleLaneOn then
                 rcHoverFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
                 rcHoverFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
                 rcHoverFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
                 -- Registered with the lane it clears, so the extra driver only
                 -- exists where the Lua lane does.
-                RegisterStateDriver(stateFrame, "rcclear", "[@mouseover,harm,nodead]1;0")
+                EllesmereUI.SecureCall(RegisterStateDriver, stateFrame, "rcclear", "[@mouseover,harm,nodead]1;0")
                 PushRCState()
             else
                 rcHoverFrame:UnregisterAllEvents()
-                UnregisterStateDriver(stateFrame, "rcclear")
+                EllesmereUI.SecureCall(UnregisterStateDriver, stateFrame, "rcclear")
                 stateFrame:SetAttribute("state-rc", 0)
             end
         else
-            UnregisterStateDriver(stateFrame, "mov")
-            UnregisterStateDriver(stateFrame, "combatclear")
-            UnregisterStateDriver(stateFrame, "rcclear")
+            EllesmereUI.SecureCall(UnregisterStateDriver, stateFrame, "mov")
+            EllesmereUI.SecureCall(UnregisterStateDriver, stateFrame, "combatclear")
+            EllesmereUI.SecureCall(UnregisterStateDriver, stateFrame, "rcclear")
             rcHoverFrame:UnregisterAllEvents()
             stateFrame:SetAttribute("state-rc", 0)
             ClearOverrideBindings(stateFrame)

@@ -2557,6 +2557,19 @@ initFrame:SetScript("OnEvent", function(self)
         ---------------------------------------------------------------------------
         _, h = W:SectionHeader(parent, "GROUP FINDER", y);  y = y - h
 
+        local foreverResetAnnounce = { type="toggle", text="Announce Instance Reset",
+              tooltip="After a successful instance reset, automatically announces it in party or raid chat so your group knows they can re-enter.",
+              getValue=function()
+                  return EllesmereUIDB and EllesmereUIDB.instanceResetAnnounce or false
+              end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.instanceResetAnnounce = v
+                  if EllesmereUI._applyInstanceResetAnnounce then
+                      EllesmereUI._applyInstanceResetAnnounce()
+                  end
+              end }
+        if not EUI_IS_FOREVER then
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Auto Insert Keystone",
               tooltip="Automatically inserts your key into the Font of Power.",
@@ -2582,6 +2595,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
+        end
         local quickSignupRow
         quickSignupRow, h = W:DualRow(parent, y,
             { type="toggle", text="Quick Signup",
@@ -2675,6 +2689,10 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:Spacer(parent, y, 20);  y = y - h
 
         ---------------------------------------------------------------------------
+        if EUI_IS_FOREVER then
+            _, h = W:DualRow(parent, y, foreverResetAnnounce, { type="empty" }); y = y - h
+        end
+
         --  UI
         ---------------------------------------------------------------------------
         _, h = W:SectionHeader(parent, "UI", y);  y = y - h

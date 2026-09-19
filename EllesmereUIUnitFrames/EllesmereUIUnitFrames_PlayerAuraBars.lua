@@ -1,4 +1,7 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+local GetSpecializationInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
 -------------------------------------------------------------------------------
 --  EllesmereUIUnitFrames_PlayerAuraBars.lua
 --  12.1 AuraKit-based player buff/debuff bars.
@@ -930,6 +933,9 @@ end
 
 local function BuildStyle(isBuff, cfg)
     local iconZoom = cfg.iconZoom
+    -- Blizzard Style: zoom 0 -- the stock buff frame draws the whole icon,
+    -- and the icon art's own dark edge is the border a stock buff shows.
+    if ns.PAB_Blizz() then iconZoom = 0 end
     local borderSize = cfg.borderSize or 1
     local borderR = cfg.borderR or 0
     local borderG = cfg.borderG or 0
@@ -958,6 +964,9 @@ local function BuildStyle(isBuff, cfg)
             border.edgeScale = cfg.borderTextureScaleOverride
         end
     end
+    -- Blizzard Style: no EUI ring on any bar -- buffs go borderless like the
+    -- stock buff frame, debuffs take the engine-stamped stock border below.
+    if ns.PAB_Blizz() then border = nil end
 
     -- Positions may arrive mixed-case ("Bottom") rather than the uppercase anchor
     -- constants SetPoint expects; normalized here so a mismatched-case default or
@@ -1049,6 +1058,8 @@ local function BuildStyle(isBuff, cfg)
         applyExtra = PAB_ApplyExtraText,
 
         border = border,
+        -- Weapon enchant buttons mirror this style: the stock purple ring.
+        blizzEnchant = ns.PAB_Blizz() or nil,
     }
 
     -- Custom icon shape (Square/Circle/Hexagon/etc, same media set as Action Bars
@@ -1070,11 +1081,18 @@ local function BuildStyle(isBuff, cfg)
     -- engine behavior, not a choice made here. borderSize drives BOTH ring widths; a
     -- distinct dispel-ring width would need its own setting split back out.
     if not isBuff then
-        local dcMap, dcFP = BuildDispelColorMap(cfg)
-        style.dispelBorder = true
-        style.dispelBorderPx = borderSize
-        style.dispelColorMap = dcMap
-        style.dispelColorFP = dcFP
+        if ns.PAB_Blizz() then
+            -- Blizzard Style: the engine stamps Blizzard's own per-dispel-type
+            -- debuff border art (red for untyped) -- no ring size, no palette.
+            style.dispelBorder = true
+            style.blizzBorder = true
+        else
+            local dcMap, dcFP = BuildDispelColorMap(cfg)
+            style.dispelBorder = true
+            style.dispelBorderPx = borderSize
+            style.dispelColorMap = dcMap
+            style.dispelColorFP = dcFP
+        end
 
         -- Dispel-type indicator icon (AK's one-hot engine channel; default off).
         -- Independent of borderSize: the icon renders with or without a ring.
@@ -1488,7 +1506,7 @@ local function ComputeGrid(isBuff, cfg)
     -- cells can never spill out of it. This is not a budget: an inactive slot
     -- reserves nothing, only a cell that actually shows costs one (BuffAuraMax).
     local enchSlots = 0
-    if isBuff and cfg.showWeaponEnchants == true then
+    if isBuff and ns.PAB_EnchantsOn(cfg) then
         enchSlots = math.min(ENCH_SLOT_COUNT, effectiveMax)
     end
     -- `lineExtent` is the icons' own extent on the line axis (iconsPerRow
@@ -1549,29 +1567,24 @@ end
 ns.PAB_DefaultBuffsCfg = DefaultBuffsCfg
 ns.PAB_DefaultDebuffsCfg = DefaultDebuffsCfg
 
--- True while the default Buffs bar shows NOTHING but weapon enchants: the
--- opt-in is on and neither broad-content mode admits generic buffs. Filters /
--- Extra Spells are deliberately NOT considered -- they resolve to a finite
--- add-set that comes and goes as the user edits it, and letting that flip the
--- bar's name and grid underneath them would be unpredictable.
-function ns.PAB_IsWeaponEnchantsOnly(cfg)
-    return cfg ~= nil and cfg.showWeaponEnchants == true
-        and cfg.showAllBuffs == false and cfg.hasDuration ~= true
+-- Weapon enchants ride the default Buffs bar whenever one of its broad-content
+-- modes (All Buffs or Has Duration) is on: oils and imbues are not auras, so
+-- the catch-all group cannot admit them and the engine's item-enchantment
+-- source stands in for it. No opt-in of their own -- the old "Weapon
+-- Enchants" Filters row only existed while they had to be drawn by hand --
+-- and custom buff bars never carry them.
+function ns.PAB_EnchantsOn(cfg)
+    if not cfg or (cfg.showAllBuffs == false and cfg.hasDuration ~= true) then return false end
+    local s = PAB()
+    return s ~= nil and s.defaultBuffs == cfg
 end
 
--- Default Buffs bar display name, following what the bar actually shows.
--- Weapon enchants are a content source of their own, so they rename the bar
--- outright when nothing else is on and append to it otherwise; Has Duration
--- counts as a broad buff mode here, the bar still leads with generic buffs.
---
--- Returns the RAW English key: unlock mode stores element labels untranslated
--- (EUI_UnlockMode.lua's GetBarLabel hands back elem.label verbatim), and the
--- options page wraps the result in L() itself. Defined here, next to the cfg
--- it reads, so the options page and the unlock element cannot drift apart.
+-- Default Buffs bar display name. Returns the RAW English key: unlock mode
+-- stores element labels untranslated (EUI_UnlockMode.lua's GetBarLabel hands
+-- back elem.label verbatim), and the options page wraps the result in L()
+-- itself. One definition for both callers.
 function ns.PAB_DefaultBuffsName(cfg)
-    if not (cfg and cfg.showWeaponEnchants == true) then return "Buffs" end
-    if ns.PAB_IsWeaponEnchantsOnly(cfg) then return "Weapon Enchants" end
-    return "Buffs & Weapon Enchants"
+    return "Buffs"
 end
 
 -- One-time seed of the default Buffs/Debuffs bars' position/size/grid from Blizzard's
@@ -1730,15 +1743,14 @@ end
 ns.PAB_EnsureFilterLanes = EnsureFilterLanes
 
 -- Content-source tests for the no-empty-selection rule: a bar always keeps at
--- least one content source (a broad mode, a Show-lane filter, an Extra Spell,
--- or -- default Buffs bar only -- Weapon Enchants). The hide lane is not a
--- content source. Shared by the enable migration below and the options
--- dropdowns' guards.
+-- least one content source (a broad mode, a Show-lane filter, an Extra
+-- Spell). The hide lane is not a content source, and weapon enchants ride the
+-- broad modes (ns.PAB_EnchantsOn) rather than counting as one. Shared by the
+-- enable migration below and the options dropdowns' guards.
 local function BuffBarHasContent(bar, isDefault)
     if bar.showAllBuffs ~= false or bar.hasDuration == true then return true end
     if bar.filters and next(bar.filters) then return true end
     if bar.spells and #bar.spells > 0 then return true end
-    if isDefault and bar.showWeaponEnchants == true then return true end
     return false
 end
 -- Debuff content besides the All Debuffs mode: Show-lane classes, or an Icon
@@ -1784,6 +1796,23 @@ ns.PAB_DebuffBarHasContent = DebuffBarHasContent
 -- a broad-mode bar is never empty either way).
 local function EnsureBarEnable(s)
     EnsureFilterLanes(s)
+    -- One-shot: the "Weapon Enchants" opt-in is gone (the cells follow the
+    -- broad-content modes, ns.PAB_EnchantsOn). An enchants-only bar had its
+    -- grid pinned to 3x1x3 with the user's own grid stashed: put that back
+    -- and turn All Buffs on, so the enchants it showed keep showing.
+    if not s.pabEnchantsAutoV1 then
+        s.pabEnchantsAutoV1 = true
+        local d = s.defaultBuffs
+        if d then
+            local saved = d.enchGridSaved
+            if saved then
+                d.iconsPerRow, d.maxRows, d.maxTotal = saved.iconsPerRow, saved.maxRows, saved.maxTotal
+                d.enchGridSaved = nil
+                d.showAllBuffs = nil
+            end
+            d.showWeaponEnchants = nil
+        end
+    end
     if s.pabBarEnableV1 then return end
     s.pabBarEnableV1 = true
     local function MapBuff(bar, isDefault)
@@ -2357,9 +2386,9 @@ end
 -- Weapon enchants are not auras, so only the engine's own item-enchantment
 -- source renders them (see AK.AddItemEnchantmentsToContainer): a LEADING
 -- layout group on the Buffs container, flowed ahead of the aura run in every
--- grow direction and in combat. Opt-in per bar (showWeaponEnchants, the
--- pinned "Weapon Enchants" Filters row), a content source of its own and so
--- never gated on the broad-content modes.
+-- grow direction and in combat. They ride the bar's broad-content modes
+-- (ns.PAB_EnchantsOn: All Buffs or Has Duration on the default Buffs bar),
+-- with no opt-in of their own.
 local function BuildEnchantSpec(cfg, pad, rowGap, maxSlots)
     local layout = BuildGroupLayout(cfg, pad, rowGap)
     local placement = CustomAuraContainerItemEnchantmentPlacement
@@ -2368,6 +2397,9 @@ local function BuildEnchantSpec(cfg, pad, rowGap, maxSlots)
     local sortDirs = AuraContainerSortDirection
     return {
         style = STYLE_BUFFS,
+        -- Marks the cell as a weapon enchant for the style pass (Blizzard
+        -- Style draws the stock temp-enchant ring on those only).
+        extraInit = AK.EnchantCellInit,
         layout = layout,
         hidePermanent = true,
         maxSlots = maxSlots,
@@ -2441,8 +2473,9 @@ do
 end
 
 local function ApplyEnchants(container, cfg, pad, grid)
-    SyncEnchantEvents(cfg ~= nil and cfg.showWeaponEnchants == true)
-    if not (container and cfg and grid and cfg.showWeaponEnchants == true) then return end
+    local on = ns.PAB_EnchantsOn(cfg)
+    SyncEnchantEvents(on)
+    if not (on and container and grid) then return end
     if (grid.enchSlots or 0) <= 0 then return end
     AK.AddItemEnchantmentsToContainer(container,
         BuildEnchantSpec(cfg, pad, grid.rowGap, grid.enchSlots))
@@ -2454,7 +2487,7 @@ end
 -- releases the container and builds a fresh one -- including a grid shrunk
 -- below three cells, which declares fewer slots than before.
 local function BuffsContentSig(cfg, spells, enchSlots)
-    enchSlots = (cfg.showWeaponEnchants == true) and (enchSlots or 0) or 0
+    enchSlots = ns.PAB_EnchantsOn(cfg) and (enchSlots or 0) or 0
     return table.concat(spells, ",") .. (enchSlots > 0 and ("|e" .. enchSlots) or "")
 end
 
@@ -2463,7 +2496,7 @@ local function CreateBars()
     if not AK then return end -- 12.1 gated at file top; defensive only
 
     local s = PAB()
-    if not s then return end -- ns.db not ready yet; SetupOptionsPanel calls back once it is
+    if not s then return end -- ns.db not ready yet; TryCreateBars() below retries
 
     -- Master enable, default OFF: nothing below runs while disabled -- Blizzard's
     -- BuffFrame/DebuffFrame stay untouched, no containers, no unlock elements, options
@@ -2737,11 +2770,10 @@ function RegisterPABUnlock()
         })
     end
 
-    -- Buffs mover carries the bar's content-derived name (see
-    -- ns.PAB_DefaultBuffsName), so an enchants-only bar reads "Weapon Enchants"
-    -- in unlock mode instead of "Buffs". Baked in at registration --
-    -- EUI_UnlockMode.lua's GetBarLabel returns the stored string -- which is why
-    -- ApplyLiveConfig re-registers when the name changes.
+    -- Buffs mover carries the bar's display name (see ns.PAB_DefaultBuffsName).
+    -- Baked in at registration -- EUI_UnlockMode.lua's GetBarLabel returns the
+    -- stored string -- which is why ApplyLiveConfig re-registers when the name
+    -- changes.
     local s = PAB()
     local buffLabel = ns.PAB_DefaultBuffsName(s and DefaultBuffsCfg(s) or nil)
     lastUnlockBuffLabel = buffLabel
@@ -2854,7 +2886,7 @@ end
 -- spec-level (class toggles, grid: iconsPerRow/maxRows/padding/maxBuffs-or-Debuffs,
 -- grow direction). Applies to ONE polarity's container; callers touching a shared
 -- field (iconSize) call it for both. No-op before the container exists
--- (SetupOptionsPanel calls CreateBars() once ns.db is ready).
+-- (TryCreateBars calls CreateBars() once ns.db is ready).
 local function ApplyLiveConfig(isBuff)
     local s = PAB()
     if not (AK and s) then return end
@@ -4356,7 +4388,7 @@ function ns.PAB_ReloadCustomDebuffBar(barId)
     if PAB_MaybeRefreshPreview then PAB_MaybeRefreshPreview("debuff", barId) end
 end
 
--- Rebuilds every persisted custom bar's engine state. Called once from CreateBars
+-- Rebuilds every persisted custom bar's engine state. Called once from TryCreateBars
 -- alongside the default bars, and safe to call again any time (profile switch, spec
 -- change): both reload functions above are idempotent no-ops when nothing changed.
 -- Iterates the legacy arrays AND every editing-spec bucket -- each per-bar reload
@@ -5015,7 +5047,7 @@ local function BuildPreviewSlots(isBuff, cfg, list, listLen, count)
     -- content: they are not auras. They do take a cell each, though: Max Icons
     -- counts the whole bar, so the aura slots below are what is left after them.
     local numEnch, enchSlots = 0, nil
-    if isBuff and cfg.showWeaponEnchants == true then
+    if isBuff and ns.PAB_EnchantsOn(cfg) then
         enchSlots = PreviewEnchantSlots()
         numEnch = #enchSlots
     end
@@ -5697,11 +5729,36 @@ end
 --  Lifecycle
 -------------------------------------------------------------------------------
 
--- Login build: EllesmereUIUnitFrames.lua's SetupOptionsPanel() calls this once it
--- has set ns.db. A PLAYER_LOGIN listener here needed EnableBody's handler to run
--- first and stood down silently otherwise (field: Blizzard buffs up, no custom
--- bars until an options change). A disabled Unit Frames module never runs
--- SetupOptionsPanel, so PAB stays down with no extra check.
+-- ns.db is set by EllesmereUIUnitFrames.lua's SetupOptionsPanel(), which
+-- EnableBody() only schedules via C_Timer.After(0, SetupOptionsPanel) -- one frame
+-- AFTER PLAYER_LOGIN's handlers finish. A single PLAYER_LOGIN listener here would run
+-- BEFORE ns.db exists (confirmed: PAB() returned nil at that point). Rather than
+-- depend on the exact relative timing between two independent C_Timer.After(0, ...)
+-- calls in different files, retry with a capped, gently backing-off timer until ns.db
+-- is actually populated.
+local RETRY_CAP = 40 -- ~ a few seconds worst case at the backed-off interval; then give up loudly
+local retryCount = 0
+
+local function TryCreateBars()
+    -- Module-disabled stand-down: EnableBody stamps ns._eufEnabled before this
+    -- handler can run (same PLAYER_LOGIN dispatch, parent enable-drain first,
+    -- module router second, this file's handler third). No stamp = the Unit
+    -- Frames module is off this session, ns.db will never arrive, and erroring
+    -- would spam every login for users who simply disabled the module.
+    if not ns._eufEnabled then return end
+    if PAB() then
+        CreateBars()
+        return
+    end
+    retryCount = retryCount + 1
+    if retryCount > RETRY_CAP then
+        geterrorhandler()("EllesmereUIUnitFrames_PlayerAuraBars: ns.db never became "
+            .. "available after " .. RETRY_CAP .. " retries -- Player Aura Bars did not load.")
+        return
+    end
+    C_Timer.After(0, TryCreateBars)
+end
+
 ns.PAB_CreateBars = CreateBars
 
 function ns.PAB_Enabled()
@@ -5744,6 +5801,22 @@ end
 function ns.PAB_UseBlizzard()
     local s = PAB()
     return (s and s.useBlizzardBuffs == true) or false
+end
+
+-- Blizzard Style (Global Settings > Style) for the aura bars: read from the
+-- profile once (first call with a profile present) and latched for the
+-- session like the other module getters, so a live profile switch never flips
+-- the look under the engine-registered border art; the profile system prompts
+-- for a reload instead.
+function ns.PAB_Blizz()
+    local v = ns._pabBlizz
+    if v == nil then
+        local s = PAB()
+        if not s then return false end
+        v = s.useBlizzardStyle and true or false
+        ns._pabBlizz = v
+    end
+    return v
 end
 
 -- Profile-grade resync, called from the _EUF_ReloadFrames tail (profile
@@ -5999,10 +6072,20 @@ local function ReapplyAllAfterCinematic()
     end)
 end
 
--- Registers nothing itself: CreateBars calls ns.PAB_ArmRecovery() once it has
--- confirmed the module is enabled -- login build and live enable both.
 local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_LOGIN" then
+        self:UnregisterEvent("PLAYER_LOGIN")
+        TryCreateBars()
+        -- NOTE: recovery events are NOT registered here. ns.db is routinely
+        -- absent during this same PLAYER_LOGIN dispatch (that is what
+        -- TryCreateBars' retry loop exists for), so an enabled check taken
+        -- synchronously reads nil and skips registration for enabled users.
+        -- CreateBars calls ns.PAB_ArmRecovery() once it has confirmed the
+        -- module is enabled -- login retry path and live enable both.
+        return
+    end
     if event == "PLAYER_ENTERING_WORLD" then
         if vehicleHidden then
             local probe = UnitUsingVehicle or UnitInVehicle
@@ -6041,8 +6124,9 @@ initFrame:SetScript("OnEvent", function(self, event)
 end)
 
 -- Called by CreateBars once it has passed its own enabled check -- the only
--- point where "PAB is actually running" is known to be true. Idempotent:
--- CreateBars can run more than once per session (login build, live enable).
+-- point where "PAB is actually running" is known to be true (at PLAYER_LOGIN
+-- ns.db may not exist yet; see the login handler note above). Idempotent:
+-- CreateBars can run more than once per session (login retry, live enable).
 local recoveryArmed = false
 function ns.PAB_ArmRecovery()
     if recoveryArmed then return end

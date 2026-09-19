@@ -217,6 +217,13 @@ ns.BLOCK_TYPES = {
     { key = "spacer",     label = "Spacer" },
 }
 
+if EUI_IS_FOREVER then
+    for i = #ns.BLOCK_TYPES, 1, -1 do
+        local entry = ns.BLOCK_TYPES[i]
+        if entry.key == "greatvault" then table.remove(ns.BLOCK_TYPES, i) end
+    end
+end
+
 ns.BLOCK_DEFAULTS = {
     clock      = { localTime = true, twentyFour = true, showMail = true, showResting = true, fontSizeClock = nil, fontSizeInfo = nil },
     fps        = {},
@@ -842,7 +849,7 @@ do
         -- No clickable overlays in combat, ever: the driver hides the host
         -- securely the instant lockdown starts and re-shows it on regen for
         -- the next out-of-combat tip.
-        RegisterStateDriver(actionHost, "visibility", "[combat] hide; show")
+        EllesmereUI.SecureCall(RegisterStateDriver, actionHost, "visibility", "[combat] hide; show")
         local regen = CreateFrame("Frame")
         regen:RegisterEvent("PLAYER_REGEN_ENABLED")
         regen:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -2169,6 +2176,14 @@ function ns.ApplyBar(id)
     local profile = ns.GetProfile()
     if not profile then return end
     local cfg = ns.GetBar(id)
+    if EUI_IS_FOREVER and cfg and cfg.blocks then
+        for i = #cfg.blocks, 1, -1 do
+            if cfg.blocks[i].type == "greatvault" then
+                cfg._foreverRemovedBlocks = cfg._foreverRemovedBlocks or {}
+                cfg._foreverRemovedBlocks[#cfg._foreverRemovedBlocks + 1] = table.remove(cfg.blocks, i)
+            end
+        end
+    end
     local rec = live[id]
 
     -- An existing implicitly-protected bar (secure children) cannot be
@@ -2541,7 +2556,9 @@ do
                 visFrame = CreateFrame("Frame")
                 visFrame:SetScript("OnEvent", OnVisEvent)
             end
-            for _, e in ipairs(VIS_EVENTS) do visFrame:RegisterEvent(e) end
+            for _, e in ipairs(VIS_EVENTS) do
+                if not EUI_IS_FOREVER or e ~= "PLAYER_CAN_GLIDE_CHANGED" then visFrame:RegisterEvent(e) end
+            end
             if EllesmereUI._hasGlidingEvent then
                 visFrame:RegisterEvent("PLAYER_IS_GLIDING_CHANGED")
             end

@@ -1,4 +1,6 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
+-- Namespaced first: the loose spec globals are gone on newer clients.
+local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
 -------------------------------------------------------------------------------
 --  EllesmereUIRaidFrames.lua
 --  Custom raid frames built on SecureGroupHeaderTemplate.
@@ -6,6 +8,14 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  Secret-value-safe absorb shields matching UnitFrames visuals.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+-- Every frame here is a secure group header. Setting any attribute on one makes Blizzard
+-- run its own snippets, so on a client that cannot compile them the header throws on
+-- every attribute and never lays anybody out. Standing down leaves Blizzard raid frames
+-- in place, which is the only thing that can work there.
+if EllesmereUI.SecureSnippetsWork and not EllesmereUI.SecureSnippetsWork() then
+    ns.standDown = true
+    return
+end
 if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
 
@@ -5715,12 +5725,12 @@ FB.EnsureBuilt = function()
     ]]
     local controller = CreateFrame("Frame", "ERFFriendlyBossController", nil, "SecureHandlerAttributeTemplate")
     for i = 1, 5 do
-        controller:SetFrameRef("slot" .. i, FB.buttons[i])
+        EllesmereUI.SecureCall(controller.SetFrameRef, controller, "slot" .. i, FB.buttons[i])
     end
     -- The template's handler attribute is "_onattributechanged" (wildcard receiving name/value).
     -- The relayout body lives in its own attribute so the handler and the force-run share it.
-    controller:SetAttributeNoHandler("fb_relayout", FB.RELAYOUT)
-    controller:SetAttributeNoHandler("_onattributechanged", [[
+    EllesmereUI.SecureCall(controller.SetAttributeNoHandler, controller, "fb_relayout", FB.RELAYOUT)
+    EllesmereUI.SecureCall(controller.SetAttributeNoHandler, controller, "_onattributechanged", [[
         if name == "state-ingroup" or name == "state-fb1" or name == "state-fb2"
            or name == "state-fb3" or name == "state-fb4" or name == "state-fb5" then
             self:RunAttribute("fb_relayout")
@@ -5942,9 +5952,9 @@ function ns.FB_Apply()
     if not FB.ShouldBeActive() then
         if FB.built then
             if FB.controller then
-                UnregisterAttributeDriver(FB.controller, "state-ingroup")
+                EllesmereUI.SecureCall(UnregisterAttributeDriver, FB.controller, "state-ingroup")
                 for i = 1, 5 do
-                    UnregisterAttributeDriver(FB.controller, "state-fb" .. i)
+                    EllesmereUI.SecureCall(UnregisterAttributeDriver, FB.controller, "state-fb" .. i)
                 end
             end
             for _, b in ipairs(FB.buttons) do
@@ -5970,15 +5980,15 @@ function ns.FB_Apply()
     local groupCond = (fb.showInDungeons == true)
         and "[@raid1,exists][@party1,exists] 1; 0"
         or "[@raid1,exists] 1; 0"
-    RegisterAttributeDriver(FB.controller, "state-ingroup", groupCond)
+    EllesmereUI.SecureCall(RegisterAttributeDriver, FB.controller, "state-ingroup", groupCond)
     for i = 1, 5 do
-        RegisterAttributeDriver(FB.controller, "state-fb" .. i, "[@boss" .. i .. ",help] 1; 0")
+        EllesmereUI.SecureCall(RegisterAttributeDriver, FB.controller, "state-fb" .. i, "[@boss" .. i .. ",help] 1; 0")
     end
     -- Force one relayout now: the driver manager fires attribute handlers only on VALUE CHANGES, so
     -- a (re)apply with unchanged states would never run the initial layout. FB_Apply is OOC-only,
     -- so the insecure Execute is always legal here.
     if SecureHandlerExecute then
-        SecureHandlerExecute(FB.controller, FB.RELAYOUT)
+        EllesmereUI.SecureCall(SecureHandlerExecute, FB.controller, FB.RELAYOUT)
     end
     for _, b in ipairs(FB.buttons) do
         if b:IsVisible() then FB.Update(b) end

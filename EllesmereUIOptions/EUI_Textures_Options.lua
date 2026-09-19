@@ -747,12 +747,15 @@ local function TileMythicTimer(parent, y, W, tile)
     local function tsb() local p = db(); return p and p.tsb end
     local function tfbT() local p = db(); return p and p.tfb and p.tfb.target end
     local function tfbF() local p = db(); return p and p.tfb and p.tfb.focus end
-    local _, h = W:DualRow(parent, y,
+    local _, h
+if not EUI_IS_FOREVER then
+    _, h = W:DualRow(parent, y,
         texCfg("Timer Bar Texture", "barTexture"),
         texCfg("Timer Background Texture", "barBgTexture"));  y = y - h
     _, h = W:DualRow(parent, y,
         texCfg("Forces Bar Texture", "enemyBarTexture"),
         texCfg("Forces Background Texture", "enemyBarBgTexture"));  y = y - h
+end
     _, h = W:DualRow(parent, y,
         subTexCfg("Targeted Bars Texture", tsb, "TSB_Refresh"),
         subTexCfg("Target Cast Bar Texture", tfbT, "TFB_Refresh"));  y = y - h
@@ -829,6 +832,7 @@ end
 local function TileBlizzardSkin(parent, y, W, tile)
     local ns = NS(tile.folder)
     if not ns then return DisabledTile(parent, y, W, tile) end
+    if not EUI_IS_FOREVER then
     local cat = OwnBarCatalogue("edr", nil)
     local values, order = CopyBarDD(cat.names, cat.order, cat.lookup, true)
     local _, h = W:DualRow(parent, y,
@@ -844,6 +848,7 @@ local function TileBlizzardSkin(parent, y, W, tile)
               if ns.edrRedraw then ns.edrRedraw() end
           end },
         BLANK());  y = y - h
+    end
     y = LinkRow(parent, y, "Popup & Tooltip Border Styles",
         tile.folder, "Tooltips, Menus & Popups", nil, "Border Style")
     return y
@@ -869,8 +874,8 @@ local TILE_BUILDERS = {
     EllesmereUICooldownManager = { TileCooldownManager, "Tracking bar textures and icon borders" },
     EllesmereUIResourceBars    = { TileResourceBars,    "Resource, cast and GCD bar textures" },
     EllesmereUIQoL             = { TileQoL,             "Movement alert bar and cursor ring art" },
-    EllesmereUIBlizzardSkin    = { TileBlizzardSkin,    "Dragonriding speed bar texture" },
-    EllesmereUIMythicTimer     = { TileMythicTimer,     "Timer, forces and spell bar textures" },
+    EllesmereUIBlizzardSkin    = { TileBlizzardSkin,    EUI_IS_FOREVER and "Popup and tooltip border styles" or "Dragonriding speed bar texture" },
+    EllesmereUIMythicTimer     = { TileMythicTimer,     EUI_IS_FOREVER and "Cast bar textures" or "Timer, forces and spell bar textures" },
     EllesmereUIMinimap         = { TileMinimap,         "Minimap border style" },
     EllesmereUIChat            = { TileChat,            "Chat background and tab textures" },
     EllesmereUIDamageMeters    = { TileDamageMeters,    "Meter, breakdown and history bar textures" },

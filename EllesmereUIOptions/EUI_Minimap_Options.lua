@@ -46,7 +46,12 @@ initFrame:SetScript("OnEvent", function(self)
 
     local function MinimapDB()
         local p = DB()
-        return p and p.minimap
+        local m = p and p.minimap
+        if EUI_IS_FOREVER and m then
+            if m.clockHoverTooltip == "vault" then m.clockHoverTooltip = "none" end
+            if m.fpsHoverTooltip == "vault" then m.fpsHoverTooltip = "none" end
+        end
+        return m
     end
 
     -- Square and Rectangular share the rect layout/border engine (not the circle wrap).
@@ -125,11 +130,12 @@ initFrame:SetScript("OnEvent", function(self)
         EllesmereUI:ClearContentHeader()
 
         _, h = W:SectionHeader(parent, SECTION_MINIMAP, y);  y = y - h
+        y = EllesmereUI.BlizzStyle.Note(parent, y, "minimap")
 
         -- Row 1: Visibility | Shape
         local visRow
         h, visRow = BuildVisibilityRow(W, parent, y, MinimapDB, RefreshMinimap,
-            { type="dropdown", text="Shape",
+            EllesmereUI.BlizzStyle.Gate("minimap", { type="dropdown", text="Shape",
               values = { square = "Square", rectangular = "Rectangular", circle = "Circle", textured_circle = "Textured Circle" },
               order  = { "square", "rectangular", "circle", "textured_circle" },
               getValue=function() local m = MinimapDB(); return m and m.shape or "square" end,
@@ -138,7 +144,7 @@ initFrame:SetScript("OnEvent", function(self)
                 m.shape = v
                 RefreshMinimap()
                 EllesmereUI:RefreshPage()
-              end });  y = y - h
+              end }));  y = y - h
 
         -- Row 2: Size | Interactable Button Size
         _, h = W:DualRow(parent, y,
@@ -193,7 +199,7 @@ initFrame:SetScript("OnEvent", function(self)
         local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()
         local borderRow
         borderRow, h = W:DualRow(parent, y,
-            { type="dropdown", text="Border Style",
+            EllesmereUI.BlizzStyle.Gate("minimap", { type="dropdown", text="Border Style",
               values=texValues, order=texOrder,
               disabled=function() return not ShapeUsesRectLayout() end,
               disabledTooltip="Square or Rectangular Shape",
@@ -215,14 +221,14 @@ initFrame:SetScript("OnEvent", function(self)
                   if defSz then m.borderSize = defSz end
                   RefreshMinimap()
                   EllesmereUI:RefreshPage()
-              end },
-            { type="slider", text="Border Size", min=0, max=4, step=1, trackWidth=120,
+              end }),
+            EllesmereUI.BlizzStyle.Gate("minimap", { type="slider", text="Border Size", min=0, max=4, step=1, trackWidth=120,
               getValue=function() local m = MinimapDB(); return m and m.borderSize or 1 end,
               setValue=function(v)
                 local m = MinimapDB(); if not m then return end
                 m.borderSize = v
                 RefreshMinimap()
-              end }
+              end })
         );  y = y - h
         -- Inline cog for border offset (left region); only shown for textured styles
         if not EllesmereUI._prebuilding then
@@ -311,7 +317,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
             cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
             local function UpdateCogVis()
-                local rect = ShapeUsesRectLayout()
+                local rect = ShapeUsesRectLayout() and not EllesmereUI.BlizzStyle.Get("minimap")
                 if rect and BorderTex() ~= "solid" then cogBtn:Show() else cogBtn:Hide() end
             end
             EllesmereUI.RegisterWidgetRefresh(UpdateCogVis)
@@ -406,6 +412,11 @@ initFrame:SetScript("OnEvent", function(self)
                 if updateAccent then updateAccent() end
                 if updateClass then updateClass() end
                 if updateCustom then updateCustom() end
+                -- Blizzard Style draws the stock ring: every border colour is inert.
+                if EllesmereUI.BlizzStyle.Get("minimap") then
+                    accentSwatch:SetAlpha(0.3); classSwatch:SetAlpha(0.3); customSwatch:SetAlpha(0.3)
+                    return
+                end
                 local m = MinimapDB()
                 local useClass = m and m.borderUseClassColor
                 local useAccent = (not useClass) and m and m.useClassColor
@@ -415,6 +426,9 @@ initFrame:SetScript("OnEvent", function(self)
             end
             EllesmereUI.RegisterWidgetRefresh(UpdateState)
             UpdateState()
+            EllesmereUI.BlizzStyle.BlockInline("minimap", accentSwatch)
+            EllesmereUI.BlizzStyle.BlockInline("minimap", classSwatch)
+            EllesmereUI.BlizzStyle.BlockInline("minimap", customSwatch)
         end
 
         -- Reset Zoom (+ seconds) | Rotate Minimap. Off (default) keeps the
@@ -591,6 +605,12 @@ initFrame:SetScript("OnEvent", function(self)
                 portals       = "M+ Portals",
             }
             local EXTRA_BTN_DEFAULT_ORDER = { "greatVault", "friendsOnline", "portals" }
+            if EUI_IS_FOREVER then
+                EXTRA_BTN_LABELS.greatVault = nil
+                EXTRA_BTN_LABELS.portals = nil
+                EXTRA_BTN_DEFAULT_ORDER = { "friendsOnline" }
+            end
+
             local function GetExtraBtnItems()
                 local m = MinimapDB()
                 local order = m and m.extraBtnOrder
@@ -644,6 +664,14 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- M+ Portals Scale | Open Micro Menu on Middle Click
+        local foreverMicroMenu = { type="toggle", text="Open Micro Menu on Middle Click",
+              tooltip="Middle-click the minimap to open the EllesmereUI micro menu. When off, middle-click does nothing.",
+              getValue=function() local m = MinimapDB(); return m and m.openMicroMenuOnMiddleClick ~= false end,
+              setValue=function(v)
+                local m = MinimapDB(); if not m then return end
+                m.openMicroMenuOnMiddleClick = v
+              end }
+        if not EUI_IS_FOREVER then
         _, h = W:DualRow(parent, y,
             { type="slider", text="M+ Portals Scale", min=0.5, max=2.0, step=0.01,
               tooltip="Scales the M+ Portals flyout the portals button opens.",
@@ -661,6 +689,7 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
+        end
         -- Friends Tooltip Cap | Custom Tooltip Size
         _, h = W:DualRow(parent, y,
             { type="slider", text="Friends Tooltip Cap", min=0, max=30, step=1,
@@ -799,6 +828,8 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnEnter", function(s) s:SetAlpha(0.7) end)
             cogBtn:SetScript("OnLeave", function(s) s:SetAlpha(0.4) end)
             cogBtn:SetScript("OnClick", function(s) cogShow(s) end)
+            -- Blizzard Style draws no button boxes (ring buttons keep their own dress).
+            EllesmereUI.BlizzStyle.BlockInline("minimap", cogBtn)
 
             local resetFS = rgn:CreateFontString(nil, "OVERLAY")
             resetFS:SetFont(EllesmereUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 12, "")
@@ -826,6 +857,10 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         y = y - 10
+
+        if EUI_IS_FOREVER then
+            _, h = W:DualRow(parent, y, foreverMicroMenu, { type="empty" }); y = y - h
+        end
 
         -- BLIZZARD ELEMENTS section header
         _, h = W:SectionHeader(parent, "BLIZZARD ELEMENTS", y);  y = y - h
@@ -1039,7 +1074,8 @@ initFrame:SetScript("OnEvent", function(self)
         -- Element Row Position (+ spacing cog) | (empty)
         local elRowRow
         elRowRow, h = W:DualRow(parent, y,
-            { type="dropdown", text="Element Row Position",
+            -- Blizzard Style lays the elements out round the stock top bar.
+            EllesmereUI.BlizzStyle.Gate("minimap", { type="dropdown", text="Element Row Position",
               tooltip="Which minimap corner the Blizzard element row (tracking, calendar, mail, crafting) builds out from and the direction it grows.",
               values = ROW_POS_VALUES, order = ROW_POS_ORDER,
               disabled=function() return not ShapeUsesRectLayout() end,
@@ -1053,7 +1089,7 @@ initFrame:SetScript("OnEvent", function(self)
                 local m = MinimapDB(); if not m then return end
                 m.elementRowPosition = v
                 RefreshMinimap()
-              end },
+              end }),
             { type="dropdown", text="Mail Position",
               values = { button = "Minimap Button", TOPRIGHT = "Top Right", TOPLEFT = "Top Left",
                          BOTTOMRIGHT = "Bottom Right", BOTTOMLEFT = "Bottom Left" },
@@ -1158,6 +1194,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
             cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(elOff() and 0.15 or 0.4) end)
             cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
+            EllesmereUI.BlizzStyle.BlockInline("minimap", cogBtn)
             local cogBlock = CreateFrame("Frame", nil, cogBtn)
             cogBlock:SetAllPoints(); cogBlock:SetFrameLevel(cogBtn:GetFrameLevel() + 10); cogBlock:EnableMouse(true)
             cogBlock:SetScript("OnEnter", function() EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Square or Rectangular Shape")) end)
@@ -1297,7 +1334,7 @@ initFrame:SetScript("OnEvent", function(self)
                 RefreshMinimap()
                 EllesmereUI:RefreshPage()
               end },
-            { type="dropdown", text="Zone Position",
+            EllesmereUI.BlizzStyle.Gate("minimap", { type="dropdown", text="Zone Position",
               values = MAP_POS_VALUES, order = MAP_POS_ORDER,
               disabled=function() return LocationMode() == "none" end,
               disabledTooltip="Zone Text Style",
@@ -1306,7 +1343,7 @@ initFrame:SetScript("OnEvent", function(self)
                 local m = MinimapDB(); if not m then return end
                 m.locationPosition = v
                 RefreshMinimap()
-              end }
+              end })
         );  y = y - h
         -- Inline cog on Zone Text Style: reactive zone coloring
         if not EllesmereUI._prebuilding then
@@ -1649,6 +1686,10 @@ initFrame:SetScript("OnEvent", function(self)
         -- Show on FPS/MS Hover | Show on Clock Hover
         local HOVER_TT_VALUES = { none = "None", lockouts = "Instance Lockouts", vault = "Great Vault" }
         local HOVER_TT_ORDER = { "none", "lockouts", "vault" }
+        if EUI_IS_FOREVER then
+            HOVER_TT_VALUES.vault = nil
+            HOVER_TT_ORDER = { "none", "lockouts" }
+        end
         _, h = W:DualRow(parent, y,
             { type="dropdown", text="Show on FPS/MS Hover",
               values = HOVER_TT_VALUES, order = HOVER_TT_ORDER,
