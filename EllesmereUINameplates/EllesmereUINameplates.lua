@@ -4834,12 +4834,9 @@ local ApplyClassPowerSetting
 local function EnableClassPowerWatcher()
     if classPowerWatcher then return end  -- already active
     local info = CLASS_POWER_MAP[PLAYER_CLASS]
-    -- Vanilla content has no specializations, so the spec-keyed entries above never
-    -- resolve on Forever, and the flat ones name resources that client does not
-    -- have. This is the whole set that exists there.
     if EllesmereUI.IS_FOREVER == true then
-        info = (PLAYER_CLASS == "ROGUE" or PLAYER_CLASS == "DRUID")
-            and { Enum.PowerType.ComboPoints, 5 } or nil
+        local e = EllesmereUI.FOREVER_CLASS_RESOURCE[PLAYER_CLASS]
+        info = e and { e.power, e.max } or nil
     end
     if not info then return end  -- class has no trackable resource
 

@@ -1996,6 +1996,10 @@ initFrame:SetScript("OnEvent", function(self)
             }
             local _, playerClass = UnitClass("player")
             local cpInfo = CLASS_POWER_MAP[playerClass]
+            if EllesmereUI.IS_FOREVER then
+                local e = EllesmereUI.FOREVER_CLASS_RESOURCE[playerClass]
+                cpInfo = e and { e.max } or nil
+            end
             local cpMax = 0
             if cpInfo then
                 if cpInfo[1] then

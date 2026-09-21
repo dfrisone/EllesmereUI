@@ -8702,17 +8702,11 @@ local CLASS_POWER_TYPES = {
                     [71]  = { "SWEEPING_STRIKES", 18 } },  -- 12.1 cap: 12 + 6 Broad Strokes
 }
 
--- Vanilla content has no specializations, so every spec-keyed entry above fails to
--- resolve on Forever, and the flat ones name resources that client does not have --
--- a paladin there would draw five Holy Power pips that can never fill. This is the
--- whole set that exists on Forever; a class missing from it has no class resource.
-local FOREVER_CLASS_POWER = {
-    ROGUE = Enum.PowerType.ComboPoints,
-    DRUID = Enum.PowerType.ComboPoints,
-}
-
 local function ClassPowerEntry(playerClass)
-    if EllesmereUI.IS_FOREVER == true then return FOREVER_CLASS_POWER[playerClass] end
+    if EllesmereUI.IS_FOREVER == true then
+        local e = EllesmereUI.FOREVER_CLASS_RESOURCE[playerClass]
+        return e and e.power
+    end
     return CLASS_POWER_TYPES[playerClass]
 end
 

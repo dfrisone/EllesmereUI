@@ -3665,6 +3665,16 @@ EllesmereUI.CLASS_RESOURCE_MAP = {
     DEMONHUNTER = "SoulFragments",
 }
 
+-- WoW Forever runs vanilla content with no specializations, so nothing spec-keyed
+-- in the maps above resolves there, and the flat entries name resources that client
+-- does not have: a paladin drew five Holy Power pips that could never fill. This is
+-- the whole set that exists on Forever; a class absent from it has none. The unit
+-- frame and the unit frame options preview both read it.
+EllesmereUI.FOREVER_CLASS_RESOURCE = {
+    ROGUE = { power = Enum.PowerType.ComboPoints, max = 5 },
+    DRUID = { power = Enum.PowerType.ComboPoints, max = 5 },
+}
+
 -- Darken a color by a fraction (for default gradient secondary)
 function EllesmereUI.DarkenColor(r, g, b, frac)
     frac = frac or 0.10
