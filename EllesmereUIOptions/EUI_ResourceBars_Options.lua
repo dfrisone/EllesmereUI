@@ -7184,7 +7184,7 @@ initFrame:SetScript("OnEvent", function(self)
                     UpdateRechargeSwatch()
                 end
             end
-            if playerClass == "HUNTER" and not ctx.advanced then
+            if playerClass == "HUNTER" and not ctx.advanced and not EllesmereUI.IS_FOREVER then
                 _, h = W:DualRow(parent, y,
                     { type = "toggle", text = "Show Focus as Power Bar (BM/MM)",
                       tooltip = "When enabled, BM and MM specs show Focus as the standard power bar instead of a class resource bar.",

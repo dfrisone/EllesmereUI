@@ -3633,7 +3633,7 @@ end
 EllesmereUI.CLASS_POWER_MAP = {
     WARRIOR      = "RAGE",
     PALADIN      = "MANA",
-    HUNTER       = "FOCUS",
+    HUNTER       = (EllesmereUI.IS_FOREVER == true) and "MANA" or "FOCUS",
     ROGUE        = "ENERGY",
     PRIEST       = "MANA",
     DEATHKNIGHT  = "RUNIC_POWER",
