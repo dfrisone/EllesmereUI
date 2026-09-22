@@ -3259,8 +3259,10 @@ local function SkinCharacterSheet()
     -- Persistent tile pool. Rebuilt once; reused across every refresh.
     local setTilePool = {}
 
-    -- Forward declaration; defined after the buttons.
-    local RefreshEquipmentSets
+    -- Forward declarations; defined after the buttons.
+    local RefreshEquipmentSets, LoadSetIgnores
+    -- The set whose ignored slots are currently loaded for saving.
+    local ignoresSetID
 
     -- ============================================================
     -- Equipment panel header: "Gear Sets" title with physical-pixel 1px dividers
@@ -3327,6 +3329,9 @@ local function SkinCharacterSheet()
             OnAccept = function(dialog)
                 local newName = dialog.EditBox:GetText()
                 if newName ~= "" then
+                    -- Creation saves the pending ignored slots; start clean like Blizzard's New Set.
+                    C_EquipmentSet.ClearIgnoredSlotsForSave()
+                    ignoresSetID = nil
                     C_EquipmentSet.CreateEquipmentSet(newName)
                     RefreshEquipmentSets()
                 end
@@ -3471,6 +3476,10 @@ local function SkinCharacterSheet()
 
         if not selectedSetID and activeEquipmentSetID then
             selectedSetID = activeEquipmentSetID
+        end
+        if selectedSetID and selectedSetID ~= ignoresSetID
+           and C_EquipmentSet.GetEquipmentSetInfo(selectedSetID) then
+            LoadSetIgnores(selectedSetID)
         end
 
         -- Lazy-create a tile with all sub-frames + once-bound scripts. Data
@@ -3796,7 +3805,14 @@ local function SkinCharacterSheet()
     equipmentColorMonitor:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
     equipmentColorMonitor:RegisterEvent("EQUIPMENT_SWAP_FINISHED")
     equipmentColorMonitor:RegisterEvent("EQUIPMENT_SETS_CHANGED")
-    equipmentColorMonitor:SetScript("OnEvent", QueueColorRefresh)
+    equipmentColorMonitor:SetScript("OnEvent", function(_, event, completed, setID)
+        -- Follow a set equipped from outside this panel, as Blizzard's own list does.
+        if event == "EQUIPMENT_SWAP_FINISHED" and completed and setID and equipPanel:IsVisible() then
+            selectedSetID = setID
+            QueueFullRefresh()
+        end
+        QueueColorRefresh()
+    end)
     if CharacterFrame then
         CharacterFrame:HookScript("OnShow", QueueColorRefresh)
     end
@@ -3805,6 +3821,108 @@ local function SkinCharacterSheet()
     local equipSetChangeFrame = CreateFrame("Frame")
     equipSetChangeFrame:RegisterEvent("EQUIPMENT_SETS_CHANGED")
     equipSetChangeFrame:SetScript("OnEvent", QueueFullRefresh)
+
+    -- Blizzard's slot flyout offers Ignore This Slot only for the set selected on
+    -- its own (covered) pane, so this panel keeps its selection's ignored slots
+    -- through the equipment-set API and offers its own toggle beside the flyout.
+    do
+        local ignoreSlotButtons, isIgnoreSlotButton = {}, {}
+        for _, name in ipairs({
+            "CharacterHeadSlot", "CharacterNeckSlot", "CharacterShoulderSlot", "CharacterBackSlot",
+            "CharacterChestSlot", "CharacterShirtSlot", "CharacterTabardSlot", "CharacterWristSlot",
+            "CharacterHandsSlot", "CharacterWaistSlot", "CharacterLegsSlot", "CharacterFeetSlot",
+            "CharacterFinger0Slot", "CharacterFinger1Slot", "CharacterTrinket0Slot", "CharacterTrinket1Slot",
+            "CharacterMainHandSlot", "CharacterSecondaryHandSlot",
+        }) do
+            local btn = _G[name]
+            if btn then
+                ignoreSlotButtons[#ignoreSlotButtons + 1] = btn
+                isIgnoreSlotButton[btn] = true
+            end
+        end
+
+        local function ShowIgnoreMark(btn)
+            if btn.ignoreTexture then
+                btn.ignoreTexture:SetShown(C_EquipmentSet.IsSlotIgnoredForSave(btn:GetID()))
+            end
+        end
+
+        local function UpdateIgnoreMarks()
+            for _, btn in ipairs(ignoreSlotButtons) do ShowIgnoreMark(btn) end
+        end
+
+        LoadSetIgnores = function(setID)
+            ignoresSetID = setID
+            C_EquipmentSet.ClearIgnoredSlotsForSave()
+            for slot, ignored in pairs(C_EquipmentSet.GetIgnoredSlots(setID)) do
+                if ignored then C_EquipmentSet.IgnoreSlotForSave(slot) end
+            end
+            UpdateIgnoreMarks()
+        end
+
+        -- The covered pane reloads its own selection's ignores on gear and bag
+        -- updates and clears them when it hides; restore this panel's selection.
+        local function ReassertIgnores()
+            if not equipPanel:IsVisible() then
+                ignoresSetID = nil
+                return
+            end
+            if selectedSetID and C_EquipmentSet.GetEquipmentSetInfo(selectedSetID) then
+                LoadSetIgnores(selectedSetID)
+            end
+        end
+        hooksecurefunc("PaperDollFrame_IgnoreSlotsForSet", ReassertIgnores)
+        hooksecurefunc("PaperDollFrame_ClearIgnoredSlots", ReassertIgnores)
+        hooksecurefunc("PaperDollItemSlotButton_Update", function(btn)
+            if isIgnoreSlotButton[btn] and equipPanel:IsVisible() then ShowIgnoreMark(btn) end
+        end)
+
+        local flyout = EquipmentFlyoutFrame
+        local ignoreToggle = CreateFrame("Button", nil, flyout)
+        ignoreToggle:Hide()
+        local ignoreToggleIcon = ignoreToggle:CreateTexture(nil, "ARTWORK")
+        ignoreToggleIcon:SetAllPoints()
+        ignoreToggle:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+
+        local function FlyoutSlotIgnored()
+            return C_EquipmentSet.IsSlotIgnoredForSave(flyout.button:GetID())
+        end
+
+        local function UpdateIgnoreToggle()
+            local slotBtn = flyout.button
+            if not (slotBtn and isIgnoreSlotButton[slotBtn] and selectedSetID and equipPanel:IsVisible()) then
+                ignoreToggle:Hide()
+                return
+            end
+            ignoreToggleIcon:SetTexture(FlyoutSlotIgnored()
+                and "Interface\\PaperDollInfoFrame\\UI-GearManager-Undo"
+                or "Interface\\PaperDollInfoFrame\\UI-GearManager-LeaveItem-Opaque")
+            local first = flyout.buttons and flyout.buttons[1]
+            if first then ignoreToggle:SetSize(first:GetSize()) end
+            ignoreToggle:ClearAllPoints()
+            ignoreToggle:SetPoint("TOPLEFT", flyout.buttonFrame, "TOPRIGHT", 4, 0)
+            ignoreToggle:Show()
+        end
+        hooksecurefunc("EquipmentFlyout_UpdateItems", UpdateIgnoreToggle)
+
+        ignoreToggle:SetScript("OnClick", function(self)
+            local slot = flyout.button:GetID()
+            if FlyoutSlotIgnored() then
+                C_EquipmentSet.UnignoreSlotForSave(slot)
+            else
+                C_EquipmentSet.IgnoreSlotForSave(slot)
+            end
+            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+            UpdateIgnoreMarks()
+            UpdateIgnoreToggle()
+            self:GetScript("OnEnter")(self)
+        end)
+        ignoreToggle:SetScript("OnEnter", function(self)
+            EllesmereUI.ShowWidgetTooltip(self, FlyoutSlotIgnored()
+                and EQUIPMENT_MANAGER_UNIGNORE_SLOT or EQUIPMENT_MANAGER_IGNORE_SLOT)
+        end)
+        ignoreToggle:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+    end
 
     equipPanel:HookScript("OnShow", function()
         RefreshEquipmentSets()
