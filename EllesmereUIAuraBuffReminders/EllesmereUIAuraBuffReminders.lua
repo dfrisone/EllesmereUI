@@ -90,14 +90,14 @@ local db  -- set in EABR:OnInitialize()
 local texCache = {}
 local function Tex(id)
     local c = texCache[id]; if c then return c end
-    local t = (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)) or GetSpellTexture(id)
+    local t = C_Spell.GetSpellTexture(id)
     if t then texCache[id] = t end; return t
 end
 
 local spellNameCache = {}
 local function SpellName(id)
     local c = spellNameCache[id]; if c then return c end
-    local n = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or GetSpellInfo(id)
+    local n = C_Spell.GetSpellName(id)
     if n then spellNameCache[id] = n end; return n
 end
 
@@ -129,17 +129,11 @@ local function ResolveFontPath(fontName)
     end
     return "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 end
-local function GetABROutline()
-    return (EllesmereUI and EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag("auraBuff")) or ""
-end
-local function GetABRUseShadow()
-    return not EllesmereUI or not EllesmereUI.GetFontUseShadow or EllesmereUI.GetFontUseShadow("auraBuff")
-end
 local _cachedOutline
 local function SetABRFont(fs, font, size)
     if not (fs and fs.SetFont) then return end
-    if not _cachedOutline then _cachedOutline = GetABROutline() end
-    if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(fs, _cachedOutline == "" and GetABRUseShadow()) end
+    if not _cachedOutline then _cachedOutline = EllesmereUI.GetFontOutlineFlag("auraBuff") end
+    EllesmereUI.PrimeFontShadow(fs, _cachedOutline == "" and EllesmereUI.GetFontUseShadow("auraBuff"))
     fs:SetFont(font, size, _cachedOutline)
 end
 
@@ -246,13 +240,6 @@ end
 local function InPreKeyDungeon()
     if InMythicPlusKey() then return false end
     return _cachedIType == "party" and _cachedDiffID == 8
-end
-
--- Mythic 0 dungeon or Mythic raid (fixed or flex)
-local function InMythicZeroDungeonOrMythicRaid()
-    if EABR.InMythicZeroDungeon() then return true end
-    if IsInRaid() and IsMythicRaidDiff(_cachedDiffID) then return true end
-    return false
 end
 
 local function InPvPInstance()
@@ -618,6 +605,34 @@ local function _unitHasBuff(u, spellIDs)
     return false
 end
 
+-- Strict ownership of one aura: true = the player cast it, false = someone else
+-- did, nil = cannot tell (the caller suppresses rather than false-fires).
+-- isFromPlayerOrPlayerPet is true for ANY player's (or player pet's) cast, so it
+-- only rules an aura out (false = an NPC applied it); sourceUnit proves it.
+function EABR._StrictAuraFromMe(aura)
+    local fromPlayer = aura.isFromPlayerOrPlayerPet
+    if not isSecret(fromPlayer) and fromPlayer == false then return false end
+    local src = aura.sourceUnit
+    if src == nil or isSecret(src) then return nil end
+    return UnitIsUnit(src, "player") == true
+end
+
+-- Whether the player's OWN cast of `id` is on `unit`, for the in-combat cache
+-- updates where sourceUnit is secret: the PLAYER filter returns only auras the
+-- player applied, so another caster's copy never counts. Presence only.
+function EABR._OwnCastOn(unit, id)
+    local names = EABR._ownCastNames
+    if not names then names = {}; EABR._ownCastNames = names end
+    local name = names[id]
+    if name == nil then
+        name = C_Spell.GetSpellName(id) or false
+        names[id] = name
+    end
+    if not name then return false end
+    local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, "HELPFUL|PLAYER")
+    return ok and aura ~= nil and not isSecret(aura)
+end
+
 -- True if the buff's source is the player. Non-player units: OOC iteration only, false in combat (caller uses the snapshot).
 local function _unitHasBuffFromPlayer(u, spellIDs, strictSource)
     local inCombat = InCombat()
@@ -633,21 +648,16 @@ local function _unitHasBuffFromPlayer(u, spellIDs, strictSource)
                 local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
                 if strictSource and (not ok or isSecret(aura)) then return nil end
                 if ok and aura ~= nil and not isSecret(aura) then
-                    local fromMe = aura.isFromPlayerOrPlayerPet
-                    if strictSource then
-                        if isSecret(fromMe) then return nil end
-                        if fromMe ~= nil then return fromMe == true end
-                        local src = aura.sourceUnit
-                        if isSecret(src) or src == nil then return nil end
-                        return UnitIsUnit(src, "player") == true
-                    elseif fromMe and not isSecret(fromMe) and fromMe == true then
-                        return true
-                    end
+                    if strictSource then return EABR._StrictAuraFromMe(aura) end
                     local src = aura.sourceUnit
-                    if src and not isSecret(src) and UnitIsUnit(src, "player") then
-                        return true
+                    if src and not isSecret(src) then
+                        if UnitIsUnit(src, "player") then return true end
+                    else
+                        -- Source unreadable: a player's cast is assumed ours (the
+                        -- flag alone cannot tell whose).
+                        local fromMe = aura.isFromPlayerOrPlayerPet
+                        if not isSecret(fromMe) and fromMe == true then return true end
                     end
-                    if strictSource and (not src or isSecret(src)) then return nil end
                 end
             end
         end
@@ -660,19 +670,9 @@ local function _unitHasBuffFromPlayer(u, spellIDs, strictSource)
                 if not aura then break end
                 local sid = aura.spellId
                 if sid and not isSecret(sid) and idLookup[sid] then
-                    local fromMe = aura.isFromPlayerOrPlayerPet
-                    if strictSource then
-                        if isSecret(fromMe) then return nil end
-                        if fromMe ~= nil then return fromMe == true end
-                        local src = aura.sourceUnit
-                        if isSecret(src) or src == nil then return nil end
-                        return UnitIsUnit(src, "player") == true
-                    end
                     local src = aura.sourceUnit
                     if src and not isSecret(src) and UnitIsUnit(src, "player") then
                         return true
-                    elseif strictSource and (not src or isSecret(src)) then
-                        return nil
                     end
                 end
             end
@@ -688,14 +688,7 @@ local function _unitHasBuffFromPlayer(u, spellIDs, strictSource)
             local ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, u, id)
             if strictSource and (not ok or isSecret(aura)) then return nil end
             if ok and aura and not isSecret(aura) then
-                local fromMe = aura.isFromPlayerOrPlayerPet
-                if strictSource then
-                    if isSecret(fromMe) then return nil end
-                    if fromMe ~= nil then return fromMe == true end
-                    local src = aura.sourceUnit
-                    if isSecret(src) or src == nil then return nil end
-                    return UnitIsUnit(src, "player") == true
-                end
+                if strictSource then return EABR._StrictAuraFromMe(aura) end
                 local src = aura.sourceUnit
                 if src and not isSecret(src) then
                     if UnitIsUnit(src, "player") then return true end
@@ -717,14 +710,7 @@ local function _unitHasBuffFromPlayer(u, spellIDs, strictSource)
         if not aura then break end
         local sid = aura.spellId
         if sid and not isSecret(sid) and idLookup[sid] then
-            local fromMe = aura.isFromPlayerOrPlayerPet
-            if strictSource then
-                if isSecret(fromMe) then return nil end
-                if fromMe ~= nil then return fromMe == true end
-                local src = aura.sourceUnit
-                if isSecret(src) or src == nil then return nil end
-                return UnitIsUnit(src, "player") == true
-            end
+            if strictSource then return EABR._StrictAuraFromMe(aura) end
             local src = aura.sourceUnit
             if src and not isSecret(src) then
                 if UnitIsUnit(src, "player") then return true end
@@ -1464,7 +1450,7 @@ local WEAPON_ENCHANT_CHOICES = {
 }
 
 -- Augment Runes (item IDs inlined at usage site in CollectConsumables)
-local RUNE_BUFF_IDS = {1264426, 453250, 1234969, 1242347, 393438, 347901}
+local RUNE_BUFF_IDS = {1295329, 1264426, 453250, 1234969, 1242347, 393438, 347901} -- 1295329 = Tidesworn (12.1)
 
 -- Inky Black Potion
 local INKY_BLACK_ITEM = 124640
@@ -1808,11 +1794,12 @@ function EABR.ResolveConsumables()
     local lufd = db.profile and db.profile.lastUsedFood or nil
     local luwe = db.profile and db.profile.lastUsedWeaponEnchant or nil
 
-    -- Augment Rune: void preferred over ethereal; fall back to the current
-    -- rune so an out-of-stock restock reminder can still render.
+    -- Augment Rune: void, then ethereal, then Tidesworn (12.1); fall back to the
+    -- void rune so an out-of-stock restock reminder can still render.
     local runeItem = nil
     if CachedGetItemCount(259085) > 0 then runeItem = 259085
-    elseif CachedGetItemCount(243191) > 0 then runeItem = 243191 end
+    elseif CachedGetItemCount(243191) > 0 then runeItem = 243191
+    elseif CachedGetItemCount(274797) > 0 then runeItem = 274797 end
     R.rune.hasBags = (runeItem ~= nil)
     R.rune.itemID = runeItem or 259085
 
@@ -1909,44 +1896,11 @@ end
 -------------------------------------------------------------------------------
 --  Glow Types (shared with options)
 -------------------------------------------------------------------------------
-local GLOW_TYPES = {
-    { name = "Action Button Glow",   buttonGlow = true },
-    { name = "Pixel Glow",           procedural = true },
-    { name = "Auto-Cast Shine",      autocast = true },
-    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook",  texPadding = 1.6 },
-    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook",  texPadding = 1.4 },
-    { name = "Classic WoW Glow",     texture = "Interface\\SpellActivationOverlay\\IconAlertAnts",
-      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, texPadding = 1.25 },
-}
+-- Saved glowType numbering (Action Button Glow first) as a view over the
+-- shared style table; no Shape Glow (reminder icons have no shape mask).
+local GLOW_VIEW = EllesmereUI.Glows.MakeView({ 2, 1, 3, 5, 6, 7 })
 
-local GLOW_VALUES = { [0] = "None" }
-local GLOW_ORDER  = { 0 }
-for i, entry in ipairs(GLOW_TYPES) do
-    GLOW_VALUES[i] = entry.name
-    GLOW_ORDER[#GLOW_ORDER + 1] = i
-end
-
--------------------------------------------------------------------------------
---  Glow Engines provided by shared EllesmereUI_Glows.lua
--------------------------------------------------------------------------------
-local StartPixelGlow, StopPixelGlow, StartButtonGlow, StopButtonGlow
-local StartAutoCastShine, StopAutoCastShine, StartFlipBookGlow, StopFlipBookGlow, StopAllGlows
-do
-    local G = EllesmereUI.Glows
-    StartPixelGlow = function(wrapper, sz, cr, cg, cb)
-        local N, th, period = 8, 2, 4
-        local lineLen = floor((sz+sz)*(2/N-0.1)); lineLen = min(lineLen, sz); if lineLen < 1 then lineLen = 1 end
-        G.StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, sz)
-    end
-    StopPixelGlow = function(wrapper) G.StopProceduralAnts(wrapper) end
-    StartButtonGlow = function(wrapper, sz, cr, cg, cb, scale) G.StartButtonGlow(wrapper, sz, cr, cg, cb, scale) end
-    StopButtonGlow = function(wrapper) G.StopButtonGlow(wrapper) end
-    StartAutoCastShine = function(wrapper, sz, cr, cg, cb, scale) G.StartAutoCastShine(wrapper, sz, cr, cg, cb, scale) end
-    StopAutoCastShine = function(wrapper) G.StopAutoCastShine(wrapper) end
-    StartFlipBookGlow = function(wrapper, sz, entry, cr, cg, cb) G.StartFlipBookGlow(wrapper, sz, entry, cr, cg, cb) end
-    StopFlipBookGlow = function(wrapper) G.StopFlipBookGlow(wrapper) end
-    StopAllGlows = function(wrapper) G.StopAllGlows(wrapper) end
-end
+local StopAllGlows = EllesmereUI.Glows.StopAllGlows
 
 
 -------------------------------------------------------------------------------
@@ -2012,6 +1966,7 @@ local defaults = {
             countXOffset = 0,
             countYOffset = 0,
             iconSpacing = 14,
+            growDirection = "CENTER",
             opacity = 1.0,
             frameStrata = "MEDIUM",
             cursorAttach = false,
@@ -2236,12 +2191,16 @@ function EABR.ApplyIconBorder(f, protectedOwner)
     local ox, oy = p and p.borderTextureOffset, p and p.borderTextureOffsetY
     local sx, sy = p and p.borderTextureShiftX, p and p.borderTextureShiftY
     local behind = p and p.borderBehind == true
-    local level = behind and max(0, f:GetFrameLevel() - 1) or (f:GetFrameLevel() + 3)
+    -- +2: the strips sit one level up (PP.CreateBorder), below the glow
+    -- wrapper (+4), so a 1px glow is never hidden under a 1px border.
+    local level = behind and max(0, f:GetFrameLevel() - 1) or (f:GetFrameLevel() + 2)
+    -- Exact size companion, memoized raw: it only counts while paired with size + texture.
+    local pxRaw = p and p.borderSizePx
 
     -- Layout refreshes can be frequent in a raid. Restyle only when an actual
     -- setting or owner-level change occurred; size changes are handled by the
     -- border frame's anchors/BackdropTemplate size hook.
-    if border._eabrSize == size and border._eabrTexture == texture
+    if border._eabrSize == size and border._eabrTexture == texture and border._eabrPx == pxRaw
         and border._eabrR == r and border._eabrG == g and border._eabrB == b and border._eabrA == a
         and border._eabrOX == ox and border._eabrOY == oy and border._eabrSX == sx and border._eabrSY == sy
         and border._eabrBehind == behind and border._eabrLevel == level then
@@ -2250,8 +2209,9 @@ function EABR.ApplyIconBorder(f, protectedOwner)
 
     border:SetFrameLevel(level)
     EllesmereUI.ApplyBorderStyle(border, size, r, g, b, a, texture,
-        ox, oy, sx, sy, "aurabuffreminders", size)
-    border._eabrSize, border._eabrTexture = size, texture
+        ox, oy, sx, sy, "aurabuffreminders", size, nil,
+        EllesmereUI.BorderPx(pxRaw, size, texture))
+    border._eabrSize, border._eabrTexture, border._eabrPx = size, texture, pxRaw
     border._eabrR, border._eabrG, border._eabrB, border._eabrA = r, g, b, a
     border._eabrOX, border._eabrOY, border._eabrSX, border._eabrSY = ox, oy, sx, sy
     border._eabrBehind, border._eabrLevel = behind, level
@@ -2355,10 +2315,11 @@ local function ShowCombatIcon(iconIdx, m)
     combatActiveIcons[#combatActiveIcons+1] = f
 end
 
--- Left-aligned like the OOC row. Slot 0 is reserved while the provider
--- secure button is shown, and stays reserved after a mid-combat hide until
--- the OOC park -- its SetPoint/EnableMouse are protected under lockdown, so
--- other icons must never slide under it.
+-- Left-aligned from the anchor's left edge; Grow Left right-aligns from its
+-- right edge instead. Slot 0 is reserved while the provider secure button is
+-- shown, and stays reserved after a mid-combat hide until the OOC park -- its
+-- SetPoint/EnableMouse are protected under lockdown, so other icons must never
+-- slide under it: while it is reserved Grow Left keeps the left-aligned row.
 local function LayoutCombatIcons()
     local reserveSlot = EABR._providerCastVisible or EABR._providerCastCombatReserved
     local count = #combatActiveIcons
@@ -2368,6 +2329,10 @@ local function LayoutCombatIcons()
     local baseScale = p.scale or 1.0
     local sz = floor(ICON_SIZE * baseScale + 0.5)
     local xOff = reserveSlot and (sz + spacing) or 0
+    local pt = "TOPLEFT"
+    if p.growDirection == "LEFT" and not reserveSlot then
+        pt, xOff = "TOPRIGHT", -(count - 1) * (sz + spacing)
+    end
     for i, f in ipairs(combatActiveIcons) do
         f:SetSize(sz, sz)
         f:SetAlpha(p.opacity or 1.0)
@@ -2375,7 +2340,7 @@ local function LayoutCombatIcons()
         EABR.SizeIconQuality(f, sz)
         EABR.SizeIconBagCount(f, sz)
         f:ClearAllPoints()
-        f:SetPoint("TOPLEFT", combatAnchor, "TOPLEFT", xOff + (i-1)*(sz+spacing), 0)
+        f:SetPoint(pt, combatAnchor, pt, xOff + (i-1)*(sz+spacing), 0)
     end
 end
 
@@ -2661,24 +2626,43 @@ local function FadeOutSecureIcons()
     end
 end
 
-local function ApplyGlow(btn, glowType, cr, cg, cb, overrideSz)
-    if glowType == 0 then return end
-    local entry = GLOW_TYPES[glowType]; if not entry then return end
-    if cr == nil and (entry.procedural or entry.buttonGlow or entry.autocast) then
-        cr, cg, cb = 1.0, 0.788, 0.137
+-- Full render spec from the display settings; the options preview renders the
+-- same spec. nil when the glow is off.
+local ApplyGlow
+do
+    local SPEC = {}
+    local function GlowSpec(p, out)
+        local shared = p and GLOW_VIEW.toShared[p.glowType or 0]
+        if not shared then return nil end
+        out = out or SPEC
+        out.style = shared
+        out.r, out.g, out.b = ResolveGlowTint(p)
+        out.lines, out.thickness, out.speed = p.glowLines, p.glowThickness, p.glowSpeed
+        local bgc = p.glowBackgroundColor
+        out.bg = (p.glowBackground == true) or nil
+        out.bgR, out.bgG, out.bgB = bgc and bgc.r, bgc and bgc.g, bgc and bgc.b
+        return out
     end
-    if not btn._eabrGlowWrapper then
-        local w = CreateFrame("Frame", nil, btn); w:SetAllPoints(btn); w:SetFrameLevel(btn:GetFrameLevel()+4)
-        btn._eabrGlowWrapper = w
+    _G._EABR_GlowSpec = GlowSpec
+
+    -- Also clears the glow when it is off, so callers need no RemoveGlow first
+    -- (that would reset StartSpecGlow's signature and restart every refresh).
+    ApplyGlow = function(btn, p, overrideSz)
+        local spec = GlowSpec(p)
+        if not spec then
+            local w = btn._eabrGlowWrapper
+            if w then StopAllGlows(w); w:Hide() end
+            return
+        end
+        if not btn._eabrGlowWrapper then
+            local w = CreateFrame("Frame", nil, btn); w:SetAllPoints(btn); w:SetFrameLevel(btn:GetFrameLevel()+4)
+            btn._eabrGlowWrapper = w
+        end
+        local wrapper = btn._eabrGlowWrapper; local sz = overrideSz or btn:GetWidth() or ICON_SIZE
+        EllesmereUI.Glows.StartSpecGlow(wrapper, spec, sz, sz, "icon")
+        wrapper:SetAlpha(1)
+        wrapper:Show()
     end
-    local wrapper = btn._eabrGlowWrapper; local sz = overrideSz or btn:GetWidth() or ICON_SIZE
-    StopAllGlows(wrapper)
-    if entry.procedural then StartPixelGlow(wrapper, sz, cr, cg, cb)
-    elseif entry.buttonGlow then StartButtonGlow(wrapper, sz, cr, cg, cb, 1.36)
-    elseif entry.autocast then StartAutoCastShine(wrapper, sz, cr, cg, cb, 1.0)
-    else StartFlipBookGlow(wrapper, sz, entry, cr, cg, cb) end
-    wrapper:SetAlpha(1)
-    wrapper:Show()
 end
 
 local function RemoveGlow(btn)
@@ -3191,6 +3175,8 @@ local function HideAllIcons()
     wipe(activeIcons)
 end
 
+-- iconAnchor is pinned by its grow edge (CENTER, LEFT or RIGHT) and the icons
+-- hang off that same edge, so resizing it never moves them.
 local function ResizeAnchorCentered(newW, newH)
     if not iconAnchor or InCombatLockdown() then return end
     iconAnchor:SetSize(newW, newH)
@@ -3224,9 +3210,15 @@ local function LayoutIcons()
     local totalW = (count * sz) + ((count-1) * spacing)
     local textH = 0
     if p.showText then textH = (p.textSize or 11) + abs(p.textYOffset or -2) end
-    -- Center-grow: icons pin to the anchor's CENTER and spread symmetrically so the row's center stays fixed as
-    -- icons are added/removed, and resizing the anchor (unlock overlay) never shifts them; +textH/2 keeps the row at the icon+text box's top, matching the combat pool.
-    local startX = -(totalW / 2) + (sz / 2)
+    -- Icons hang off the anchor's grow edge. Center-grow spreads them symmetrically so the row's center stays fixed
+    -- as icons are added/removed; +textH/2 keeps the row at the icon+text box's top, matching the combat pool.
+    -- Grow Right/Left hang them from the TOPLEFT/TOPRIGHT corner so that edge stays fixed instead.
+    local pt, startX, yOff = "CENTER", -(totalW / 2) + (sz / 2), textH/2
+    if p.growDirection == "RIGHT" then
+        pt, startX, yOff = "TOPLEFT", 0, 0
+    elseif p.growDirection == "LEFT" then
+        pt, startX, yOff = "TOPRIGHT", -(count - 1) * (sz + spacing), 0
+    end
     for i, btn in ipairs(allIcons) do
         btn:SetSize(sz, sz)
         btn:SetAlpha(p.opacity or 1.0)
@@ -3236,7 +3228,7 @@ local function LayoutIcons()
         EABR.SizeIconQuality(btn, sz)
         EABR.SizeIconBagCount(btn, sz)
         btn:ClearAllPoints()
-        btn:SetPoint("CENTER", iconAnchor, "CENTER", startX + (i-1)*(sz+spacing), textH/2)
+        btn:SetPoint(pt, iconAnchor, pt, startX + (i-1)*(sz+spacing), yOff)
     end
     -- Size the anchor to the row so the unlock mode overlay covers it.
     ResizeAnchorCentered(totalW, sz + textH)
@@ -3263,12 +3255,9 @@ local function ShowIcon(iconIdx, m)
     end
     ApplySetup(btn, m)
     local p = db.profile.display
-    local glowType = p.glowType or 0
-    local gr, gg, gb = ResolveGlowTint(p)
     local baseScale = p.scale or 1.0
     local sz = floor(ICON_SIZE * baseScale + 0.5)
-    RemoveGlow(btn)
-    ApplyGlow(btn, glowType, gr, gg, gb, sz)
+    ApplyGlow(btn, p, sz)
     EABR.ApplyEatingVisual(btn, m)
     EABR.ApplyIconQuality(btn, (not m.isEating) and m.qualityAtlas or nil)
     if m.groupTotal then
@@ -4217,12 +4206,10 @@ local function Refresh()
                             f = combatActiveIcons[#combatActiveIcons]
                         end
                         if f and not m.isEating then
-                            RemoveGlow(f)
                             local p = db.profile.display
-                            local gr, gg, gb = ResolveGlowTint(p)
                             local baseScale = p.scale or 1.0
                             local sz = floor(ICON_SIZE * baseScale + 0.5)
-                            ApplyGlow(f, p.glowType or 0, gr, gg, gb, sz)
+                            ApplyGlow(f, p, sz)
                         end
                     end
                 end
@@ -4232,10 +4219,9 @@ local function Refresh()
                 local pBtn = EABR._providerCastBtn
                 if pBtn then
                     local p = db.profile.display
-                    local gr, gg, gb = ResolveGlowTint(p)
                     local sz = pBtn:GetWidth() or ICON_SIZE
                     if pBtn._eabrGlowWrapper then pBtn._eabrGlowWrapper:Hide() end
-                    ApplyGlow(pBtn, p.glowType or 0, gr, gg, gb, sz)
+                    ApplyGlow(pBtn, p, sz)
                 end
             end
             if (combatIdx > 0 or providerEntry) and combatAnchor then
@@ -4279,12 +4265,10 @@ local function Refresh()
                     ShowCursorIcon(cursorIdx, m)
                     local f = cursorActiveIcons[#cursorActiveIcons]
                     if f and not m.isEating then
-                        RemoveGlow(f)
                         local p = db.profile.display
-                        local gr, gg, gb = ResolveGlowTint(p)
                         local baseScale = p.scale or 1.0
                         local sz = floor(ICON_SIZE * baseScale + 0.5)
-                        ApplyGlow(f, p.glowType or 0, gr, gg, gb, sz)
+                        ApplyGlow(f, p, sz)
                     end
                 else
                     iconIdx = iconIdx + 1
@@ -4297,10 +4281,9 @@ local function Refresh()
             local pBtn = EABR._providerCastBtn
             if pBtn then
                 local p = db.profile.display
-                local gr, gg, gb = ResolveGlowTint(p)
                 local sz = pBtn:GetWidth() or ICON_SIZE
                 if pBtn._eabrGlowWrapper then pBtn._eabrGlowWrapper:Hide() end
-                ApplyGlow(pBtn, p.glowType or 0, gr, gg, gb, sz)
+                ApplyGlow(pBtn, p, sz)
             end
         else
             EABR.ParkProviderCastButton()
@@ -4388,6 +4371,11 @@ end
 -------------------------------------------------------------------------------
 --  Unlock Mode
 -------------------------------------------------------------------------------
+-- Nominal two-icon row width from settings alone: the nil-position grow edge and the converter's empty-row width.
+function EABR.NominalRowW(d)
+    return 2 * floor(ICON_SIZE * (d.scale or 1.0) + 0.5) + (d.iconSpacing or 8)
+end
+
 local function ApplyUnlockPos()
     if not iconAnchor or not db then return end
     -- Skip for unlock-anchored elements (anchor system is authority)
@@ -4413,11 +4401,63 @@ local function ApplyUnlockPos()
         iconAnchor:ClearAllPoints()
         iconAnchor:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, px, py)
     else
-        -- No saved position: centers the row on screen (+ configured offset). A CENTER anchor keeps the row's center fixed as icon count changes, same as above; LayoutIcons centers the row on this anchor and owns its size.
+        -- No saved position: the row sits at the configured offset from screen center, anchored by its grow edge.
+        -- Grow Right/Left place that edge half a nominal two-icon row out (settings only, never the live width) so
+        -- it never follows the icon count; LayoutIcons hangs the icons off the same edge and owns the anchor's size.
         local d = db.profile.display
+        local growDir = d.growDirection
         iconAnchor:ClearAllPoints()
-        iconAnchor:SetPoint("CENTER", UIParent, "CENTER", d.xOffset or 0, d.yOffset or 0)
+        if growDir == "RIGHT" then
+            iconAnchor:SetPoint("LEFT", UIParent, "CENTER", (d.xOffset or 0) - EABR.NominalRowW(d) / 2, d.yOffset or 0)
+        elseif growDir == "LEFT" then
+            iconAnchor:SetPoint("RIGHT", UIParent, "CENTER", (d.xOffset or 0) + EABR.NominalRowW(d) / 2, d.yOffset or 0)
+        else
+            iconAnchor:SetPoint("CENTER", UIParent, "CENTER", d.xOffset or 0, d.yOffset or 0)
+        end
     end
+end
+
+-- Moves a saved position onto the new grow edge (Grow Right = LEFT, Grow Left = RIGHT, else CENTER) without
+-- moving the row. Runs only on a grow direction change or a spec layer restoring a position banked under another
+-- direction: the apply path never writes the DB, and a nil position stays nil. Only positions this module writes
+-- (CENTER, LEFT or RIGHT of UIParent's CENTER) convert.
+function EABR.UpdateUnlockPosForGrowDir(newGrowDir)
+    local pos = db.profile.unlockPos
+    if not pos or not pos.point or (pos.relPoint or pos.point) ~= "CENTER" then return end
+    local curPoint = pos.point
+    if curPoint ~= "CENTER" and curPoint ~= "LEFT" and curPoint ~= "RIGHT" then return end
+    local targetPoint = (newGrowDir == "RIGHT" and "LEFT") or (newGrowDir == "LEFT" and "RIGHT") or "CENTER"
+    if curPoint == targetPoint then return end
+    local w = iconAnchor and iconAnchor:GetWidth() or 0
+    if w <= 1 then w = EABR.NominalRowW(db.profile.display) end
+    local cx = pos.x or 0
+    if curPoint == "LEFT" then
+        cx = cx + (w / 2)
+    elseif curPoint == "RIGHT" then
+        cx = cx - (w / 2)
+    end
+    if targetPoint == "LEFT" then
+        pos.x = cx - (w / 2)
+    elseif targetPoint == "RIGHT" then
+        pos.x = cx + (w / 2)
+    else
+        pos.x = cx
+    end
+    pos.point = targetPoint
+    pos.relPoint = "CENTER"
+end
+
+function EllesmereUI.GetAuraBuffGrowDir()
+    local d = db and db.profile and db.profile.display
+    return d and d.growDirection or "CENTER"
+end
+
+function EllesmereUI.SetAuraBuffGrowDir(v)
+    if not db or not db.profile or not db.profile.display then return end
+    db.profile.display.growDirection = v
+    EABR.UpdateUnlockPosForGrowDir(v)
+    ApplyUnlockPos()
+    LayoutIcons()
 end
 
 local function RegisterUnlockElements()
@@ -4453,18 +4493,50 @@ local function RegisterUnlockElements()
                     textH = (p.textSize or 11) + abs(p.textYOffset or -2)
                 end
                 local h = sz + textH
-                -- Resizes the anchor for the overlay; iconAnchor is CENTER-anchored and icons hang off its CENTER, so this never moves them.
+                -- Resizes the anchor for the overlay
                 if iconAnchor then ResizeAnchorCentered(w, h) end
                 return w, h
             end,
             savePos = function(key, point, relPoint, x, y)
+                -- Unlock mode hands over the row's CENTER; Grow Right/Left store their fixed edge instead.
+                local growDir = db.profile.display.growDirection
+                if (growDir == "RIGHT" or growDir == "LEFT") and point == "CENTER" and relPoint == "CENTER" then
+                    local halfW = (iconAnchor and iconAnchor:GetWidth() or 0) / 2
+                    if growDir == "RIGHT" then
+                        point, x = "LEFT", x - halfW
+                    else
+                        point, x = "RIGHT", x + halfW
+                    end
+                end
                 db.profile.unlockPos = {point=point, relPoint=relPoint, x=x, y=y}
                 if not EllesmereUI._unlockActive then
                     ApplyUnlockPos()
                 end
             end,
             loadPos = function()
+                local pos = db.profile.unlockPos
+                -- A stored grow edge (LEFT/RIGHT of UIParent's CENTER) reports the row's CENTER, the form unlock mode works in.
+                -- That CENTER follows the live width, so a Discard after the icon count changed moves the edge by half the change.
+                if not pos or (pos.point ~= "LEFT" and pos.point ~= "RIGHT") or pos.relPoint ~= "CENTER" then
+                    return pos
+                end
+                local halfW = (iconAnchor and iconAnchor:GetWidth() or 0) / 2
+                return {
+                    point = "CENTER",
+                    relPoint = "CENTER",
+                    x = (pos.x or 0) + ((pos.point == "LEFT") and halfW or -halfW),
+                    y = pos.y or 0,
+                }
+            end,
+            -- Spec-override unlock layers bank the stored table itself, so a Grow Right/Left edge survives a
+            -- layer round trip at any icon count; one banked under another direction moves onto the current edge.
+            loadRawPos = function()
                 return db.profile.unlockPos
+            end,
+            saveRawPos = function(_, p)
+                if not (p and p.point) then return end
+                db.profile.unlockPos = {point=p.point, relPoint=p.relPoint or p.point, x=p.x, y=p.y}
+                EABR.UpdateUnlockPosForGrowDir(db.profile.display.growDirection)
             end,
             clearPos = function()
                 db.profile.unlockPos = nil
@@ -4616,10 +4688,9 @@ local function BeaconApplyGlow(f, show)
         local p = db and db.profile.display
         local glowType = p and p.glowType or 0
         if glowType > 0 then
-            local gr, gg, gb = ResolveGlowTint(p)
             local baseScale = p and p.scale or 1.0
             local sz = floor(ICON_SIZE * baseScale + 0.5)
-            ApplyGlow(f, glowType, gr, gg, gb, sz)
+            ApplyGlow(f, p, sz)
         end
         _B.glowState[f._spellID] = true
     else
@@ -4897,15 +4968,7 @@ function EABR:OnEnable()
     _G._EABR_ApplyIconBorder = EABR.ApplyIconBorder
     _G._EABR_ApplyAllIconBorders = EABR.ApplyAllIconBorders
     _G._EABR_HideAllIcons = HideAllIcons
-    _G._EABR_GLOW_VALUES = GLOW_VALUES
-    _G._EABR_GLOW_ORDER = GLOW_ORDER
-    _G._EABR_GLOW_TYPES = GLOW_TYPES
-    _G._EABR_StartPixelGlow = StartPixelGlow
-    _G._EABR_StartButtonGlow = StartButtonGlow
-    _G._EABR_StartAutoCastShine = StartAutoCastShine
-    _G._EABR_StartFlipBookGlow = StartFlipBookGlow
-    _G._EABR_StopAllGlows = StopAllGlows
-    _G._EABR_ResolveGlowTint = ResolveGlowTint
+    _G._EABR_GLOW_VIEW = GLOW_VIEW
     _G._EABR_EnsureGlowModeMigrated = EnsureGlowModeMigrated
     _G._EABR_RegisterUnlock = RegisterUnlockElements
     _G._EABR_ApplyUnlockPos = ApplyUnlockPos
@@ -4999,16 +5062,12 @@ function EABR:OnEnable()
 
     -- Hook EUI panel show/hide
     if EllesmereUI then
-        if EllesmereUI.RegisterOnShow then
-            EllesmereUI:RegisterOnShow(function()
-                euiPanelOpen = true; HideAllIcons(); BeaconRefresh()
-            end)
-        end
-        if EllesmereUI.RegisterOnHide then
-            EllesmereUI:RegisterOnHide(function()
-                euiPanelOpen = false; RequestRefresh(); BeaconRefresh()
-            end)
-        end
+        EllesmereUI:RegisterOnShow(function()
+            euiPanelOpen = true; HideAllIcons(); BeaconRefresh()
+        end)
+        EllesmereUI:RegisterOnHide(function()
+            euiPanelOpen = false; RequestRefresh(); BeaconRefresh()
+        end)
     end
 
     -- Group spec intel over addon comms (LibSpecialization): the lib
@@ -5282,8 +5341,7 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2, arg3)
             local isEvoker = _cachedPlayerClass == "EVOKER"
             if isEvoker and InCombat() and IsInGroup() then
                 for _, id in ipairs(_ownOnRaidIDs) do
-                    local ok, result = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
-                    if ok and result ~= nil and not isSecret(result) then
+                    if EABR._OwnCastOn("player", id) then
                         _preCombatOwnOnRaidCache[id] = true
                     end
                 end
@@ -5295,11 +5353,8 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2, arg3)
             if c == 112 or c == 114 then  -- 'p' or 'r'
                 if _isEvokerOwnOnRaid and InCombat() and IsInGroup() then
                     for _, id in ipairs(_ownOnRaidIDs) do
-                        if not _preCombatOwnOnRaidCache[id] then
-                            local ok, result = pcall(C_UnitAuras.GetUnitAuraBySpellID, arg1, id)
-                            if ok and result ~= nil and not isSecret(result) then
-                                _preCombatOwnOnRaidCache[id] = true
-                            end
+                        if not _preCombatOwnOnRaidCache[id] and EABR._OwnCastOn(arg1, id) then
+                            _preCombatOwnOnRaidCache[id] = true
                         end
                     end
                 end
@@ -5456,7 +5511,7 @@ local SetupReadyCheckManaWarning = function()
         local c = p and p.consumables
         local col = c and c.rcManaWarnColor
         if col and col.r then return col.r, col.g, col.b end
-        local mc = EllesmereUI.GetPowerColor and EllesmereUI.GetPowerColor("MANA")
+        local mc = EllesmereUI.GetPowerColor("MANA")
         if mc then
             return math.min(mc.r * 1.5, 1), math.min(mc.g * 1.5, 1), math.min(mc.b * 1.5, 1)
         end
@@ -5480,8 +5535,8 @@ local SetupReadyCheckManaWarning = function()
         warnFrame:SetPoint("CENTER", UIParent, "CENTER",
             (c and c.rcManaWarnX) or 0, 75 + ((c and c.rcManaWarnY) or 0))
         local font = ResolveFontPath(c and c.rcManaWarnFont)
-        local outline = GetABROutline()
-        if EllesmereUI and EllesmereUI.PrimeFontShadow then EllesmereUI.PrimeFontShadow(warnFS, outline == "" and GetABRUseShadow()) end
+        local outline = EllesmereUI.GetFontOutlineFlag("auraBuff")
+        EllesmereUI.PrimeFontShadow(warnFS, outline == "" and EllesmereUI.GetFontUseShadow("auraBuff"))
         warnFS:SetFont(font, (c and c.rcManaWarnSize) or 48, outline)
         -- Explicit white instance color: tinted purely via SetVertexColor (curve result); with no instance color it would inherit the primed shadow FontObject's color, which resolves BLACK.
         warnFS:SetTextColor(1, 1, 1, 1)

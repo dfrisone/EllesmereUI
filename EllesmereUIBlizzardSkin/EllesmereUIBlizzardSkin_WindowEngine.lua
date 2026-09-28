@@ -71,8 +71,8 @@ local function ResolveTheme()
     Theme.bgR, Theme.bgG, Theme.bgB, Theme.bgA = 0.08, 0.08, 0.08, 0.92
     Theme.insetR, Theme.insetG, Theme.insetB, Theme.insetA = 0.04, 0.04, 0.04, 0.85
     Theme.brdR, Theme.brdG, Theme.brdB, Theme.brdA = 0.2, 0.2, 0.2, 1
-    Theme.fontPath = (EUI and EUI.GetFontPath and EUI.GetFontPath("blizzardSkin")) or STANDARD_TEXT_FONT
-    Theme.fontFlag = (EUI and EUI.GetFontOutlineFlag and EUI.GetFontOutlineFlag("blizzardSkin")) or ""
+    Theme.fontPath = (EUI.GetFontPath("blizzardSkin")) or STANDARD_TEXT_FONT
+    Theme.fontFlag = (EUI.GetFontOutlineFlag("blizzardSkin")) or ""
     -- Drop shadow only in no-outline mode, honoring the user's shadow toggle.
     Theme.fontShadow = (Theme.fontFlag == "")
         and (not (EUI and EUI.GetFontUseShadow) or EUI.GetFontUseShadow("blizzardSkin"))
@@ -252,10 +252,18 @@ local function ApplyShellStyle(winKey)
     end
 end
 
+-- Outside painters that follow a window's style (the Friends module's own
+-- window chrome) repaint on the same live refresh as the shells.
+local _styleCallbacks = {}
+function WSkin.OnStylesChanged(fn)
+    _styleCallbacks[#_styleCallbacks + 1] = fn
+end
+
 -- Re-resolve every registered shell (style switches + Modern color edits apply
 -- live; no reload). Exposed on EllesmereUI so the options page can call it.
 function WSkin.RefreshStyles()
     for winKey in pairs(_shells) do ApplyShellStyle(winKey) end
+    for _, fn in ipairs(_styleCallbacks) do pcall(fn) end
 end
 if EUI then EUI._WSkinRefreshStyles = WSkin.RefreshStyles end
 
@@ -276,6 +284,29 @@ function WSkin.AdoptShell(winKey, frame, atlasTex, overlayTex)
     if not entry then entry = {}; _shells[winKey] = entry end
     entry[frame] = true
     ApplyShellStyle(winKey)
+end
+
+-- Cover-fit the shell backdrop into a fw x fh rect: native aspect 561x433,
+-- centred crop of the overflow, never stretched. Pure, no hooks: Shell calls
+-- it from its size hook; the Friends module calls it when it paints.
+function WSkin.CoverFit(tex, fw, fh)
+    -- SECRECY TEST FIRST. `fw == 0` is itself a COMPARISON, so on a frame
+    -- whose size is secret (any window sized from widget content -- the
+    -- delve picker and the choice windows both are) it throws before a
+    -- later issecretvalue guard could reject it:
+    --   "attempt to compare local 'fw' (a secret number value)"
+    if issecretvalue(fw) or issecretvalue(fh) then return end
+    if not fw or fw == 0 or not fh or fh == 0 then return end
+    local fa = fw / fh
+    if fa > BG_ASPECT then
+        local visV = BASE_V * (BG_ASPECT / fa)
+        local trimV = (BASE_V - visV) / 2
+        tex:SetTexCoord(BASE_L, BASE_R, BASE_T + trimV, BASE_B - trimV)
+    else
+        local visU = BASE_U * (fa / BG_ASPECT)
+        local trimU = (BASE_U - visU) / 2
+        tex:SetTexCoord(BASE_L + trimU, BASE_R - trimU, BASE_T, BASE_B)
+    end
 end
 
 -- Full shell build for a window pack: fade Blizzard art, lay both backdrop
@@ -302,25 +333,7 @@ function WSkin.Shell(winKey, frame, opts)
 
         -- Cover-fit: crop the atlas so it fills the frame without stretching.
         local function UpdateBgTexCoords()
-            local fw, fh = frame:GetSize()
-            -- SECRECY TEST FIRST. `fw == 0` is itself a COMPARISON, so on a
-            -- frame whose size is secret (any window sized from widget content
-            -- -- the delve picker and the choice windows both are) it throws
-            -- before the issecretvalue guard below could reject it:
-            --   "attempt to compare local 'fw' (a secret number value)"
-            -- The guard existed but ran one line too late.
-            if issecretvalue and (issecretvalue(fw) or issecretvalue(fh)) then return end
-            if not fw or fw == 0 or not fh or fh == 0 then return end
-            local fa = fw / fh
-            if fa > BG_ASPECT then
-                local visV = BASE_V * (BG_ASPECT / fa)
-                local trimV = (BASE_V - visV) / 2
-                bg:SetTexCoord(BASE_L, BASE_R, BASE_T + trimV, BASE_B - trimV)
-            else
-                local visU = BASE_U * (fa / BG_ASPECT)
-                local trimU = (BASE_U - visU) / 2
-                bg:SetTexCoord(BASE_L + trimU, BASE_R - trimU, BASE_T, BASE_B)
-            end
+            WSkin.CoverFit(bg, frame:GetSize())
         end
         -- One script hook instead of three setter hooks: it also fires for
         -- anchor-driven resizes the setters never saw.
@@ -384,20 +397,6 @@ function WSkin.AtlasBorder(frame)
     tex:SetAllPoints(ov)
 end
 
--- Content shade: the 25% black wash the reskins lay behind their content areas
--- so text zones read darker than the shell art.
-function WSkin.ContentShade(frame, p1, x1, y1, p2, x2, y2, alpha)
-    if not frame or frame:IsForbidden() then return end
-    local d = GetFFD(frame)
-    if d.rightShade then return d.rightShade end
-    local shade = frame:CreateTexture(nil, "BACKGROUND", nil, -6)
-    shade:SetColorTexture(0, 0, 0, alpha or 0.25)
-    shade:SetPoint(p1 or "TOPLEFT", frame, p1 or "TOPLEFT", x1 or 0, y1 or 0)
-    shade:SetPoint(p2 or "BOTTOMRIGHT", frame, p2 or "BOTTOMRIGHT", x2 or 0, y2 or 0)
-    d.rightShade = shade
-    return shade
-end
-
 -------------------------------------------------------------------------------
 --  Primitive skinners. All idempotent (guarded via FFD), all visual-only.
 -------------------------------------------------------------------------------
@@ -440,7 +439,7 @@ function WSkin.Font(fs, r, g, b)
     if size and issecretvalue(size) then return end
     -- 12.0.7: shadows only render from a FontObject, never from instance
     -- SetShadowOffset. Prime BEFORE SetFont (SetFont then restores the face).
-    if EUI and EUI.PrimeFontShadow then EUI.PrimeFontShadow(fs, Theme.fontShadow) end
+    EUI.PrimeFontShadow(fs, Theme.fontShadow)
     fs:SetFont(Theme.fontPath, size or 12, Theme.fontFlag or "")
     if r then fs:SetTextColor(r, g, b or r) end
 end
@@ -1155,6 +1154,14 @@ local function UpdateAllTabs()
 end
 WSkin.UpdateAllTabs = UpdateAllTabs
 
+-- Visual selection only; nil returns to the native tab system's selection.
+-- Keep the override outside the frame so Blizzard's tab state stays untouched.
+function WSkin.SetTabSelection(tab, selected)
+    if not tab or tab:IsForbidden() then return end
+    GetFFD(tab).selOverride = selected
+    UpdateTabVisual(tab)
+end
+
 local _tabHooked = false
 local function EnsureTabHooks()
     if _tabHooked then return end
@@ -1437,9 +1444,7 @@ function WSkin.RefreshLooks()
     for _, fn in ipairs(_lookCallbacks) do pcall(fn) end
 end
 if EUI then EUI._WSkinRefreshLooks = WSkin.RefreshLooks end
-if EUI and EUI.RegAccent then
-    EUI.RegAccent({ type = "callback", fn = function() WSkin.RefreshLooks() end })
-end
+EUI.RegAccent({ type = "callback", fn = function() WSkin.RefreshLooks() end })
 
 -------------------------------------------------------------------------------
 --  Targeted art sweeps. Used at SKIN TIME (or debounced repaint hooks), never

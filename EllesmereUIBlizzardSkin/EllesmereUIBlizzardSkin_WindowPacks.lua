@@ -5447,6 +5447,9 @@ local function HookRCScrollBox(box, isCurrency)
 end
 
 local function Skin_RepCurrency()
+    -- Stock character sheet styles (Style page) keep Blizzard's whole sheet,
+    -- these tabs included.
+    if ns.CharSheetStock and ns.CharSheetStock() then return end
     local rep = _G.ReputationFrame
     if rep then
         if rep.filterDropdown then WSkin.Dropdown(rep.filterDropdown) end
@@ -7933,8 +7936,8 @@ local function UpdateMerchantItemLevels()
                     else
                         fs:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
                     end
-                    local path = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath()) or "Fonts\\FRIZQT__.TTF"
-                    local flag = (EllesmereUI.SlugFlag and EllesmereUI.SlugFlag("OUTLINE, SLUG")) or "OUTLINE"
+                    local path = (EllesmereUI.GetFontPath()) or "Fonts\\FRIZQT__.TTF"
+                    local flag = (EllesmereUI.SlugFlag("OUTLINE, SLUG")) or "OUTLINE"
                     fs:SetFont(path, 12, flag)
                     GetFFD(btn).merchantILvl = fs
                 end
@@ -7948,14 +7951,8 @@ local function UpdateMerchantItemLevels()
                         if ilvl and ilvl > 0 then
                             fs:SetText(ilvl)
                             local quality = select(3, C_Item.GetItemInfo(link))
-                            local r, g, b = 1, 1, 1
-                            if EllesmereUI.GetItemLevelColor then
-                                local c = EllesmereUI.GetItemLevelColor(link, quality)
-                                if c then r, g, b = c.r or 1, c.g or 1, c.b or 1 end
-                            elseif quality then
-                                r, g, b = C_Item.GetItemQualityColor(quality)
-                            end
-                            fs:SetTextColor(r, g, b, 1)
+                            local c = EllesmereUI.GetItemLevelColor(link, quality)
+                            fs:SetTextColor(c.r or 1, c.g or 1, c.b or 1, 1)
                         end
                     end
                 end
@@ -11557,6 +11554,10 @@ end
 function SP.Apply()
     local f = _G.SocialUIFrame
     if not f then return end
+    -- The Friends List stock styles (Style page) keep Blizzard's whole Social
+    -- window, its frame included; the Window Skins card is blocked meanwhile.
+    local fr = EllesmereUI._ModuleNS and EllesmereUI._ModuleNS.EllesmereUIFriends
+    if fr and fr.FR_Style and fr.FR_Style() ~= "eui" then return end
 
     WSkin.Shell("socialui", f)
     WSkin.RemovePortrait(f)

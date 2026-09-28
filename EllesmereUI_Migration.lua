@@ -8,22 +8,6 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 
 local floor = math.floor
 
---- Round all width/height values in a table to whole pixels. Call from each child
---- addon's OnInitialize after its DB loads. keys: field names to round (e.g.
---- {"width", "height"}); tables: profile sub-tables to scan.
-function EllesmereUI.RoundSizeFields(keys, tables)
-    for _, tbl in ipairs(tables) do
-        if type(tbl) == "table" then
-            for _, key in ipairs(keys) do
-                local v = tbl[key]
-                if type(v) == "number" then
-                    tbl[key] = floor(v + 0.5)
-                end
-            end
-        end
-    end
-end
-
 --------------------------------------------------------------------------------
 --  ONE-TIME MIGRATION RUNNER
 --
@@ -4293,3 +4277,463 @@ EllesmereUI.RegisterMigration({
         end
     end,
 })
+
+-- The Swing Timer's default visibility is In Combat (was Always). A profile left
+-- on the old default stores nothing (Lite strips defaults at logout) and follows
+-- the new default by itself; this moves the ones that carry an explicit plain
+-- "always" (no conditions, no hide lanes) as well. GLOBAL with per-profile stamps,
+-- gated on existing profiles: a fresh install stamps and never runs it, so a new
+-- user's deliberate Always choice is never flipped, and a stamped profile keeps
+-- its stamp through exports.
+EllesmereUI.RegisterMigration({
+    id          = "swing_timer_visibility_in_combat_v1",
+    scope       = "global",
+    description = "Move the Swing Timer's visibility from Always to In Combat, the new default.",
+    body        = function(ctx)
+        local ID = "swing_timer_visibility_in_combat_v1"
+        local db = ctx.db
+        if not (db and type(db.profiles) == "table" and next(db.profiles)) then return end
+        for _, profData in pairs(db.profiles) do
+            if type(profData) == "table" then
+                local stamps = profData._migrations
+                if type(stamps) ~= "table" then
+                    stamps = {}
+                    profData._migrations = stamps
+                end
+                if not stamps[ID] then
+                    local erb = type(profData.addons) == "table" and profData.addons.EllesmereUIResourceBars
+                    local st = type(erb) == "table" and erb.swingTimer
+                    if type(st) == "table" and st.visibility == "always" and st.visibilityModes == nil then
+                        st.visibility = "in_combat"
+                    end
+                    stamps[ID] = true
+                end
+            end
+        end
+    end,
+})
+
+--------------------------------------------------------------------------------
+--  WOW FOREVER: ONE-TIME BUFF CLEAR
+--
+--  On WoW Forever only, each piece of buff data is cleared once:
+--    * Raid Frames Buff Manager (live store and override forks): left with no
+--      indicator groups in any bucket. Its filter library, its icon zoom, the
+--      Debuff Manager and every other Raid Frames setting stay.
+--    * Player Aura Bars, buff side: back to a new profile's state (the Buffs
+--      bar on All Buffs, custom buff bars gone, the module re-seeds its own
+--      disabled External Defensives bar). Debuff bars, both filter libraries,
+--      layout and style stay.
+--  Every write lives in this block and re-checks the client at the moment it
+--  writes. Hook sites only call EllesmereUI.FvBW, which stays nil on every
+--  other client (the block defines nothing there).
+--
+--  CONTRACT: the key "fvBuffWipe" marks data that went through the clear (or
+--  was born on WoW Forever after it). It sits INSIDE the data it certifies, so
+--  every path that moves the data moves the mark:
+--    bm2.fvBuffWipe                   Raid Frames live store
+--    specBmOverrides.fvBuffWipe and   Buff Manager fork stores (profile root):
+--    condBmOverrides.fvBuffWipe       one unit, marked when either root has it
+--    playerAuraBars.fvBuffWipe        Unit Frames
+--  PRESENCE = cleared; the value is never compared. The name is frozen saved
+--  data: a second clear must use a NEW key. It is in no defaults table (a
+--  default would stamp data without clearing it).
+--  Imports: fork stores that arrive in the same string as a marked live store
+--  were banked from cleared data, so they take the mark as they are.
+--  The account flag "forever_buff_wipe_sweep_v1" (EllesmereUIDB._migrations)
+--  records the one login that also strips Player Aura Bars buff overrides from
+--  profiles holding no Player Aura Bars table (data older than this block).
+--------------------------------------------------------------------------------
+do
+    local ADDON_NAME = ...
+
+    -- The interface number, read directly: WoW Forever reports 16000-19999
+    -- (the client gate's own band); retail and the PTR report 120100+.
+    local function TocForever()
+        local toc = select(4, GetBuildInfo())
+        return type(toc) == "number" and toc >= 16000 and toc < 20000
+    end
+    -- Two independent client checks: the suite's flag and the raw interface
+    -- number. Tested here and again inside every function that writes.
+    local function ClientOK()
+        return EllesmereUI ~= nil and EllesmereUI.IS_FOREVER == true and TocForever()
+    end
+
+    if ClientOK() then
+        local KEY = "fvBuffWipe"
+        local SWEEP_ID = "forever_buff_wipe_sweep_v1"
+        local UF, RF = "EllesmereUIUnitFrames", "EllesmereUIRaidFrames"
+        local PS = "\30"
+        local OV_STORES = { "specOverrides", "condOverrides" }
+
+        -- Default Buffs bar CONTENT fields (what it shows); layout and style stay.
+        local BUFF_CONTENT = { "showAllBuffs", "hasDuration", "filters", "negFilters",
+            "spells", "blacklist", "ownOnlySpells", "enabled" }
+
+        -- Unit Frames setting paths the clear empties (an override entry on one,
+        -- or under one, would re-apply cleared content), plus the mark's own.
+        local PAB_PATH = "playerAuraBars" .. PS
+        local MARK_PATH = PAB_PATH .. KEY
+        local CLEARED_PATHS = { PAB_PATH .. "customBuffBars",
+            PAB_PATH .. "defaultExternalDefensives", PAB_PATH .. "extDefPos",
+            PAB_PATH .. "pabExtDefSeeded", MARK_PATH, "externalDefensives" }
+        for i = 1, #BUFF_CONTENT do
+            CLEARED_PATHS[#CLEARED_PATHS + 1] = PAB_PATH .. "defaultBuffs" .. PS .. BUFF_CONTENT[i]
+        end
+
+        -- Failures go to the migration error log, read at failure time; nothing
+        -- is printed.
+        local function Log(err)
+            local t = EllesmereUI._migrationErrors
+            if type(t) == "table" then
+                t[#t + 1] = { id = "forever_buff_wipe", scope = "profile",
+                    err = tostring(err), time = GetTime() }
+            end
+        end
+
+        -- A blank Buff Manager payload: Raid Frames' own "empty" preset (every key
+        -- that would seed content is pre-seeded EMPTY, so the data also reads
+        -- blank on retail), else plain empty maps. Fresh tables on every call.
+        local function BlankFork()
+            local fn = _G._ERF_BM2PresetFork
+            if type(fn) == "function" then
+                local ok, f = pcall(fn, "empty")
+                if ok and type(f) == "table" and type(f.specs) == "table"
+                    and type(f.seeded) == "table" then
+                    return f
+                end
+                Log(ok and "blank payload without specs/seeded maps" or f)
+            end
+            return { specs = {}, seeded = {} }
+        end
+
+        -- Planned writes: (table, key, value) triples plus array removals (in
+        -- descending index order per array), built without writing and then
+        -- committed as plain assignments, so a commit cannot stop halfway.
+        local function Put(plan, t, k, v)
+            local n = plan.n + 1
+            plan.n = n
+            plan[n * 3 - 2], plan[n * 3 - 1], plan[n * 3] = t, k, v
+        end
+        local function Commit(plan)
+            for i = 1, plan.n do
+                local t, k = plan[i * 3 - 2], plan[i * 3 - 1]
+                t[k] = plan[i * 3]
+            end
+            local rm = plan.rm
+            for i = 1, #rm, 2 do table.remove(rm[i], rm[i + 1]) end
+        end
+
+        -- An override fkey on a cleared Unit Frames path (markOnly: the mark's
+        -- own path alone).
+        local function Cleared(fkey, markOnly)
+            if type(fkey) ~= "string" then return false end
+            local folder, path = fkey:match("^([^\31]+)\31(.*)$")
+            if folder ~= UF or not path then return false end
+            if markOnly then return path == MARK_PATH end
+            for i = 1, #CLEARED_PATHS do
+                local base = CLEARED_PATHS[i]
+                if path == base or path:sub(1, #base + 1) == base .. PS then return true end
+            end
+            local _, e = path:find("^playerAuraBars\30pabSpecBars\30[^\30]+\30buffBars")
+            return e ~= nil and (e == #path or path:sub(e + 1, e + 1) == PS)
+        end
+
+        -- Override entries (the spec and condition stores of a profile root) lose
+        -- every matching path from every value map; an entry whose default map
+        -- is left empty is removed, as the override engine's own prune does.
+        local function PlanStrip(prof, plan, markOnly)
+            if type(prof) ~= "table" then return end
+            for si = 1, #OV_STORES do
+                local store = prof[OV_STORES[si]]
+                if type(store) == "table" then
+                    for i = #store, 1, -1 do
+                        local e = store[i]
+                        local vals = type(e) == "table" and e.values
+                        if type(vals) == "table" then
+                            for _, m in pairs(vals) do
+                                if type(m) == "table" then
+                                    for fkey in pairs(m) do
+                                        if Cleared(fkey, markOnly) then Put(plan, m, fkey, nil) end
+                                    end
+                                end
+                            end
+                            local def = vals.default
+                            if type(def) == "table" then
+                                local hit, left = false, false
+                                for fkey in pairs(def) do
+                                    if Cleared(fkey, markOnly) then hit = true else left = true end
+                                end
+                                if hit and not left then
+                                    plan.rm[#plan.rm + 1] = store
+                                    plan.rm[#plan.rm + 1] = i
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        local function CollectIds(list, set)
+            if type(list) ~= "table" then return end
+            for i = 1, #list do
+                local bar = list[i]
+                if type(bar) == "table" and bar.id ~= nil then set[bar.id] = true end
+            end
+        end
+
+        -- Player Aura Bars buff side (s = the playerAuraBars table). Only keys that
+        -- exist are written, so a table with no buff content gets only the mark.
+        -- Kept: debuff bars and their per-spec disables, both filter libraries,
+        -- the bar id counter, the one-shot flags, layout and style.
+        local function PlanPAB(s, plan)
+            local buffIds, debuffIds = {}, {}
+            CollectIds(s.customBuffBars, buffIds)
+            CollectIds(s.customDebuffBars, debuffIds)
+            local st = s.pabSpecBars
+            if type(st) == "table" then
+                for _, bk in pairs(st) do
+                    if type(bk) == "table" then
+                        CollectIds(bk.buffBars, buffIds)
+                        CollectIds(bk.debuffBars, debuffIds)
+                    end
+                end
+                -- Every bucket (role buckets included) loses its buff bars and the
+                -- per-spec disables of removed buff bars; an id a debuff bar also
+                -- carries keeps its entry.
+                for _, bk in pairs(st) do
+                    if type(bk) == "table" then
+                        local bb = bk.buffBars
+                        if type(bb) == "table" and next(bb) ~= nil then Put(plan, bk, "buffBars", {}) end
+                        local dis = bk.inhDis
+                        if type(dis) == "table" then
+                            for id in pairs(dis) do
+                                if buffIds[id] and not debuffIds[id] then Put(plan, dis, id, nil) end
+                            end
+                        end
+                    end
+                end
+            end
+            -- nil content = a new profile's Buffs bar: All Buffs on, bar shown.
+            local d = s.defaultBuffs
+            if type(d) == "table" then
+                for i = 1, #BUFF_CONTENT do
+                    local f = BUFF_CONTENT[i]
+                    if d[f] ~= nil then Put(plan, d, f, nil) end
+                end
+            end
+            local cb = s.customBuffBars
+            if type(cb) == "table" and next(cb) ~= nil then Put(plan, s, "customBuffBars", {}) end
+            -- The retired External Defensives sources and the seed flag: the module
+            -- re-seeds a new profile's disabled bar at its next build.
+            if s.defaultExternalDefensives ~= nil then Put(plan, s, "defaultExternalDefensives", nil) end
+            if s.extDefPos ~= nil then Put(plan, s, "extDefPos", nil) end
+            if s.pabExtDefSeeded ~= nil then Put(plan, s, "pabExtDefSeeded", nil) end
+        end
+
+        local function PlanUF(uf, s, prof, strip, plan)
+            if s then PlanPAB(s, plan) end
+            if uf and uf.externalDefensives ~= nil then Put(plan, uf, "externalDefensives", nil) end
+            if strip then PlanStrip(prof, plan, strip == "mark") end
+        end
+
+        -- Import only (pd = the payload's profile root, before anything runs):
+        -- fork stores that arrive beside a marked live Buff Manager were banked
+        -- from cleared data (here, or on the other client from a profile that
+        -- came from here), so they take the mark as they are and are never
+        -- cleared. Decided from the payload alone, never at run time: a live
+        -- store is marked before its profile's forks are first read.
+        local function TrustForks(pd)
+            local s, c = pd.specBmOverrides, pd.condBmOverrides
+            local sT, cT = type(s) == "table", type(c) == "table"
+            if not (sT or cT) then return end
+            if (sT and s[KEY] ~= nil) or (cT and c[KEY] ~= nil) then return end
+            local addons = pd.addons
+            local rf = type(addons) == "table" and addons[RF] or nil
+            local b = type(rf) == "table" and rf.bm2 or nil
+            if type(b) ~= "table" or b[KEY] == nil then return end
+            if not ClientOK() then return end
+            if sT then s[KEY] = 1 end
+            if cT then c[KEY] = 1 end
+        end
+
+        local FvBW = { KEY = KEY, ClientOK = ClientOK }
+
+        -- Raid Frames live store (p = the Raid Frames profile): every indicator
+        -- group in every bucket goes, replaced by the blank payload, and the mark
+        -- lands in the same assignment. The filter library stays (Player Aura
+        -- Bars' copy buttons share it). Returns the marked store, nil when
+        -- nothing was written.
+        function FvBW.ClearBM(p)
+            if type(p) ~= "table" then return nil end
+            local b = p.bm2
+            if type(b) == "table" and b[KEY] ~= nil then return nil end
+            if not ClientOK() then return nil end
+            local f = BlankFork()
+            if type(b) == "table" then
+                local filters = b.filters
+                if type(filters) ~= "table" then filters = { nextId = 1, list = {} } end
+                b.filters, b.specs, b.seeded, b[KEY] = filters, f.specs, f.seeded, 1
+            else
+                b = { filters = { nextId = 1, list = {} }, specs = f.specs, seeded = f.seeded, [KEY] = 1 }
+                p.bm2 = b
+            end
+            return b
+        end
+
+        -- Seed gate: WoW Forever never seeds starter groups. Guarantees the bucket
+        -- exists with an indicator array (so the retired editor fallback never
+        -- runs) and is marked seeded. False only when the client check fails.
+        function FvBW.SeedEmpty(b, key)
+            if type(b) ~= "table" or key == nil then return false end
+            local specs, seeded = b.specs, b.seeded
+            local bk = type(specs) == "table" and specs[key] or nil
+            if type(bk) == "table" and type(bk.inds) == "table" and type(bk.nextId) == "number"
+                and type(seeded) == "table" and seeded[key] then
+                return true
+            end
+            if not ClientOK() then return false end
+            if type(specs) ~= "table" then specs = {}; b.specs = specs end
+            if type(seeded) ~= "table" then seeded = {}; b.seeded = seeded end
+            if type(bk) ~= "table" then
+                specs[key] = { nextId = 1000001, inds = {} }
+            else
+                if type(bk.inds) ~= "table" then bk.inds = {} end
+                if type(bk.nextId) ~= "number" then
+                    local top = 1000000
+                    for i = 1, #bk.inds do
+                        local ind = bk.inds[i]
+                        local id = type(ind) == "table" and tonumber(ind.id) or nil
+                        if id and id > top then top = id end
+                    end
+                    bk.nextId = top + 1
+                end
+            end
+            seeded[key] = true
+            return true
+        end
+
+        -- A fork layer with no v2 payload gets a blank one instead of being
+        -- converted from its retired legacy fields. False only when the client
+        -- check fails.
+        function FvBW.BlankLayer(layer)
+            if type(layer) ~= "table" or not ClientOK() then return false end
+            layer.bm2 = BlankFork()
+            return true
+        end
+
+        -- Buff Manager fork stores (prof = a profile root): one unit, cleared once.
+        -- Every layer's v2 payload becomes blank (the rest of each layer, its
+        -- icon zoom included, stays), then every existing root is stamped; a
+        -- root created on this client is stamped at birth, and a root born
+        -- beside a marked one joins its mark. Waits while Raid Frames is not
+        -- loaded: nothing can bank into or apply from a store then.
+        function FvBW.BmForks(prof)
+            if type(prof) ~= "table" then return end
+            local s, c = prof.specBmOverrides, prof.condBmOverrides
+            local sT, cT = type(s) == "table", type(c) == "table"
+            if not (sT or cT) then return end
+            local sM, cM = sT and s[KEY] ~= nil, cT and c[KEY] ~= nil
+            if sM or cM then
+                if ((sT and not sM) or (cT and not cM)) and ClientOK() then
+                    if sT and not sM then s[KEY] = 1 end
+                    if cT and not cM then c[KEY] = 1 end
+                end
+                return
+            end
+            if not ClientOK() then return end
+            if type(_G._ERF_BM2PresetFork) ~= "function" then return end
+            local layers = {}
+            if sT then
+                if type(s.layouts) == "table" then
+                    for _, l in pairs(s.layouts) do
+                        if type(l) == "table" then layers[#layers + 1] = l end
+                    end
+                end
+                if type(s.baselineLayout) == "table" then layers[#layers + 1] = s.baselineLayout end
+            end
+            if cT and type(c.layouts) == "table" then
+                for _, l in pairs(c.layouts) do
+                    if type(l) == "table" then layers[#layers + 1] = l end
+                end
+            end
+            local blanks = {}
+            for i = 1, #layers do blanks[i] = BlankFork() end
+            for i = 1, #layers do layers[i].bm2 = blanks[i] end
+            if sT then s[KEY] = 1 end
+            if cT then c[KEY] = 1 end
+        end
+
+        -- Player Aura Bars (uf = a Unit Frames profile, prof = its profile root
+        -- for the override strip, mode = "first" | "login" | "import" | "live"):
+        --   unmarked table: clear + mark, plus the override strip except "live";
+        --   marked table: nothing, except an import drops mark-path entries;
+        --   no table: the retired External Defensives source is cleared (every
+        --     mode but "live"), and "import" (a payload's stores cannot vouch for
+        --     data they did not arrive with) and "first" (the account's one
+        --     sweep of data older than this block) strip the stores anyway.
+        -- A planning error still stamps the mark (logged): never cleared twice.
+        function FvBW.ProcessUF(uf, prof, mode)
+            local ufT = type(uf) == "table"
+            local s = ufT and uf.playerAuraBars or nil
+            local sT = type(s) == "table"
+            local strip, clear
+            if sT and s[KEY] ~= nil then
+                if mode ~= "import" then return end
+                strip = "mark"
+            elseif sT then
+                clear = true
+                if mode ~= "live" then strip = "full" end
+            elseif mode == "live" then
+                return
+            elseif ufT and uf.externalDefensives ~= nil then
+                clear = true
+                strip = "full"
+            elseif mode == "import" or mode == "first" then
+                strip = "full"
+            else
+                return
+            end
+            if not ClientOK() then return end
+            local plan = { n = 0, rm = {} }
+            local ok, err = pcall(PlanUF, clear and ufT and uf or nil,
+                clear and sT and s or nil, prof, strip, plan)
+            if ok then Commit(plan) else Log(err) end
+            if clear and sT then s[KEY] = 1 end
+        end
+
+        -- Profile-level entry (pd = a profile root: stored, or an import payload).
+        function FvBW.ProcessProfile(pd, mode)
+            if type(pd) ~= "table" then return end
+            local addons = pd.addons
+            FvBW.ProcessUF(type(addons) == "table" and addons[UF] or nil, pd, mode)
+            if mode == "import" then TrustForks(pd) end
+        end
+
+        EllesmereUI.FvBW = FvBW
+
+        -- Login sweep (Player Aura Bars): every stored profile, at this addon's
+        -- own ADDON_LOADED -- in the suite before any child opens its profile --
+        -- and before anything can switch, sync or copy one. The vararg name stays
+        -- correct in standalone builds. The account's first pass with this block
+        -- runs in "first" mode; the flag is written on every pass, so an account
+        -- that starts with no profiles never runs one.
+        local boot = CreateFrame("Frame")
+        boot:RegisterEvent("ADDON_LOADED")
+        boot:SetScript("OnEvent", function(self, _, name)
+            if name ~= ADDON_NAME then return end
+            self:UnregisterEvent("ADDON_LOADED")
+            local db = EllesmereUIDB
+            if type(db) ~= "table" or not ClientOK() then return end
+            local flags = db._migrations
+            if type(flags) ~= "table" then flags = {}; db._migrations = flags end
+            local mode = flags[SWEEP_ID] and "login" or "first"
+            local profiles = db.profiles
+            if type(profiles) == "table" then
+                for _, pd in pairs(profiles) do FvBW.ProcessProfile(pd, mode) end
+            end
+            flags[SWEEP_ID] = true
+        end)
+    end
+end
