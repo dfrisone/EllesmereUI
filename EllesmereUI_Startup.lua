@@ -355,7 +355,7 @@ do
     local function TryRealFont(path)
         local f = _G.CombatTextFont
         if not f then return nil end
-        return (pcall(f.SetFont, f, path, 120, ""))
+        return (pcall(f.SetFont, f, path, 64, ""))
     end
 
     local function ApplyCombatTextFont()
