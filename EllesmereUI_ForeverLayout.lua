@@ -5,12 +5,15 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  On the Forever client every fresh install starts from one layout instead
 --  of a snapshot of wherever Blizzard's frames happened to be:
 --    chat bottom-left with the micro menu under it, action bar 1 bottom
---    centre with the pet bar above it, action bars 2+ hidden, the bag bar
+--    centre with bar 2 and the pet bar above it, bars 3-8 as columns on the
+--    right edge, bars 2-8 shown as the player has them in Blizzard's Action
+--    Bars settings (9 and 10 hidden), the bag bar
 --    bottom-right with the damage meter above it and the tooltip above that,
 --    the minimap top-right, the player frame left and the target frame right
 --    a hundred pixels above action bar 1 with the cast bar centred between
---    them, the stance bar just above the player frame and Blizzard's
---    encounter bar fifty pixels above the target frame.
+--    them, the stance bar just above the player frame, Blizzard's
+--    encounter bar fifty pixels above the target frame and Blizzard's quest
+--    tracker just left of the right-edge bars.
 --
 --  Two halves:
 --    1. SeedForeverBaseLayout, called by the first-install loader at the
@@ -71,8 +74,11 @@ local TOT_DX       = (TARGET_W - TOT_W) / 2   -- centre offset that aligns the r
 -- or fewer forms grows to the left and the right edge stays put.
 local STANCE_RIGHT  = -UF_SPREAD + TARGET_W / 2   -- the player frame's right edge
 local STANCE_BOTTOM = UF_BOTTOM + TARGET_H + GAP
--- Pet bar: centred just above action bar 1.
-local PET_BOTTOM    = MAINBAR_Y + BAR_HEIGHT + GAP
+-- Action bar 2: centred just above action bar 1. Pet bar: centred just above
+-- action bar 1, or above bar 2 while the player has bar 2 on.
+local BAR2_BOTTOM   = MAINBAR_Y + BAR_HEIGHT + GAP
+local PET_BOTTOM    = BAR2_BOTTOM
+local PET_OVER_BAR2 = BAR2_BOTTOM + BAR_HEIGHT + GAP
 -- The unit frames' vertical centre: the Resource Bars cast bar sits there,
 -- centred between the player and target frames.
 local UF_MID        = UF_BOTTOM + TARGET_H / 2
@@ -82,6 +88,15 @@ local MINIMAP_SIZE = 200
 EllesmereUI.FOREVER_MINIMAP_SIZE = MINIMAP_SIZE   -- the minimap's own first-activation default there
 local MINIMAP_RIGHT = 23.33               -- minimap's right edge in from the screen's right
 local MINIMAP_TOP   = 62.5                -- its top edge down from the screen's top
+-- Action bars 3-8: one-button-wide columns on the right edge, bar 3 outermost
+-- and each next bar left of the last, centred in the gap between the damage
+-- meter's top and the minimap's bottom (the meter sits on the bottom edge and
+-- the minimap on the top one, so that centre is a fixed offset from the
+-- screen's middle on any screen height).
+local SIDE_BARS     = { "Bar3", "Bar4", "Bar5", "Bar6", "Bar7", "Bar8" }
+local SIDE_COL_W    = BAR_HEIGHT          -- a column is one default-size button wide
+local SIDE_COL_GAP  = 4
+local SIDE_BAR_Y    = ((METER_BOTTOM + METER_H) - (MINIMAP_TOP + MINIMAP_SIZE)) / 2
 
 -- The Edit Mode layout carries a version in its name from v2 on ("EllesmereUI
 -- Forever v2"); the first shipped without one. A newer version UPGRADES the
@@ -140,6 +155,45 @@ local function EdgeAnchor(target, side, offsetX, offsetY, edgeKey, edgeSide, edg
     return rec
 end
 
+-- Action bars 2-8 follow the player's own Blizzard Action Bars checkboxes on a
+-- fresh install: a bar switched off there starts hidden, every other one keeps
+-- the module's default (shown). The checkboxes are the character's action bar
+-- toggles, which the game hands over with its settings, so they are read on
+-- SETTINGS_LOADED (Blizzard applies them to its own bars on that event), or on
+-- PLAYER_ENTERING_WORLD should that come first. First session only: the
+-- first-install reload keeps the result, and the player owns it from then on.
+local MIRROR_KEYS = { "Bar2", "Bar3", "Bar4", "Bar5", "Bar6", "Bar7", "Bar8" }
+local function MirrorBlizzardBarToggles()
+    if not GetActionBarToggles then return end
+    local toggles = { GetActionBarToggles() }
+    local ab = Sub(ProfileAddons(), "EllesmereUIActionBars")
+    local bars = Sub(ab, "bars")
+    for i = 1, #MIRROR_KEYS do
+        if not toggles[i] then
+            local b = Sub(bars, MIRROR_KEYS[i])
+            b.barVisibility = "never"
+            b.alwaysHidden = true
+        end
+    end
+    -- Bar 2 on: the pet bar moves up over it.
+    if toggles[1] then
+        Sub(ab, "barPositions").PetBar = Pos("BOTTOM", 0, PET_OVER_BAR2)
+    end
+    -- The module may have built its bars already: repaint them (out of
+    -- combat; the first-install reload applies the data regardless).
+    if _G._EAB_Apply and not InCombatLockdown() then _G._EAB_Apply() end
+end
+
+local function MirrorBlizzardBarTogglesSoon()
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("SETTINGS_LOADED")
+    f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    f:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        MirrorBlizzardBarToggles()
+    end)
+end
+
 function EllesmereUI.SeedForeverBaseLayout()
     local addons = ProfileAddons()
 
@@ -188,21 +242,32 @@ function EllesmereUI.SeedForeverBaseLayout()
         win.curDMType = Enum.DamageMeterType.DamageDone
     end
 
-    -- Action bars: bar 1 bottom centre with the pet bar centred above it, the
-    -- stance bar just above the player frame, every other bar hidden,
-    -- Blizzard's own XP and reputation bars in place of the module's.
+    -- Action bars: bar 1 bottom centre with bar 2 and the pet bar centred above
+    -- it, bars 3-8 as columns on the right edge (SIDE_BARS), the stance bar just
+    -- above the player frame, Blizzard's own XP and reputation bars in place of
+    -- the module's. Bars 2-8 show exactly the bars the player has on in
+    -- Blizzard's Action Bars settings (MirrorBlizzardBarToggles, once the
+    -- game's settings load); 9 and 10, which have no Blizzard counterpart,
+    -- start hidden.
     local ab = Sub(addons, "EllesmereUIActionBars")
     ab.useBlizzardDataBars = true
     local barPos = Sub(ab, "barPositions")
     barPos.MainBar = Pos("BOTTOM", 0, MAINBAR_Y)
+    barPos.Bar2 = Pos("BOTTOM", 0, BAR2_BOTTOM)
     barPos.PetBar = Pos("BOTTOM", 0, PET_BOTTOM)
     barPos.StanceBar = { point = "BOTTOMRIGHT", relPoint = "BOTTOM", x = STANCE_RIGHT, y = STANCE_BOTTOM }
     local bars = Sub(ab, "bars")
-    for _, key in ipairs({ "Bar2", "Bar3", "Bar4", "Bar5", "Bar6", "Bar7", "Bar8", "Bar9", "Bar10" }) do
+    for i = 1, #SIDE_BARS do
+        local key = SIDE_BARS[i]
+        barPos[key] = Pos("RIGHT", -(EDGE + (i - 1) * (SIDE_COL_W + SIDE_COL_GAP)), SIDE_BAR_Y)
+        Sub(bars, key).orientation = "vertical"
+    end
+    for _, key in ipairs({ "Bar9", "Bar10" }) do
         local b = Sub(bars, key)
         b.barVisibility = "never"
         b.alwaysHidden = true
     end
+    MirrorBlizzardBarTogglesSoon()
 
     -- No module reads Blizzard's layout: the capture flags start stamped.
     EllesmereUIDB._capturedOnce_EAB = true
@@ -335,6 +400,37 @@ local function UpgradeLayout(layout, from, modern)
     end
 end
 
+-- The Quest Tracker skin's backdrop reaches this far right of the tracker
+-- frame (EllesmereUIQuestTracker_Visibility.lua): the tracker spot below
+-- measures from the backdrop's edge.
+local TRACKER_BG_PAD = 11
+
+-- Blizzard's quest tracker (placed by Edit Mode) sits just left of the
+-- furthest right-edge action bar column the player shows (SIDE_BARS, shown
+-- per Blizzard's Action Bars checkboxes like MirrorBlizzardBarToggles), or
+-- lined up with the minimap's right edge when none shows. Returns the
+-- tracker's right-edge distance from the screen's right, or nil while
+-- EllesmereUI's action bars are off (Blizzard's own right bars show then,
+-- and the Modern spot already clears them).
+local function TrackerRightEdge()
+    if not (C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("EllesmereUIActionBars")) then
+        return nil
+    end
+    local furthest
+    if GetActionBarToggles then
+        local toggles = { GetActionBarToggles() }
+        -- Toggle 1 is action bar 2, so bar SIDE_BARS[i] (bar i + 2) is toggle i + 1.
+        for i = 1, #SIDE_BARS do
+            if toggles[i + 1] then furthest = i end
+        end
+    end
+    local edge = MINIMAP_RIGHT
+    if furthest then
+        edge = EDGE + furthest * SIDE_COL_W + (furthest - 1) * SIDE_COL_GAP + GAP
+    end
+    return edge + TRACKER_BG_PAD
+end
+
 -- Returns true once the layout exists and this character is on it for its
 -- first time (written now, or found and switched to), false to retry.
 local function WriteEditModeLayout()
@@ -451,6 +547,14 @@ local function WriteEditModeLayout()
                 end
                 SetSetting(xp, sizeSetting, raw)
             end
+        end
+        -- The quest tracker keeps the Modern height, moved clear of the
+        -- right-edge action bars (TrackerRightEdge).
+        local ot = Enum.EditModeSystem.ObjectiveTracker and FindSystem(layout, Enum.EditModeSystem.ObjectiveTracker, nil)
+        local otRight = ot and TrackerRightEdge()
+        if otRight then
+            local otY = (type(ot.anchorInfo) == "table" and ot.anchorInfo.offsetY) or -275
+            AnchorSystem(ot, "TOPRIGHT", -otRight, otY)
         end
 
         slot = #merged + 1

@@ -1419,11 +1419,11 @@ initFrame:SetScript("OnEvent", function(self)
             iconAtlas = function(key)
                 if key == "none" then return nil end
                 if not whisperSoundPaths[key] then return nil end
-                return "common-icon-sound"
+                return EllesmereUI.SOUND_ICON_ATLAS
             end,
             iconPressedAtlas = function(key)
                 if not whisperSoundPaths[key] then return nil end
-                return "common-icon-sound-pressed"
+                return EllesmereUI.SOUND_ICON_PRESSED_ATLAS
             end,
             iconOnClick = function(key)
                 local path = whisperSoundPaths[key]

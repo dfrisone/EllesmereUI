@@ -5,8 +5,9 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  Multi-window support (up to 5). Zero Blizzard frame hooks. All settings live.
 -------------------------------------------------------------------------------
 local _, ns = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS["EllesmereUIDamageMeters"] = ns  -- LOD options files read this module ns via the registry
+ns.CombatQueue = EllesmereUI.NewCombatQueue(CreateFrame("Frame"))
 local EUI = EllesmereUI
 
 -- Constants
@@ -5908,14 +5909,12 @@ do
         local wantReset, wantToggle = WantKey(c.resetDataKey), WantKey(c.toggleWindowsKey)
         if not wantReset and not wantToggle and not appliedReset and not appliedToggle then
             kbFrame:UnregisterEvent("UPDATE_BINDINGS")
-            kbFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
             return
         end
         if InCombatLockdown() then
-            kbFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            ns.CombatQueue.Defer("DMKeybinds", ns.ApplyDMKeybinds)
             return
         end
-        kbFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
         selfWriteUntil = GetTime() + 0.5
         local resetBtn = _G.EllesmereUIDMResetBindBtn
         if resetBtn then

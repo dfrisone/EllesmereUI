@@ -697,7 +697,7 @@ EllesmereUI.PartySpin_RefreshAll = RefreshAll
 
 function EllesmereUI.PartySpin_Create(opts)
     local target = opts.target
-    local driver, deferF
+    local driver
     local angle, held, since, claimed = 0, false, 0, false
     local members = {}     -- frame -> its recOf record
     local order = {}       -- array of frames (stable iteration)
@@ -798,14 +798,7 @@ function EllesmereUI.PartySpin_Create(opts)
         -- half (Show/Hide of our own driver) runs there; the rest re-runs on
         -- PLAYER_REGEN_ENABLED with the member table left intact.
         if InCombatLockdown() then
-            if not deferF then
-                deferF = CreateFrame("Frame")
-                deferF:SetScript("OnEvent", function(self)
-                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                    refresh()
-                end)
-            end
-            deferF:RegisterEvent("PLAYER_REGEN_ENABLED")
+            EllesmereUI.CombatQueue.Defer(refresh, refresh)
             if not on then
                 if driver then driver:Hide() end
                 angle = 0

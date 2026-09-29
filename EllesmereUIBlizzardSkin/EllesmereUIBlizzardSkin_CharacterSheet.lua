@@ -497,8 +497,9 @@ local function PreSkinCharacterSheet()
             CharacterModelScene.ControlFrame:EnableMouse(false)
         end
     end
-    for i = 1, select("#", frame:GetRegions()) do
-        local region = select(i, frame:GetRegions())
+    local regions = { frame:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") then
             region:SetAlpha(0)
         end
@@ -903,8 +904,9 @@ local function SkinCharacterSheet()
         local tab = _G["CharacterFrameTab" .. i]
         if tab and not ns.CharSheetStock() then
             charTabs[#charTabs + 1] = tab
-            for j = 1, select("#", tab:GetRegions()) do
-                local region = select(j, tab:GetRegions())
+            local regions = { tab:GetRegions() }
+            for j = 1, #regions do
+                local region = regions[j]
                 if region and region:IsObjectType("Texture") then
                     region:SetTexture("")
                     if region.SetAtlas then region:SetAtlas("") end

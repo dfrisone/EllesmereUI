@@ -1229,12 +1229,7 @@ local function OpenSeasonShortcut(self)
             ToggleExpansionLandingPage()
         end
     else
-        if not C_AddOns.IsAddOnLoaded("Blizzard_WeeklyRewards") then
-            C_AddOns.LoadAddOn("Blizzard_WeeklyRewards")
-        end
-        -- Toggle directly so UIPanel management does not close the character sheet.
-        local vault = _G.WeeklyRewardsFrame
-        if vault then vault:SetShown(not vault:IsShown()) end
+        EllesmereUI.ToggleGreatVault()
     end
 end
 

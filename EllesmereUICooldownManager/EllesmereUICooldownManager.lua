@@ -7,7 +7,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  Does NOT parse secret values works around restricted APIs.
 -------------------------------------------------------------------------------
 local _, ns = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS["EllesmereUICooldownManager"] = ns  -- LOD options files read this module ns via the registry
 
 -- CPU-attribution shell pool: the engine bills a handler's call tree to the addon
@@ -30,6 +30,10 @@ do
         return CreateFrame("Frame")
     end
 end
+
+-- Run-once-after-combat queue (EllesmereUI_Ticker.lua). Frame taken in the main
+-- chunk, so drained work bills CooldownManager. Keys are per purpose.
+ns.CombatQueue = EllesmereUI.NewCombatQueue(ns.TakeShell())
 
 -- EMERGENCY CONFLICT GUARD: the addon detected below hooks the same Blizzard
 -- frames we do; running both crashes the client on the loading screen. Detect
@@ -687,8 +691,6 @@ local RegisterCDMUnlockElements
 local DEFAULTS = {
     global = {},
     profile = {
-        -- CDM Look
-        reskinBorders   = true,
         -- Style flags (Global Settings > Style). All default OFF and are
         -- reload-gated. Blizzard Style: icons keep Blizzard's rounded mask,
         -- overlay ring and swipe art; tracked buff bars use Blizzard's bar
@@ -2184,142 +2186,6 @@ ns.CDM_BAR_ROOTS = {
 }
 
 -------------------------------------------------------------------------------
---  CDM Slot Helpers
--------------------------------------------------------------------------------
-local function GetAllCDMSlots(root)
-    if not root or not root.GetChildren then return {} end
-    local slots = {}
-    for i = 1, root:GetNumChildren() do
-        local c = select(i, root:GetChildren())
-        if c and c.GetWidth and c:GetWidth() > 5 then
-            slots[#slots + 1] = c
-        end
-    end
-    return slots
-end
-
--------------------------------------------------------------------------------
---  CDM Look: Border Reskinning
--------------------------------------------------------------------------------
-local cdmBorderFrames = {}
-
-local function GetOrCreateCDMBorder(slot)
-    local function SafeEq(a, b)
-        return a == b
-    end
-
-    if cdmBorderFrames[slot] then return cdmBorderFrames[slot] end
-
-    slot.__ECMEHidden   = slot.__ECMEHidden or {}
-    slot.__ECMEIcon     = slot.__ECMEIcon or nil
-    slot.__ECMECooldown = slot.__ECMECooldown or nil
-
-    if not slot.__ECMEScanned then
-        slot.__ECMEHidden = {}
-        slot.__ECMEIcon = nil
-        slot.__ECMECooldown = nil
-
-        for ri = 1, slot:GetNumRegions() do
-            local region = select(ri, slot:GetRegions())
-            if region and region.GetObjectType then
-                local objType = region:GetObjectType()
-                if objType == "MaskTexture" then
-                    slot.__ECMEHidden[#slot.__ECMEHidden + 1] = region
-                elseif objType == "Texture" then
-                    local ok, rawLayer = pcall(region.GetDrawLayer, region)
-                    if ok and rawLayer ~= nil then
-                        local okB, isBorder   = pcall(SafeEq, rawLayer, "BORDER")
-                        local okO, isOverlay  = pcall(SafeEq, rawLayer, "OVERLAY")
-                        local okA, isArtwork  = pcall(SafeEq, rawLayer, "ARTWORK")
-                        local okG, isBG       = pcall(SafeEq, rawLayer, "BACKGROUND")
-                        if (okB and isBorder) or (okO and isOverlay) then
-                            slot.__ECMEHidden[#slot.__ECMEHidden + 1] = region
-                        elseif not slot.__ECMEIcon and ((okA and isArtwork) or (okG and isBG)) then
-                            slot.__ECMEIcon = region
-                        end
-                    end
-                end
-            end
-        end
-
-        for ci = 1, slot:GetNumChildren() do
-            local child = select(ci, slot:GetChildren())
-            if child and child.GetObjectType then
-                local objType = child:GetObjectType()
-                if objType == "MaskTexture" then
-                    slot.__ECMEHidden[#slot.__ECMEHidden + 1] = child
-                elseif objType == "Cooldown" then
-                    slot.__ECMECooldown = child
-                    for k = 1, child:GetNumChildren() do
-                        local cdChild = select(k, child:GetChildren())
-                        if cdChild and cdChild.GetObjectType and cdChild:GetObjectType() == "MaskTexture" then
-                            slot.__ECMEHidden[#slot.__ECMEHidden + 1] = cdChild
-                        end
-                    end
-                    for k = 1, child:GetNumRegions() do
-                        local cdRegion = select(k, child:GetRegions())
-                        if cdRegion and cdRegion.GetObjectType and cdRegion:GetObjectType() == "MaskTexture" then
-                            slot.__ECMEHidden[#slot.__ECMEHidden + 1] = cdRegion
-                        end
-                    end
-                end
-            end
-        end
-        slot.__ECMEScanned = true
-    end
-
-    local iconSize = slot.__ECMEIcon and slot.__ECMEIcon:GetWidth() or slot:GetWidth() or 35
-    local edgeSize = iconSize < 35 and 2 or 1
-
-    local border = CreateFrame("Frame", nil, slot)
-    if slot.__ECMEIcon then border:SetAllPoints(slot.__ECMEIcon) else border:SetAllPoints() end
-    border:SetFrameLevel(slot:GetFrameLevel() + 5)
-    EllesmereUI.PP.CreateBorder(border, 0, 0, 0, 1, edgeSize)
-
-    cdmBorderFrames[slot] = border
-    return border
-end
-
-local CDM_ROOT_NAMES = {
-    "BuffIconCooldownViewer", "BuffBarCooldownViewer",
-    "EssentialCooldownViewer", "UtilityCooldownViewer",
-}
-
-local function UpdateAllCDMBorders()
-    local reskin = ECME.db and ECME.db.profile.reskinBorders
-    local crop = 0.06
-
-    for _, rootName in ipairs(CDM_ROOT_NAMES) do
-        local root = _G[rootName]
-        if root then
-            for _, slot in ipairs(GetAllCDMSlots(root)) do
-                local border = GetOrCreateCDMBorder(slot)
-                if reskin then
-                    border:Show()
-                    if slot.__ECMEIcon then slot.__ECMEIcon:SetTexCoord(crop, 1 - crop, crop, 1 - crop) end
-                    if slot.__ECMECooldown then
-                        slot.__ECMECooldown:SetSwipeTexture("Interface\\AddOns\\EllesmereUI\\media\\white-square.png")
-                    end
-                    for _, h in ipairs(slot.__ECMEHidden) do
-                        if h and h.Hide then h:Hide() end
-                    end
-                else
-                    border:Hide()
-                    if slot.__ECMEIcon then slot.__ECMEIcon:SetTexCoord(0, 1, 0, 1) end
-                    if slot.__ECMECooldown then
-                        slot.__ECMECooldown:SetSwipeTexture("Interface\\Cooldown\\cooldown-bling")
-                    end
-                    for _, h in ipairs(slot.__ECMEHidden) do
-                        if h and h.Show then h:Show() end
-                    end
-                end
-            end
-        end
-    end
-end
-ns.UpdateAllCDMBorders = UpdateAllCDMBorders
-
--------------------------------------------------------------------------------
 --  Native Glow System -- engines provided by shared EllesmereUI_Glows.lua
 --  CDM keeps its own GLOW_STYLES (different scale values) and Start/Stop
 --  wrappers that handle CDM-specific shape glow (icon masks/borders).
@@ -3154,11 +3020,11 @@ CaptureCDMPositions = function()
 
             -- Icon size + spacing from child icons. Blizzard CDM icons have a base size plus a
             -- per-icon scale driven by the IconSize percentage slider; spacing is the gap between two adjacent visible icons in parent coordinates.
-            local childCount = frame:GetNumChildren()
             local numDistinctY = {}
             local shownIcons = {}
-            for ci = 1, childCount do
-                local child = select(ci, frame:GetChildren())
+            local children = { frame:GetChildren() }
+            for ci = 1, #children do
+                local child = children[ci]
                 if child and child.Icon then
                     local cw = child:GetWidth()
                     local cs = child:GetScale()
@@ -8200,35 +8066,6 @@ BuildAllCDMBars = function()
     -- Apply visibility (hides bars set to "in combat only", "never", etc; handles unlock-mode override and viewer alpha sync). Single authority.
     _CDMApplyVisibility()
 
-    -- Batch-apply pending cooldown font styling (single deferred call, no per-icon closures)
-    C_Timer.After(0, function()
-        for _, icons in pairs(cdmBarIcons) do
-            for _, icon in ipairs(icons) do
-                local ifc = _ecmeFC[icon]
-                local pendFP = ifc and ifc.pendingFontPath
-                if pendFP then
-                    local ifd = _getFD(icon)
-                    local cd = ifd and ifd.cooldown or icon._cooldown
-                    if cd then
-                        local fontPath, fontSize = pendFP, ifc.pendingFontSize
-                        local fR = ifc.pendingFontR
-                        local fG = ifc.pendingFontG
-                        local fB = ifc.pendingFontB
-                        for ri = 1, cd:GetNumRegions() do
-                            local region = select(ri, cd:GetRegions())
-                            if region and region.GetObjectType and region:GetObjectType() == "FontString" then
-                                SetBlizzCDMFont(region, fontPath, fontSize, fR, fG, fB)
-                                break
-                            end
-                        end
-                        ifc.pendingFontPath = nil; ifc.pendingFontSize = nil
-                        ifc.pendingFontR = nil; ifc.pendingFontG = nil; ifc.pendingFontB = nil
-                    end
-                end
-            end
-        end
-    end)
-
     -- Every full rebuild re-evaluates the FocusKick demand gate, so assigning the first kick spell (or removing the last) flips the feature family on/off live.
     if ns.RefreshFocusKickProxies then ns.RefreshFocusKickProxies() end
 
@@ -8734,26 +8571,20 @@ EllesmereUI.CDMReconcileActiveSpecSpells = function()
     if ns.PruneEquipmentBuffRows then ns.PruneEquipmentBuffRows() end
 end
 
--- Shared PLAYER_REGEN_ENABLED waiter for the automatic keep/drop pass below.
--- Deliberately its OWN frame, not the module's big shared event handler
+-- Shared after-combat waiter for the automatic keep/drop pass below, via the
+-- module combat queue rather than the module's big shared event handler
 -- further down this file -- that frame's registration set is static and
--- must not churn. Registers the event ONLY while a pass is pending and
--- unregisters itself the instant it fires, so an idle session where no pass
--- is ever deferred carries zero event traffic from this path.
-local _cdmRegenWaiter
-local function ArmCDMDropRegenWaiter()
-    ns._cdmDropPending = true
-    if not _cdmRegenWaiter then
-        _cdmRegenWaiter = CreateFrame("Frame")
-        _cdmRegenWaiter:Hide()
-        _cdmRegenWaiter:SetScript("OnEvent", function(self)
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            ns._cdmDropPending = false
-            if ns.RequestCDMDropPass then ns.RequestCDMDropPass("regen") end
-        end)
+-- must not churn. The queue holds PLAYER_REGEN_ENABLED only while something
+-- is pending, so an idle session carries zero event traffic from this path.
+local ArmCDMDropRegenWaiter
+do
+    local function DropPassAfterCombat()
+        ns._cdmDropPending = false
+        if ns.RequestCDMDropPass then ns.RequestCDMDropPass("regen") end
     end
-    if not _cdmRegenWaiter:IsEventRegistered("PLAYER_REGEN_ENABLED") then
-        _cdmRegenWaiter:RegisterEvent("PLAYER_REGEN_ENABLED")
+    ArmCDMDropRegenWaiter = function()
+        ns._cdmDropPending = true
+        ns.CombatQueue.Defer("CDMDropPass", DropPassAfterCombat)
     end
 end
 
@@ -9435,8 +9266,8 @@ function ns.ReconcileBuffFamilyDrops(barKey)
     if not ns._cdmDataLoaded then return sd end
     if InCombatLockdown() then
         -- Shared regen waiter (defined with ns.ReconcileAssignedSpellDrops /
-        -- ns.RequestCDMDropPass, RS3/RS4 above): arms the PLAYER_REGEN_ENABLED
-        -- listener that clears ns._cdmDropPending and re-requests a pass. Bare-setting
+        -- ns.RequestCDMDropPass, RS3/RS4 above): queues the after-combat entry
+        -- that clears ns._cdmDropPending and re-requests a pass. Bare-setting
         -- the flag without arming the waiter would permanently disable every future
         -- automatic pass this session (cd/utility included) since nothing would ever clear it.
         ArmCDMDropRegenWaiter()

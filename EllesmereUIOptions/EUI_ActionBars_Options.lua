@@ -662,13 +662,14 @@ initFrame:SetScript("OnEvent", function(self)
                     bgTopInset = bgSpacing + bgGrowY
                 end
             end
-            -- Action Bar 1's chrome (painted after the buttons): WoW Forever's
-            -- frame and dividers and the look's end caps (horizontal only),
+            -- The bar's chrome (painted after the buttons): WoW Forever's
+            -- frame and dividers and the bar's end caps (horizontal only),
             -- with room above and below the grid for them.
-            local fvPrev = info.key == "MainBar" and ns.AB_ForeverBg()
-            local capsPrev = info.key == "MainBar" and not isVertical and ns.AB_CapsLook() or nil
+            local fvPrev = ns.AB_ForeverBg(info.key)
+            local capsPrev, capsL, capsR
+            if not isVertical then capsPrev, capsL, capsR = ns.AB_CapsLook(info.key) end
             if fvPrev or capsPrev then
-                local reachT, reachB = ns.AB_ChromeReach(scaledBtnW, gridH, fvPrev, capsPrev, gridRows > 1, totalScale)
+                local reachT, reachB = ns.AB_ChromeReach(scaledBtnW, gridH, fvPrev, capsPrev, gridRows > 1, totalScale, info.key)
                 bgTopInset = math.max(bgTopInset, Snap(reachT - 10))
                 bgBottomInset = math.max(bgBottomInset, Snap(reachB - 10))
             end
@@ -1084,7 +1085,8 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.AB_PaintBarChrome(abc, self, gridStartX, self._gridStartY, gridW, gridH,
                     scaledBtnW, fvPrev, capsPrev, gridRows > 1, isVertical,
                     oneLine and (isVertical and gridRows or gridCols) or 0,
-                    (isVertical and scaledBtnH or scaledBtnW) + scaledPad, 0, 0, totalScale)
+                    (isVertical and scaledBtnH or scaledBtnW) + scaledPad, 0, 0, totalScale,
+                    info.key, capsL, capsR)
             end
 
             if settings.bgEnabled then
@@ -2211,102 +2213,172 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Action Bar 1's end caps and their size/offset cog. WoW Forever's are
-        -- shown unless hidden and sit atop LAYOUT beside Show Bar Background;
-        -- Blizzard Style and Classic WoW UI opt in with a toggle, the EllesmereUI
-        -- style with an art choice (euiEndCaps, nil = None), both in the Click
-        -- Through row's free slot.
-        local CAPS = (not visOnly and SelectedKey() == "MainBar") and {} or nil
+        -- The bar's end caps: the End Caps checklist (Left Endcap / Right
+        -- Endcap) and its cog (the EllesmereUI style's art, size, offsets),
+        -- all per bar through the runtime's own readers (ns.AB_CapsSides /
+        -- AB_CapsVal: an unset Action Bar 1 key reads the profile-wide one).
+        -- Under WoW Forever it opens LAYOUT beside Show Bar Background; every
+        -- other look puts it in the Click Through row's free slot. Horizontal
+        -- bars only: the art sits at the bar's two ends.
+        local CAPS = (not visOnly) and {} or nil
         if CAPS then
             CAPS.stock = EllesmereUI.BlizzStyle.Get("actionbars") and true or false
             CAPS.forever = CAPS.stock and EllesmereUI.BlizzStyle.Forever("actionbars")
-            -- True while the current look draws no end caps (the runtime's own answer).
-            function CAPS.Off()
-                return not ns.AB_CapsLook()
+            function CAPS.Vertical()
+                return not EAB:GetOrientationForBar(SelectedKey())
             end
+            -- True while the bar shows a cap at neither end.
+            function CAPS.Off()
+                local l, r = ns.AB_CapsSides(SelectedKey())
+                return not (l or r)
+            end
+            function CAPS.Apply(key)
+                EAB:ApplyPaddingForBar(key or SelectedKey())
+                if not key then SUpdatePreviewAndResize() end
+            end
+            -- The row slot CAPS.Build swaps for the checklist; its label
+            -- carries the tooltip and dims on a vertical bar.
             function CAPS.Cfg()
+                local classic = EllesmereUI.BlizzStyle.Active("actionbars") == "classic"
+                return { type="dropdown", text="End Caps",
+                  tooltip=(not CAPS.stock) and "Which ends of the bar show end cap art; the cog picks the art."
+                      or classic and "Which ends of the bar show the gryphons."
+                      or "Which ends of the bar show the gryphons or wyverns.",
+                  values={ __placeholder = "..." }, order={ "__placeholder" },
+                  disabled=CAPS.Vertical,
+                  disabledTooltip="Vertical Orientation", requireState="disabled",
+                  getValue=function() return "__placeholder" end,
+                  setValue=function() end }
+            end
+            -- A bar's whole end cap setting onto bar `dst`, as the selected
+            -- bar resolves it (sides, the EllesmereUI style's art, size, offsets).
+            function CAPS.CopyTo(dst)
+                local src = SelectedKey()
+                local d = EAB.db.profile.bars[dst]
+                if dst == src or not d then return end
+                d.endCapLeft, d.endCapRight = ns.AB_CapsSides(src)
+                if not CAPS.stock then d.endCapArt = ns.AB_CapsArt(src) end
+                local _, dx, dy, sc = ns.AB_CapsTweak(src)
+                d.endCapScale, d.endCapOffsetX, d.endCapOffsetY = sc, dx, dy
+                CAPS.Apply(dst)
+            end
+            function CAPS.Same(key)
+                local src = SelectedKey()
+                local sl, sr = ns.AB_CapsSides(src)
+                local kl, kr = ns.AB_CapsSides(key)
+                if sl ~= kl or sr ~= kr then return false end
+                if not (sl or sr) then return true end
+                if not CAPS.stock and ns.AB_CapsArt(src) ~= ns.AB_CapsArt(key) then return false end
+                local _, sx, sy, ss = ns.AB_CapsTweak(src)
+                local _, kx, ky, ks = ns.AB_CapsTweak(key)
+                return ss == ks and sx == kx and sy == ky
+            end
+            -- The checklist in `rgn` (a DualRow half built from CAPS.Cfg), its
+            -- cog and its Apply to All link.
+            function CAPS.Build(rgn)
+                if EllesmereUI._prebuilding then return end
+                if rgn._control then rgn._control:Hide() end
+                local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+                    rgn, 170, rgn:GetFrameLevel() + 2,
+                    { { key = "L", label = "Left Endcap" }, { key = "R", label = "Right Endcap" } },
+                    function(k)
+                        local l, r = ns.AB_CapsSides(SelectedKey())
+                        if k == "L" then return l end
+                        return r
+                    end,
+                    function(k, v)
+                        -- Both sides are written, the untouched one as the bar
+                        -- shows it now: a written side never reads a default.
+                        local s = SB()
+                        local l, r = ns.AB_CapsSides(SelectedKey())
+                        if k == "L" then l = v and true or false else r = v and true or false end
+                        s.endCapLeft, s.endCapRight = l, r
+                        CAPS.Apply()
+                        EllesmereUI:RefreshPage()
+                    end, nil, nil, nil, nil, nil,
+                    -- Spec Overrides see each click as it happens (the slot's capture).
+                    { notifyWrites = true })
+                PP.Point(cbDD, "RIGHT", rgn, "RIGHT", -20, 0)
+                rgn._control = cbDD
+                rgn._lastInline = nil
+                EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+                -- The checklist has no disabled state of its own: grey it and
+                -- block clicks on a vertical bar (the row label explains).
+                local function ApplyCapsDisabled()
+                    local off = CAPS.Vertical()
+                    cbDD:SetAlpha(off and 0.3 or 1)
+                    cbDD:EnableMouse(not off)
+                end
+                ApplyCapsDisabled()
+                EllesmereUI.RegisterWidgetRefresh(ApplyCapsDisabled)
+
+                local function CapsSet(k, v)
+                    SSet(k, v, function(bk) EAB:ApplyPaddingForBar(bk) end)
+                    SUpdatePreviewAndResize()
+                end
+                local rows = {}
                 if not CAPS.stock then
                     -- WoW Forever's own art exists only on that client.
-                    local values = { none="None", blizzard="Modern", classic="Classic" }
-                    local order = { "none", "blizzard", "classic" }
+                    local values = { blizzard="Modern", classic="Classic" }
+                    local order = { "blizzard", "classic" }
                     if EllesmereUI.IS_FOREVER then
                         values.forever = "WoW Forever"
                         order[#order + 1] = "forever"
                     end
-                    return { type="dropdown", text="End Caps",
+                    rows[#rows + 1] = { type="dropdown", label="Art", values=values, order=order,
                       tooltip=EllesmereUI.IS_FOREVER
-                          and "Art at the ends of the bar: Modern shows gryphons or wyverns by faction, Classic the vanilla gryphons, WoW Forever this client's own."
-                          or "Art at the ends of the bar: Modern shows gryphons or wyverns by faction, Classic the vanilla gryphons.",
-                      values=values, order=order,
-                      disabled=function() return not EAB:GetOrientationForBar("MainBar") end,
-                      disabledTooltip="Vertical Orientation", requireState="disabled",
-                      getValue=function()
-                          local v = EAB.db.profile.euiEndCaps
-                          if v == "forever" and not EllesmereUI.IS_FOREVER then v = nil end
-                          return v or "none"
-                      end,
-                      setValue=function(v)
-                          EAB.db.profile.euiEndCaps = (v ~= "none") and v or nil
-                          EAB:ApplyPaddingForBar("MainBar")
-                          SUpdatePreviewAndResize()
-                          EllesmereUI:RefreshPage()
-                      end }
+                          and "Modern shows gryphons or wyverns by faction, Classic the vanilla gryphons, WoW Forever this client's own."
+                          or "Modern shows gryphons or wyverns by faction, Classic the vanilla gryphons.",
+                      get=function() return ns.AB_CapsArt(SelectedKey()) end,
+                      set=function(v) CapsSet("endCapArt", v) end }
                 end
-                return { type="toggle", text="Show End Caps",
-                  tooltip=(EllesmereUI.BlizzStyle.Active("actionbars") == "classic")
-                      and "Show the gryphons at the ends of the bar."
-                      or "Show the gryphons or wyverns at the ends of the bar.",
-                  disabled=function() return not EAB:GetOrientationForBar("MainBar") end,
-                  disabledTooltip="Vertical Orientation", requireState="disabled",
-                  getValue=function()
-                      local p = EAB.db.profile
-                      if EllesmereUI.BlizzStyle.Forever("actionbars") then return not p.foreverHideEndCaps end
-                      return p.showEndCaps == true
-                  end,
-                  setValue=function(v)
-                      local p = EAB.db.profile
-                      if EllesmereUI.BlizzStyle.Forever("actionbars") then
-                          p.foreverHideEndCaps = (not v) or nil
-                      else
-                          p.showEndCaps = v or nil
-                      end
-                      EAB:ApplyPaddingForBar("MainBar")
-                      SUpdatePreviewAndResize()
-                      EllesmereUI:RefreshPage()
-                  end }
-            end
-            -- End caps' size and offsets (every look; X mirrored).
-            function CAPS.Cog(rgn)
-                if EllesmereUI._prebuilding then return end
-                local function CapsHorizontal() return EAB:GetOrientationForBar("MainBar") end
-                local function CapsSet(k, v)
-                    EAB.db.profile[k] = v
-                    EAB:ApplyPaddingForBar("MainBar")
-                    SUpdatePreviewAndResize()
-                end
+                rows[#rows + 1] = { type="slider", label="Size", min=50, max=200, step=5,
+                  tooltip="Percent of the end caps' normal size.",
+                  get=function() return ns.AB_CapsVal(SelectedKey(), "endCapScale") or 100 end,
+                  set=function(v) CapsSet("endCapScale", v) end }
+                rows[#rows + 1] = { type="slider", label="X Offset", min=-100, max=100, step=1,
+                  tooltip="Positive values move both end caps away from the bar.",
+                  get=function() return ns.AB_CapsVal(SelectedKey(), "endCapOffsetX") or 0 end,
+                  set=function(v) CapsSet("endCapOffsetX", v) end }
+                rows[#rows + 1] = { type="slider", label="Y Offset", min=-100, max=100, step=1,
+                  get=function() return ns.AB_CapsVal(SelectedKey(), "endCapOffsetY") or 5 end,
+                  set=function(v) CapsSet("endCapOffsetY", v) end }
                 EllesmereUI.BuildInlineCog(rgn, {
                     title = "End Cap Settings",
-                    icon = EllesmereUI.RESIZE_ICON,
+                    icon = CAPS.stock and EllesmereUI.RESIZE_ICON or nil,
                     disabled = function()
-                        return not CapsHorizontal() or CAPS.Off()
+                        return CAPS.Vertical() or CAPS.Off()
                     end,
                     disabledTooltip = function()
-                        if not CapsHorizontal() then return EllesmereUI.DisabledTooltip("Vertical Orientation", "disabled") end
-                        return EllesmereUI.DisabledTooltip(CAPS.stock and "Show End Caps" or "End Caps")
+                        if CAPS.Vertical() then return EllesmereUI.DisabledTooltip("Vertical Orientation", "disabled") end
+                        return EllesmereUI.DisabledTooltip("Left Endcap or Right Endcap")
                     end,
                     rawTooltip = true,
-                    rows = {
-                        { type="slider", label="Size", min=50, max=200, step=5,
-                          tooltip="Percent of the end caps' normal size.",
-                          get=function() return EAB.db.profile.endCapScale or 100 end,
-                          set=function(v) CapsSet("endCapScale", v) end },
-                        { type="slider", label="X Offset", min=-100, max=100, step=1,
-                          tooltip="Positive values move both end caps away from the bar.",
-                          get=function() return EAB.db.profile.endCapOffsetX or 0 end,
-                          set=function(v) CapsSet("endCapOffsetX", v) end },
-                        { type="slider", label="Y Offset", min=-100, max=100, step=1,
-                          get=function() return EAB.db.profile.endCapOffsetY or 5 end,
-                          set=function(v) CapsSet("endCapOffsetY", v) end },
+                    rows = rows,
+                })
+
+                EllesmereUI.BuildSyncIcon({
+                    region  = rgn,
+                    tooltip = "Apply End Caps to all Bars",
+                    onClick = function()
+                        for _, key in ipairs(GROUP_BAR_ORDER) do CAPS.CopyTo(key) end
+                        EllesmereUI:RefreshPage()
+                    end,
+                    isSynced = function()
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            if not CAPS.Same(key) then return false end
+                        end
+                        return true
+                    end,
+                    flashTargets = function() return { rgn } end,
+                    multiApply = {
+                        elementKeys   = GROUP_BAR_ORDER,
+                        elementLabels = SHORT_LABELS,
+                        getCurrentKey = function() return SelectedKey() end,
+                        onApply       = function(checkedKeys)
+                            for _, key in ipairs(checkedKeys) do CAPS.CopyTo(key) end
+                            EllesmereUI:RefreshPage()
+                        end,
                     },
                 })
             end
@@ -2324,7 +2396,7 @@ initFrame:SetScript("OnEvent", function(self)
                       SSet("clickThrough", v, function(k) EAB:ApplyClickThroughForBar(k) end)
                   end },
                 capsInCt and CAPS.Cfg() or EllesmereUI.BlankRowCfg());  y = y - h
-            if capsInCt then CAPS.Cog(ctRow._rightRegion) end
+            if capsInCt then CAPS.Build(ctRow._rightRegion) end
             -- "Toggle Action Bar" keybind: bound key flips the bar shown/hidden at runtime
             -- without writing saved visibility. Enabled only for Always/Never; out of combat
             -- only. Its label sits in the Visibility row, so the button goes there too.
@@ -2403,21 +2475,58 @@ initFrame:SetScript("OnEvent", function(self)
         if not visOnly then
             _, h = W:SectionHeader(parent, SECTION_LAYOUT, y);  y = y - h
 
-            -- WoW Forever: Action Bar 1's end caps and the frame and dividers
-            -- behind its buttons (both shown unless hidden) open the section.
+            -- WoW Forever: the bar's end caps and the frame and dividers behind
+            -- its buttons (both on by default on Action Bar 1 only) open the
+            -- section.
             if CAPS and CAPS.forever then
                 local capsRow
                 capsRow, h = W:DualRow(parent, y,
                     CAPS.Cfg(),
                     { type="toggle", text="Show Bar Background",
                       tooltip="Show the frame and dividers behind the bar's buttons.",
-                      getValue=function() return not EAB.db.profile.foreverHideBarBg end,
+                      getValue=function() return ns.AB_ForeverBg(SelectedKey()) end,
                       setValue=function(v)
-                          EAB.db.profile.foreverHideBarBg = (not v) or nil
-                          EAB:ApplyPaddingForBar("MainBar")
+                          SSet("foreverBarBg", v and true or false, function(k) EAB:ApplyPaddingForBar(k) end)
                           SUpdatePreviewAndResize()
                       end });  y = y - h
-                CAPS.Cog(capsRow._leftRegion)
+                CAPS.Build(capsRow._leftRegion)
+                do
+                    local rgn = capsRow._rightRegion
+                    local function BgTo(key, v)
+                        local d = EAB.db.profile.bars[key]
+                        if d then
+                            d.foreverBarBg = v
+                            EAB:ApplyPaddingForBar(key)
+                        end
+                    end
+                    EllesmereUI.BuildSyncIcon({
+                        region  = rgn,
+                        tooltip = "Apply Show Bar Background to all Bars",
+                        onClick = function()
+                            local v = ns.AB_ForeverBg(SelectedKey())
+                            for _, key in ipairs(GROUP_BAR_ORDER) do BgTo(key, v) end
+                            EllesmereUI:RefreshPage()
+                        end,
+                        isSynced = function()
+                            local v = ns.AB_ForeverBg(SelectedKey())
+                            for _, key in ipairs(GROUP_BAR_ORDER) do
+                                if ns.AB_ForeverBg(key) ~= v then return false end
+                            end
+                            return true
+                        end,
+                        flashTargets = function() return { rgn } end,
+                        multiApply = {
+                            elementKeys   = GROUP_BAR_ORDER,
+                            elementLabels = SHORT_LABELS,
+                            getCurrentKey = function() return SelectedKey() end,
+                            onApply       = function(checkedKeys)
+                                local v = ns.AB_ForeverBg(SelectedKey())
+                                for _, key in ipairs(checkedKeys) do BgTo(key, v) end
+                                EllesmereUI:RefreshPage()
+                            end,
+                        },
+                    })
+                end
             end
 
             local iconSizeRow

@@ -264,8 +264,9 @@ local SLOTS = {
 
 local function FadeChildren(frame, Fade)
     if not frame then return end
-    for i = 1, select("#", frame:GetChildren()) do
-        local child = select(i, frame:GetChildren())
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        local child = children[i]
         if child and child.GetRegions and not (child.IsForbidden and child:IsForbidden()) then
             Fade(child)
         end
@@ -866,8 +867,9 @@ local function SkinSlot(slotName, Fade)
         -- The ammo slot is built without that child: its ring is an atlas
         -- texture on the button itself. The arrow pointing at the ranged slot
         -- (an unnamed child frame of its own) stays.
-        for i = 1, select("#", slot:GetRegions()) do
-            local r = select(i, slot:GetRegions())
+        local regions = { slot:GetRegions() }
+        for i = 1, #regions do
+            local r = regions[i]
             if r.GetAtlas and r:GetAtlas() == "UI-Character-Info-GearSlotSmall" then r:SetAlpha(0) end
         end
     end

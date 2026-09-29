@@ -406,7 +406,7 @@ ns.BlockFactories.location = function(blockCfg, slot, content, barCtx)
         -- PLAYER_REGEN_ENABLED: Refresh can only re-anchor/resize out of combat, so a mid-fight zone change leaves stale geometry until then.
         events = { "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA",
                    "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED" },
-        texture = MEDIA .. "location.png",
+        texture = ns.MICROMENU_MEDIA .. "menu-map.png",
         text = function() return LocDisplayText(D().showSubZone ~= false) end,
         -- No template: sizes from the live name. Zone changes are rare, so one relayout each beats permanently reserving the longest zone name.
         width = function()

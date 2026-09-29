@@ -1958,7 +1958,6 @@ local function UnlockElemAnchorOwned(key)
 end
 local _unlockSettleWanted = false
 local _unlockFlushScheduled = false
-local _unlockFlushCombatWatch  -- one-shot PLAYER_REGEN_ENABLED re-flush frame
 local ScheduleUnlockFlush
 
 -- Loose elem-geometry equality (position keywords exact, coordinates and
@@ -2446,14 +2445,9 @@ function EllesmereUI.SpecOverrides_FlushUnlock()
     -- PLAYER_REGEN_ENABLED (the settle is idempotent, only measures post-rebuild geometry).
     if InCombatLockdown() then
         _unlockFlushScheduled = true  -- keeps ScheduleUnlockFlush deduped
-        if not _unlockFlushCombatWatch then
-            _unlockFlushCombatWatch = CreateFrame("Frame")
-            _unlockFlushCombatWatch:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                if _unlockFlushScheduled then EllesmereUI.SpecOverrides_FlushUnlock() end
-            end)
-        end
-        _unlockFlushCombatWatch:RegisterEvent("PLAYER_REGEN_ENABLED")
+        EllesmereUI.CombatQueue.Defer("SpecOverridesFlushUnlock", function()
+            if _unlockFlushScheduled then EllesmereUI.SpecOverrides_FlushUnlock() end
+        end)
         return
     end
     _unlockFlushScheduled = false

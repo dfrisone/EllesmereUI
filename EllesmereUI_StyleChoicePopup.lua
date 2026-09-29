@@ -9,6 +9,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  shared with the Style page header): the EllesmereUI style, the Blizzard
 --  style or the Classic WoW UI style, or on the WoW Forever client also the
 --  WoW Forever variant. The card of the look this session already renders
+--  shows IN USE and stays lit as on the Style page; it keeps its hover and
 --  closes the popup with nothing written, and so does Escape; any other card
 --  sets every loaded module's Style flags at once through the Style page's
 --  registry, then reloads. The default look (the first card, tagged DEFAULT)
@@ -89,7 +90,7 @@ local function ShowStyleChoicePopup()
         or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.ttf"
     local EG = ELLESMERE_GREEN
     -- Wide enough for the card row (four cards on the WoW Forever client).
-    local POPUP_W, POPUP_H = math.max(700, EllesmereUI.STYLE_CARDS_W + 32), 470
+    local POPUP_W, POPUP_H = math.max(700, EllesmereUI.STYLE_CARDS_W + 32), 480
     -- The DEFAULT card: EllesmereUI, or on the WoW Forever client WoW
     -- Forever, the look a fresh install there starts on.
     local defaultKey = EllesmereUI.IS_FOREVER and "forever" or "eui"
@@ -97,7 +98,8 @@ local function ShowStyleChoicePopup()
     -- the popup with nothing written. The default while no styleable module
     -- is loaded; none while the loaded modules render different looks
     -- (every card applies then).
-    local activeKey = EllesmereUI.RenderedLook()
+    local rendered = EllesmereUI.RenderedLook()
+    local activeKey = rendered
     if activeKey == nil then activeKey = defaultKey elseif activeKey == false then activeKey = nil end
     local KeepLook, OnPick
     -- Escape keeps whatever renders: it never writes.
@@ -149,7 +151,8 @@ local function ShowStyleChoicePopup()
 
     -- The look cards (EllesmereUI_StyleCards.lua, shared with the Style page
     -- header): three, plus WoW Forever on that client, the default card first.
-    EllesmereUI.BuildStyleCards(popup, -128, {
+    -- Set 10 below the description so the IN USE badge above a card clears it.
+    local cards = EllesmereUI.BuildStyleCards(popup, -138, {
         buttonText = {
             eui = "Use EllesmereUI Style",
             blizzard = "Use Blizzard Style",
@@ -159,6 +162,11 @@ local function ShowStyleChoicePopup()
         defaultKey = defaultKey,
         onPick = OnPick,
     })
+    -- The look the loaded modules render: IN USE and lit, as on the Style page
+    -- (no card while none is loaded or their looks differ). It stays pickable,
+    -- hover included: clicking it keeps the look and closes the popup.
+    local inUse = cards and type(rendered) == "string" and cards[rendered]
+    if inUse then inUse:SetState(true, true, "In Use") end
 
     local footnote = popup:CreateFontString(nil, "OVERLAY")
     footnote:SetFont(FONT, 12, "")

@@ -126,14 +126,20 @@ end
 --  FadeRegions: alpha-out every direct texture region on a frame (+ NineSlice).
 --  `keep` is a set of texture objects to leave alone. Visual-only, no Hide().
 -------------------------------------------------------------------------------
-local function FadeRegions(frame, keep)
-    if not frame or frame:IsForbidden() then return end
-    for i = 1, select("#", frame:GetRegions()) do
-        local r = select(i, frame:GetRegions())
+-- Walks GetRegions' returns directly: every global Restrip (each loot open,
+-- mail and calendar updates) runs this for every registered frame, so it must
+-- not allocate.
+local function FadeTextures(keep, ...)
+    for i = 1, select("#", ...) do
+        local r = (select(i, ...))
         if r and r.IsObjectType and r:IsObjectType("Texture") and not (keep and keep[r]) then
             r:SetAlpha(0)
         end
     end
+end
+local function FadeRegions(frame, keep)
+    if not frame or frame:IsForbidden() then return end
+    FadeTextures(keep, frame:GetRegions())
     if frame.NineSlice then FadeRegions(frame.NineSlice, keep) end
 end
 WSkin.FadeRegions = FadeRegions
@@ -565,8 +571,9 @@ function WSkin.Checkbox(cb, opts)
     -- checkboxes: they carry nothing beyond Normal/Pushed/Highlight/Checked.)
     local checked = cb.GetCheckedTexture and cb:GetCheckedTexture()
     local dchecked = cb.GetDisabledCheckedTexture and cb:GetDisabledCheckedTexture()
-    for i = 1, select("#", cb:GetRegions()) do
-        local r = select(i, cb:GetRegions())
+    local regions = { cb:GetRegions() }
+    for i = 1, #regions do
+        local r = regions[i]
         if r and r ~= checked and r ~= dchecked
            and r.IsObjectType and r:IsObjectType("Texture") then
             r:SetAlpha(0)
@@ -655,8 +662,9 @@ function WSkin.SortHeaderBar(list)
         sd.strip:SetPoint("TOPLEFT", hc, "TOPLEFT", ll0 - hl0, 2)
         sd.strip:SetPoint("TOPRIGHT", hc, "TOPLEFT", lr0 - hl0, 2)
     end
-    for i = 1, select("#", hc:GetChildren()) do
-        local col = select(i, hc:GetChildren())
+    local children = { hc:GetChildren() }
+    for i = 1, #children do
+        local col = children[i]
         if col and col.GetObjectType and col:GetObjectType() == "Button" then
             local hd = GetFFD(col)
             if not hd.bg then
@@ -725,8 +733,9 @@ end
 function WSkin.ScrollBarsIn(frame, depth)
     depth = depth or 0
     if not frame or depth > 7 or frame:IsForbidden() then return end
-    for i = 1, select("#", frame:GetChildren()) do
-        local child = select(i, frame:GetChildren())
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        local child = children[i]
         if child and not WSkin.IsForeignFrame(child, frame) then
             if child.Track and (child.Back or child.Forward) then WSkin.ScrollBar(child) end
             WSkin.ScrollBarsIn(child, depth + 1)
@@ -809,8 +818,9 @@ function WSkin.PagingIn(frame, depth)
     if depth > 0 and WSkin.IsForeignFrame(frame) then return end
     if frame.PrevPageButton then WSkin.PageButton(frame.PrevPageButton, "<") end
     if frame.NextPageButton then WSkin.PageButton(frame.NextPageButton, ">") end
-    for i = 1, select("#", frame:GetChildren()) do
-        WSkin.PagingIn(select(i, frame:GetChildren()), depth + 1)
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        WSkin.PagingIn(children[i], depth + 1)
     end
 end
 
@@ -1203,8 +1213,9 @@ function WSkin.Tab(tab, opts)
         end
     end
     -- Icon tabs carry their label in Icon; retain its clipping mask as well.
-    for j = 1, select("#", tab:GetRegions()) do
-        local r = select(j, tab:GetRegions())
+    local regions = { tab:GetRegions() }
+    for j = 1, #regions do
+        local r = regions[j]
         if r and r ~= tab.Icon and r ~= tab.IconMask and r:IsObjectType("Texture") then
             r:SetTexture("")
             if r.SetAtlas then r:SetAtlas("") end
@@ -1336,8 +1347,9 @@ function WSkin.TabSystem(tsys, opts)
         d.setTabHook = true
         hooksecurefunc(tsys, "SetTab", UpdateAllTabs)
     end
-    for i = 1, select("#", tsys:GetChildren()) do
-        local child = select(i, tsys:GetChildren())
+    local children = { tsys:GetChildren() }
+    for i = 1, #children do
+        local child = children[i]
         if child and child.GetObjectType and child:GetObjectType() == "Button" then
             WSkin.Tab(child, opts)
         end
@@ -1518,8 +1530,9 @@ function WSkin.FadeKeyedArt(frame, depth)
         if t and t.IsObjectType and t:IsObjectType("Texture") then t:SetAlpha(0) end
     end
     if not frame.GetChildren then return end
-    for i = 1, select("#", frame:GetChildren()) do
-        WSkin.FadeKeyedArt(select(i, frame:GetChildren()), depth + 1)
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        WSkin.FadeKeyedArt(children[i], depth + 1)
     end
 end
 
@@ -1550,8 +1563,9 @@ function WSkin.FadeArtIn(frame, depth)
     if WSkin.IsArtExempt(frame) then return end
     if depth > 0 and WSkin.IsForeignFrame(frame) then return end
     local mybg = FFD[frame] and FFD[frame].bg
-    for i = 1, select("#", frame:GetRegions()) do
-        local r = select(i, frame:GetRegions())
+    local regions = { frame:GetRegions() }
+    for i = 1, #regions do
+        local r = regions[i]
         if r and r ~= mybg and r.IsObjectType and r:IsObjectType("Texture") and (r:GetAlpha() or 0) > 0 then
             local hay = texHay(r)
             if hay and not texIsIcon(hay) then
@@ -1561,8 +1575,9 @@ function WSkin.FadeArtIn(frame, depth)
             end
         end
     end
-    for i = 1, select("#", frame:GetChildren()) do
-        WSkin.FadeArtIn(select(i, frame:GetChildren()), depth + 1)
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        WSkin.FadeArtIn(children[i], depth + 1)
     end
 end
 
@@ -1571,8 +1586,9 @@ end
 function WSkin.ButtonsIn(frame, depth)
     depth = depth or 0
     if not frame or depth > 9 or not frame.GetChildren or frame:IsForbidden() then return end
-    for i = 1, select("#", frame:GetChildren()) do
-        local child = select(i, frame:GetChildren())
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        local child = children[i]
         if child and not WSkin.IsForeignFrame(child, frame) then
             if child.GetObjectType and child:GetObjectType() == "Button"
                and not GetFFD(child).skinned and not GetFFD(child).x
@@ -1601,8 +1617,9 @@ function WSkin.ControlsIn(frame, depth)
             if el:IsObjectType("EditBox") then WSkin.EditBox(el) else WSkin.Dropdown(el) end
         end
     end
-    for i = 1, select("#", frame:GetChildren()) do
-        WSkin.ControlsIn(select(i, frame:GetChildren()), depth + 1)
+    local children = { frame:GetChildren() }
+    for i = 1, #children do
+        WSkin.ControlsIn(children[i], depth + 1)
     end
 end
 

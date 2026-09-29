@@ -3,8 +3,9 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  EllesmereUIMythicTimer.lua  --  M+ Timer overlay for EllesmereUI
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
+ns.CombatQueue = EllesmereUI.NewCombatQueue(CreateFrame("Frame"))
 local EMT = EllesmereUI.Lite.NewAddon(ADDON_NAME)
 
 -- Upvalues
@@ -903,23 +904,17 @@ end
 -- template to HideBase(), which is protected, so calling it from our execution during
 -- combat is blocked (ADDON_ACTION_BLOCKED). In combat, suppress with alpha only
 -- (top-level frame, never children, never mouse state) and finish the real Hide once
--- combat drops. The regen listener is one-shot: it unregisters on fire and is
--- re-registered by each new in-combat request.
-local _trackerRegenFrame
+-- combat drops. Each new in-combat request re-queues the one-shot finish.
+local function FinishTrackerHide()
+    local f = _G.ObjectiveTrackerFrame
+    if not f then return end
+    f:SetAlpha(1)
+    if TrackerShouldBeHidden() then f:Hide() end
+end
 local function HideTracker(otf)
     if InCombatLockdown() then
         otf:SetAlpha(0)
-        if not _trackerRegenFrame then
-            _trackerRegenFrame = CreateFrame("Frame")
-            _trackerRegenFrame:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                local f = _G.ObjectiveTrackerFrame
-                if not f then return end
-                f:SetAlpha(1)
-                if TrackerShouldBeHidden() then f:Hide() end
-            end)
-        end
-        _trackerRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("TrackerHide", FinishTrackerHide)
     else
         otf:SetAlpha(1)  -- clear any combat alpha-suppression before hiding
         otf:Hide()

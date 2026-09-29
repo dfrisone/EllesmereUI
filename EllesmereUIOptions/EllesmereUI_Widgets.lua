@@ -4510,7 +4510,26 @@ local function BuildCogPopup(opts)
     local TG_W = 32; local TG_H = 16; local KNOB_SZ = 12; local KNOB_PAD = 2
 
     local popupFrame, popupOwner
-    local rowWidgets = {}  -- per-row refresh info
+    -- row.hidden (a function): the row is left out while it returns true. A
+    -- popup with such rows builds one frame per set of shown rows (cached, so
+    -- a flip back reuses it) and swaps to the matching one when a change made
+    -- inside it flips a row; a popup without them builds once, as always.
+    local dynamic = false
+    if opts.rows then
+        for _, row in ipairs(opts.rows) do
+            if row.hidden then dynamic = true; break end
+        end
+    end
+    local variants = dynamic and {} or nil
+    local function HiddenSig()
+        if not dynamic then return "" end
+        local sig = ""
+        for i, row in ipairs(opts.rows) do
+            if row.hidden and row.hidden() then sig = sig .. i .. "," end
+        end
+        return sig
+    end
+    local SwapVariant  -- set below showFn; the refresh pass calls it
 
     -- Spec Overrides auto-capture: cog row writes attribute to the cog's anchor button, which sits inside the host slot's region.
     if opts.rows then
@@ -4525,7 +4544,16 @@ local function BuildCogPopup(opts)
         end
     end
 
-    local function CreatePopup()
+    local function CreatePopup(sig)
+        local rowWidgets = {}  -- per-row refresh info
+        -- The rows this frame shows (all of them without row.hidden).
+        local rows = opts.rows
+        if dynamic then
+            rows = {}
+            for _, row in ipairs(opts.rows) do
+                if not (row.hidden and row.hidden()) then rows[#rows + 1] = row end
+            end
+        end
         -- Measure slider labels to find maxLblW
         local tmpFS = UIParent:CreateFontString(nil, "OVERLAY")
         tmpFS:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, "")
@@ -4562,7 +4590,7 @@ local function BuildCogPopup(opts)
         end
 
         local totalH = TOP_PAD + TITLE_H + TITLE_GAP
-        for i, row in ipairs(opts.rows) do
+        for i, row in ipairs(rows) do
             if i > 1 then totalH = totalH + GAP end
             if row.type == "toggle" or row.type == "segmented" then
                 totalH = totalH + TOGGLE_ROW_H
@@ -4609,7 +4637,7 @@ local function BuildCogPopup(opts)
         titleFS:SetText(EllesmereUI.L(opts.title or ""))
 
         local curY = -(TOP_PAD + TITLE_H + TITLE_GAP)
-        for i, row in ipairs(opts.rows) do
+        for i, row in ipairs(rows) do
             if i > 1 then curY = curY - GAP end
 
             if row.type == "slider" then
@@ -5503,6 +5531,8 @@ local function BuildCogPopup(opts)
                     if rw.refresh then rw.refresh() end
                 end
             end
+            -- A change made inside flipped a row.hidden: the matching frame takes over.
+            if dynamic and pf:IsShown() and HiddenSig() ~= pf._sig then SwapVariant() end
         end
 
         -- True while a dropdown menu opened from inside this popup is shown and moused over. Exposed so external close-logic (e.g. a parent menu driving this popup as a flyout with its own _clickOutside disabled) stays open when a clicked dropdown list extends below the popup's own rect.
@@ -5578,11 +5608,24 @@ local function BuildCogPopup(opts)
 
         EllesmereUI.TrackOverlay(pf)
         popupFrame = pf
+        pf._sig = sig
+        if variants then variants[sig] = pf end
+        return pf
     end
 
     -- showFn: toggle popup anchored to a button. Wrapped in a callable table so callers can access showFn._popupFrame.
     local showFn = setmetatable({}, { __call = function(self, anchorBtn)
-        if not popupFrame then CreatePopup(); self._popupFrame = popupFrame end
+        if dynamic then
+            -- The frame for the rows shown right now (built on first need).
+            local cur = popupFrame
+            local want = variants[HiddenSig()] or CreatePopup(HiddenSig())
+            popupFrame = cur
+            if popupFrame ~= want then
+                if popupFrame and popupFrame:IsShown() then popupFrame:Hide() end
+                popupFrame = want
+            end
+            self._popupFrame = popupFrame
+        elseif not popupFrame then CreatePopup(); self._popupFrame = popupFrame end
 
         -- Toggle off if same anchor clicked while visible
         if popupOwner == anchorBtn and popupFrame:IsShown() then
@@ -5619,6 +5662,32 @@ local function BuildCogPopup(opts)
             if EllesmereUI.PadCursorShown() then EllesmereUI.PadFocus(popupFrame) end
         end
     end })
+
+    -- Open, a change made inside flipped a row.hidden: the frame for the new
+    -- set of rows takes the same anchor, without the open animation.
+    SwapVariant = function()
+        local owner = popupOwner
+        if not (dynamic and owner) then return end
+        local old = popupFrame
+        local want = variants[HiddenSig()] or CreatePopup(HiddenSig())
+        popupFrame = old
+        if want == old then return end
+        if old then old:Hide() end  -- its OnHide lets go of the owner
+        popupFrame = want
+        showFn._popupFrame = want
+        popupOwner = owner; want._owner = owner
+        want._refresh()
+        want:ClearAllPoints()
+        want:SetPoint("TOP", owner, "BOTTOM", 0, -5)
+        want:SetAlpha(1)
+        want:Show()
+        want:SetScript("OnUpdate", want._clickOutside)
+        if owner._euiCogState then owner._euiCogState() end
+        if EllesmereUI.PadCP() and not opts.noOwnerDim then
+            want.CloseButton = owner.Click and owner or nil
+            if EllesmereUI.PadCursorShown() then EllesmereUI.PadFocus(want) end
+        end
+    end
 
     return popupFrame, showFn
 end
@@ -7424,8 +7493,9 @@ local function BuildCursorAnchorRow(opts)
         suffix:SetTextColor(1, 1, 1, 0.35)
         suffix:SetText(EllesmereUI.L("(Applies on Window Close)"))
         local anchorLabel
-        for i = 1, row._leftRegion:GetNumRegions() do
-            local reg = select(i, row._leftRegion:GetRegions())
+        local regions = { row._leftRegion:GetRegions() }
+        for i = 1, #regions do
+            local reg = regions[i]
             if reg and reg.GetText and EllesmereUI.EnKey(reg:GetText()) == "Anchor to Cursor" then
                 anchorLabel = reg; break
             end
@@ -10554,6 +10624,13 @@ end
 -- paths / names / order are a catalogue from BuildAlertSoundTables(); left out,
 -- they are the Quality of Life alert-sound catalogue (just "None" while it is
 -- absent). A path is a sound file or a SoundKit id.
+-- Sound preview icon for every sound picker and play button. WoW Forever has no
+-- common-icon-sound atlases; its dropdown speaker stands in for both states.
+EllesmereUI.SOUND_ICON_ATLAS = C_Texture.GetAtlasInfo("common-icon-sound")
+    and "common-icon-sound" or "common-dropdown-icon-sound-on"
+EllesmereUI.SOUND_ICON_PRESSED_ATLAS = C_Texture.GetAtlasInfo("common-icon-sound-pressed")
+    and "common-icon-sound-pressed" or EllesmereUI.SOUND_ICON_ATLAS
+
 function EllesmereUI.BuildSoundDropdownValues(paths, names, order)
     paths = paths or EllesmereUI._groupDeathSoundPaths or {}
     names = names or EllesmereUI._groupDeathSoundNames or { none = "None" }
@@ -10566,11 +10643,11 @@ function EllesmereUI.BuildSoundDropdownValues(paths, names, order)
         searchable = true,
         iconAtlas = function(key)
             if key == "none" or not paths[key] then return nil end
-            return "common-icon-sound"
+            return EllesmereUI.SOUND_ICON_ATLAS
         end,
         iconPressedAtlas = function(key)
             if key == "none" or not paths[key] then return nil end
-            return "common-icon-sound-pressed"
+            return EllesmereUI.SOUND_ICON_PRESSED_ATLAS
         end,
         iconOnClick = function(key)
             local path = paths[key]

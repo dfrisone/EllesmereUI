@@ -736,8 +736,9 @@ initFrame:SetScript("OnEvent", function(self)
             suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
             suffix:SetTextColor(1, 1, 1, 0.35)
             local found
-            for i = 1, rgn:GetNumRegions() do
-                local reg = select(i, rgn:GetRegions())
+            local regions = { rgn:GetRegions() }
+            for i = 1, #regions do
+                local reg = regions[i]
                 if reg and reg.GetText and EllesmereUI.EnKey(reg:GetText()) == labelText then
                     found = reg; break
                 end
@@ -751,7 +752,7 @@ initFrame:SetScript("OnEvent", function(self)
 
     ---------------------------------------------------------------------------
     --  4-column checkbox grid (DualRow-style rows with RowBg + dividers)
-    --  items = { { label, classToken, getVal, setVal }, ... }
+    --  items = { { label, classToken, getVal, setVal, tooltip? }, ... }
     ---------------------------------------------------------------------------
     local GRID_COLS     = 4
     local GRID_ROW_H    = 50
@@ -850,9 +851,11 @@ initFrame:SetScript("OnEvent", function(self)
                 end)
                 btn:SetScript("OnEnter", function()
                     if not item.getVal() then label:SetAlpha(0.8) end
+                    if item.tooltip then EllesmereUI.ShowWidgetTooltip(cell, item.tooltip) end
                 end)
                 btn:SetScript("OnLeave", function()
                     if not item.getVal() then label:SetAlpha(0.5) end
+                    if item.tooltip then EllesmereUI.HideWidgetTooltip() end
                 end)
 
                 -- Optional per-item cog (e.g. per-item conditions) just left
@@ -1574,11 +1577,18 @@ initFrame:SetScript("OnEvent", function(self)
                     label = EllesmereUI.L(shield.name),
                     classToken = "SHAMAN",
                     key = shield.key,
+                    tooltip = shield.key == "es_ally"
+                        and "Out of combat, reminds you when no groupmate has your Earth Shield (Elemental Orbit)."
+                        or nil,
                     getVal = function() local c = CDB(); return c and c.enabled and c.enabled[shield.key] end,
                     setVal = function(v) local c = CDB(); if c and c.enabled then c.enabled[shield.key] = v end end,
                 }
             end
-            h = BuildCheckboxGrid(parent, y, gridItems, function() RefreshAll(); RebuildPreviewHeader() end, _gridCellRefs)
+            -- Earth Shield (Ally) turns group tracking on or off.
+            h = BuildCheckboxGrid(parent, y, gridItems, function()
+                if _G._EABR_UpdateGroupAuraRegistration then _G._EABR_UpdateGroupAuraRegistration() end
+                RefreshAll(); RebuildPreviewHeader()
+            end, _gridCellRefs)
             y = y - h
         end
 

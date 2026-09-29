@@ -1501,6 +1501,17 @@ end
 -- Page-level state (persists across setting changes within same page open)
 local selectedSpecKey = nil
 
+-- WoW Forever: the page opens on All Specs each time it is entered (a tab
+-- switch, or the panel opening on it); rebuilds while on it keep the pick.
+function ns.BM_EnterAllSpecs()
+    if not EllesmereUI.IS_FOREVER then return end
+    ns._bm2SpecInited = true
+    if selectedSpecKey == "allspecs" then return end
+    selectedSpecKey = "allspecs"
+    selectedIndicator = nil
+    ns._bm2InhSel = nil
+end
+
 -- Class token of the EDITED bucket (dropdown selection): healer keys map
 -- directly, "spec<ID>" keys resolve through the spec API, shared buckets
 -- (allspecs/nonhealer) have no single class -> nil (player-class fallback).
@@ -1565,6 +1576,10 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
 
     local rawPowerH = (s.powerShowForHealer or s.powerShowForTank or s.powerShowForDPS) and (s.powerHeight or 4) or 0
     local rawTopBarH = s.topNameBarEnabled and (s.topNameBarHeight or 20) or 0
+    -- Show on Bottom: the bar takes the bottom edge, health starts at the top and
+    -- the power bar sits on the bar (as the live LayoutTopNameBar lays it out).
+    local rawBottomY = (s.topNameBarEnabled and s.topNameBarBottom == true) and rawTopBarH or 0
+    local healthTopY = (rawBottomY > 0) and 0 or -rawTopBarH
     local healthH = rawH - rawPowerH - rawTopBarH
 
     -- Health bar (matches the custom preview build exactly)
@@ -1573,8 +1588,8 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
         or "Interface\\Buttons\\WHITE8X8"
     local health = CreateFrame("StatusBar", nil, pvFrame)
     health:SetFrameLevel(pvFrame:GetFrameLevel() + 2)
-    health:SetPoint("TOPLEFT", pvFrame, "TOPLEFT", 0, -rawTopBarH)
-    health:SetPoint("TOPRIGHT", pvFrame, "TOPRIGHT", 0, -rawTopBarH)
+    health:SetPoint("TOPLEFT", pvFrame, "TOPLEFT", 0, healthTopY)
+    health:SetPoint("TOPRIGHT", pvFrame, "TOPRIGHT", 0, healthTopY)
     health:SetHeight(healthH)
     health:SetStatusBarTexture(texPath)
     health:GetStatusBarTexture():SetHorizTile(false)
@@ -1586,7 +1601,7 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
         local pvUniformRef = CreateFrame("Frame", nil, pvFrame)
         pvUniformRef:SetFrameLevel(health:GetFrameLevel())
         pvUniformRef:SetPoint("TOPLEFT", health, "TOPLEFT", 0, 0)
-        pvUniformRef:SetPoint("BOTTOMRIGHT", pvFrame, "BOTTOMRIGHT", 0, 0)
+        pvUniformRef:SetPoint("BOTTOMRIGHT", pvFrame, "BOTTOMRIGHT", 0, rawBottomY)
         health._euiUniformRef = pvUniformRef
         pvUniformRef._euiHealth = health
     end
@@ -1637,8 +1652,8 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
     if rawPowerH > 0 then
         local power = CreateFrame("StatusBar", nil, pvFrame)
         power:SetFrameLevel(pvFrame:GetFrameLevel() + 3)
-        power:SetPoint("BOTTOMLEFT", pvFrame, "BOTTOMLEFT", 0, 0)
-        power:SetPoint("BOTTOMRIGHT", pvFrame, "BOTTOMRIGHT", 0, 0)
+        power:SetPoint("BOTTOMLEFT", pvFrame, "BOTTOMLEFT", 0, rawBottomY)
+        power:SetPoint("BOTTOMRIGHT", pvFrame, "BOTTOMRIGHT", 0, rawBottomY)
         power:SetHeight(rawPowerH)
         power:SetStatusBarTexture(texPath)
         power:GetStatusBarTexture():SetHorizTile(false)
@@ -1739,8 +1754,13 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
     if s.topNameBarEnabled then
         local tnb = CreateFrame("Frame", nil, pvFrame)
         tnb:SetFrameLevel(pvFrame:GetFrameLevel() + 4)
-        tnb:SetPoint("TOPLEFT", pvFrame, "TOPLEFT", 0, 0)
-        tnb:SetPoint("TOPRIGHT", pvFrame, "TOPRIGHT", 0, 0)
+        if rawBottomY > 0 then
+            tnb:SetPoint("BOTTOMLEFT", pvFrame, "BOTTOMLEFT", 0, 0)
+            tnb:SetPoint("BOTTOMRIGHT", pvFrame, "BOTTOMRIGHT", 0, 0)
+        else
+            tnb:SetPoint("TOPLEFT", pvFrame, "TOPLEFT", 0, 0)
+            tnb:SetPoint("TOPRIGHT", pvFrame, "TOPRIGHT", 0, 0)
+        end
         tnb:SetHeight(rawTopBarH)
         local tnbBg = tnb:CreateTexture(nil, "BACKGROUND")
         tnbBg:SetAllPoints()
@@ -1860,7 +1880,8 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
     -- Current spec's indicators for the sidebar. v2: editing dropdown stays functional (healer specs + shared Non-Healer bucket); defaults to current spec on first page open each session.
     if ns.BM2_SpecKey and not ns._bm2SpecInited then
         ns._bm2SpecInited = true
-        local landKey = ns.BM2_SpecKey()
+        -- WoW Forever lands on All Specs (see ns.BM_EnterAllSpecs).
+        local landKey = EllesmereUI.IS_FOREVER and "allspecs" or ns.BM2_SpecKey()
         -- Non-healers land on their CONCRETE "spec<ID>" view, not the shared
         -- All Non Healers/Aug group: the concrete view is where inherited
         -- group tiles (All Specs / Non Healers / role) are visible, so the
@@ -1869,7 +1890,6 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
         if landKey == "nonhealer" then
             local specIdx = GetSpecialization and GetSpecialization()
             local sid = specIdx and GetSpecializationInfo and GetSpecializationInfo(specIdx)
-            if EllesmereUI.IS_FOREVER then sid = ns.BM2_ForeverSpecID() end
             if sid then landKey = "spec" .. sid end
         end
         selectedSpecKey = landKey

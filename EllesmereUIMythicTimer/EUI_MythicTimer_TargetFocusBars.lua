@@ -858,7 +858,9 @@ evt:SetScript("OnEvent", function(_, event, unit, ...)
         -- after unit (castGUID, spellID, interrupterGUID); nil on a natural end.
         TeardownCast(bar)
         local _, _, interrupterGUID = ...
-        if not bar._interrupted then ShowInterruptedFlash(bar, interrupterGUID) end
+        if type(interrupterGUID) ~= "nil" and not bar._interrupted then
+            ShowInterruptedFlash(bar, interrupterGUID)
+        end
     elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
         local _, _, interrupterGUID = ...
         ShowInterruptedFlash(bar, interrupterGUID)

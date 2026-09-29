@@ -124,8 +124,8 @@ local function TTSVoiceDropdownValues()
     values._menuOpts = {
         itemHeight = 26,
         maxTextWidthPct = 0.8,
-        iconAtlas = function() return "common-icon-sound" end,
-        iconPressedAtlas = function() return "common-icon-sound-pressed" end,
+        iconAtlas = function() return EllesmereUI.SOUND_ICON_ATLAS end,
+        iconPressedAtlas = function() return EllesmereUI.SOUND_ICON_PRESSED_ATLAS end,
         iconOnClick = function(key)
             if C_VoiceChat and C_VoiceChat.SpeakText then
                 pcall(C_VoiceChat.SpeakText, key, "This is a voice preview", 1, 100, true)
@@ -368,8 +368,9 @@ local function BuildMovementAlertPage(pageName, parent, yOffset)
     if not EllesmereUI._prebuilding then
         local btn = select(1, previewBtnFrame:GetChildren())
         if btn then
-            for i = 1, btn:GetNumRegions() do
-                local rgn = select(i, btn:GetRegions())
+            local regions = { btn:GetRegions() }
+            for i = 1, #regions do
+                local rgn = regions[i]
                 if rgn and rgn.GetText and rgn:GetText() then previewBtnLbl = rgn; break end
             end
         end

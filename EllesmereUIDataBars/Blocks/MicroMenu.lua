@@ -4,7 +4,6 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local MEDIA = ns.MEDIA
 local K = ns.BlockKit
 
 -- Upvalues
@@ -40,17 +39,16 @@ local ParkSecureFrame      = K.ParkSecureFrame
 --    3. Blizzard micro menu hider via SecureHandlerStateTemplate _onstate-vis (never :Hide() on MicroMenuContainer from insecure code)
 -------------------------------------------------------------------------------
 local MM_SPACING = 2
-local MM_MEDIA = MEDIA .. "micromenu\\"
+local MM_MEDIA = ns.MICROMENU_MEDIA
 
--- Button key -> icon file in media\micromenu\ (one PNG per button; filenames
--- follow the art set, incl. the "acheivements" spelling -- must match disk).
+-- Button key -> icon file in EllesmereUI\media\micromenu\ (one PNG per button).
 local MM_ICON_FILE = {
     menu    = "menu-options",
     guild   = "menu-guild",
     social  = "menu-friends",
     char    = "menu-character",
     spell   = "menu-spellbook",
-    ach     = "menu-acheivements",
+    ach     = "menu-achievements",
     quest   = "menu-quests",
     lfg     = "menu-group",
     pvp     = "menu-pvp",
@@ -116,7 +114,7 @@ if EllesmereUI.IS_FOREVER then
             -- Full icon path: the shared micromenu art holds glyphs this strip's own set lacks,
             -- so Talents does not repeat the Achievements glyph right beside it.
             local talent = { key = 'talent', binding = 'TOGGLETALENTS', label = TALENTS or 'Talents', onWhenUnset = true,
-                icon = "Interface\\AddOns\\EllesmereUI\\media\\micromenu\\menu-vault.png" }
+                icon = MM_MEDIA .. "menu-vault.png" }
             tinsert(mmButtonDefs, i + 1, talent)
             tinsert(mmButtonOrder, i + 1, 'talent')
             mmButtonDefsByKey.talent = talent
@@ -257,7 +255,7 @@ function ns.RefreshMicroMenuHider(force)
     end)
 end
 
--- Character stats tooltip (opt-in via charStatsTooltip). Fixed set: equipped item
+-- Character stats tooltip (always on). Fixed set: equipped item
 -- level, primary stat, and the four secondary percentages with raw combat rating in
 -- parentheses. Versatility is pcall-wrapped: GetVersatilityBonus/GetCombatRatingBonus
 -- can return a secret value under tainted execution (arithmetic on it errors), so drop the line instead.
@@ -332,7 +330,7 @@ local function MMAddCharStats()
     end
 end
 
--- Interactive Social / Guild tooltips (opt-in via socialTooltip): online member lists
+-- Interactive Social / Guild tooltips (always on): online member lists
 -- built on the owned Tip system's insecure clickable-row primitive (Tip_AddClickable).
 -- Every action (whisper/invite/BNet whisper) is UNPROTECTED, so rows stay clickable in and out of combat. Shift is the fixed invite modifier.
 
@@ -371,6 +369,10 @@ end
 -- GuildRoster() itself fires GUILD_ROSTER_UPDATE, and the server rate-limits it (~10s); throttle so hovering the guild button does not spam requests.
 local mmLastTipRoster = 0
 
+-- Member rows per tooltip, as in the minimap friends tooltip: a big friend list or
+-- guild otherwise grows it past the screen. The rest become one "...and N more" line.
+local MM_TIP_MAX_ROWS = 30
+
 local function MMBuildSocialTip()
     local ar, ag, ab = ns.GetAccent()
     local totalBN = BNGetNumFriends() or 0
@@ -380,13 +382,16 @@ local function MMBuildSocialTip()
     ns.Tip_AddLine(" ")
 
     -- Only people actually in WoW: app / other-game friends add nothing here. Same filter as the minimap tooltip (gameAccountInfo.clientProgram=="WoW").
-    local shown = 0
+    local shown, hidden = 0, 0
 
     -- BNet friends in WoW. Indices are unsorted, so iterate all and filter.
     for i = 1, totalBN do
         local acc = C_BattleNet.GetFriendAccountInfo(i)
         local ga  = acc and acc.gameAccountInfo
-        if ga and ga.isOnline and ga.clientProgram == BNET_CLIENT_WOW then
+        local inWoW = ga and ga.isOnline and ga.clientProgram == BNET_CLIENT_WOW
+        if inWoW and shown >= MM_TIP_MAX_ROWS then
+            hidden = hidden + 1
+        elseif inWoW then
             local charName, realmName = ga.characterName, ga.realmName
             local faction = ga.factionName
             local icon    = FRIENDS_TEXTURE_ONLINE
@@ -401,13 +406,21 @@ local function MMBuildSocialTip()
             -- so a secret in either is dropped the same way: no area shown, and a
             -- friend whose faction cannot be read is treated as not ours to invite.
             local displayCharName, displayArea = charName, ga.areaName
-            local secretFaction = false
-            if issecretvalue then
-                if issecretvalue(displayCharName) then displayCharName = nil end
-                if issecretvalue(displayArea) then displayArea = nil end
-                secretFaction = issecretvalue(faction)
+            if issecretvalue(displayCharName) then displayCharName = nil end
+            if issecretvalue(displayArea) then displayArea = nil end
+            local secretFaction = issecretvalue(faction)
+            -- Character name in its class colour when the class reads plain, else gold.
+            local nameText
+            local classID = ga.classID
+            local ci = displayCharName and classID and not issecretvalue(classID)
+                and C_CreatureInfo.GetClassInfo(classID)
+            if ci and ci.classFile then
+                local cc = EllesmereUI.GetClassColor(ci.classFile)
+                nameText = EllesmereUI.ColorText(displayCharName, cc.r, cc.g, cc.b)
+            else
+                nameText = format("|cffecd672%s|r", displayCharName or "?")
             end
-            local right = format("|cffecd672%s|r %s", displayCharName or "?", displayArea or "")
+            local right = format("%s %s", nameText, displayArea or "")
             local bnetName   = acc.accountName
             local sameFaction = (not secretFaction) and ((not faction) or (faction == playerFaction))
             -- Fix "Name-Realm-Realm" to "Name-Realm"
@@ -431,12 +444,22 @@ local function MMBuildSocialTip()
     if totalWoW > 0 then
         for i = 1, C_FriendList.GetNumFriends() do
             local fi = C_FriendList.GetFriendInfoByIndex(i)
-            if fi and fi.connected then
+            local online = fi and fi.connected
+            if online and shown >= MM_TIP_MAX_ROWS then
+                hidden = hidden + 1
+            elseif online then
                 local icon = FRIENDS_TEXTURE_ONLINE
                 if fi.afk then icon = FRIENDS_TEXTURE_AFK end
                 if fi.dnd then icon = FRIENDS_TEXTURE_DND end
-                -- No |c codes on the left (hover recolor needs a plain string); normal color rides the left-color args.
+                -- No |c codes on the left (hover recolor needs a plain string); the class
+                -- colour rides the left-color args (white when the class is unknown).
                 local left = format("|T%s:16|t %s  %s", icon, fi.name or "?", fi.level or "")
+                local cr, cg, cb = 1, 1, 1
+                local token = EllesmereUI.ClassTokenFromLocalized(fi.className)
+                if token then
+                    local cc = EllesmereUI.GetClassColor(token)
+                    cr, cg, cb = cc.r, cc.g, cc.b
+                end
                 local fname = fi.name
                 ns.Tip_AddClickable(left, fi.area or "", function(mouseButton)
                     local n = fname
@@ -447,7 +470,7 @@ local function MMBuildSocialTip()
                     elseif mouseButton == "LeftButton" and IsShiftKeyDown() then
                         C_PartyInfo.InviteUnit(n)
                     end
-                end, 1, 1, 1, 0.8, 0.8, 0.8)
+                end, cr, cg, cb, 0.8, 0.8, 0.8)
                 shown = shown + 1
             end
         end
@@ -457,6 +480,7 @@ local function MMBuildSocialTip()
         ns.Tip_AddLine(L["NO_FRIENDS_ONLINE"], 0.6, 0.6, 0.6)
         return
     end
+    if hidden > 0 then ns.Tip_AddLine(format("...and %d more", hidden), 0.53, 0.53, 0.53) end
 
     -- Left-click BNet-whispers (reaches them cross-realm/faction), right-click whispers the character directly: distinct actions, distinct labels.
     ns.Tip_AddLine(" ")
@@ -482,12 +506,18 @@ local function MMBuildGuildTip()
     local gName = GetGuildInfo("player")
     if gName then ns.Tip_AddLine("|cff00ff00" .. gName .. "|r") end
 
+    local shown, hidden = 0, 0
     for i = 1, GetNumGuildMembers() do
         local name, _, _, level, _, zone, _, _, isOnline, status, class = GetGuildRosterInfo(i)
-        if isOnline then
-            local cc  = class and RAID_CLASS_COLORS[class]
+        if isOnline and shown >= MM_TIP_MAX_ROWS then
+            hidden = hidden + 1
+        elseif isOnline then
+            shown = shown + 1
             local clr, clg, clb = 1, 1, 1
-            if cc then clr, clg, clb = cc.r, cc.g, cc.b end
+            if class then
+                local cc = EllesmereUI.GetClassColor(class)
+                clr, clg, clb = cc.r, cc.g, cc.b
+            end
             local st  = (status == 1 and DEFAULT_AFK_MESSAGE) or (status == 2 and DEFAULT_DND_MESSAGE) or ""
             local cn  = name and name:match("[^-]+") or "?"
             -- Left plain (no |c): the class color rides the left-color args so the hover recolor to accent shows, like the M+ teleport rows.
@@ -502,6 +532,7 @@ local function MMBuildGuildTip()
             end, clr, clg, clb, 1, 1, 1)
         end
     end
+    if hidden > 0 then ns.Tip_AddLine(format("...and %d more", hidden), 0.53, 0.53, 0.53) end
 
     ns.Tip_AddLine(" ")
     ns.Tip_AddDouble(L["LEFT_CLICK"],       L["WHISPER"], 1, 1, 1, ar, ag, ab)
@@ -544,7 +575,6 @@ ns.BlockFactories.micromenu = function(blockCfg, slot, content, barCtx)
     end
 
     local function ShowButtonTooltip(name)
-        if (name == 'social' or name == 'guild') and not D().socialTooltip then return end
         local frame = frames[name]; if not frame then return end
         local def = mmButtonDefsByKey[name]; if not def then return end
         local r, g, b = 1, 1, 1
@@ -603,14 +633,14 @@ ns.BlockFactories.micromenu = function(blockCfg, slot, content, barCtx)
                 '|cFF' .. hexAccent .. companionLvl .. '|r', 1, 1, 1, r, g, b)
         end
 
-        if name == 'char' and D().charStatsTooltip then
+        if name == 'char' then
             -- Secret handling lives inside (every stat value is issecretvalue-checked);
             -- pcall is only a last resort so an API surprise never kills the rest of the tooltip.
             pcall(MMAddCharStats)
         end
 
-        if name == 'social' and D().socialTooltip then pcall(MMBuildSocialTip) end
-        if name == 'guild'  and D().socialTooltip then pcall(MMBuildGuildTip)  end
+        if name == 'social' then pcall(MMBuildSocialTip) end
+        if name == 'guild'  then pcall(MMBuildGuildTip)  end
 
         ns.Tip_Show()
     end

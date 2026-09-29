@@ -1,7 +1,8 @@
 if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_ClientGate.lua)
 local addon, ns = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS[addon] = ns  -- LOD options files read this module ns via the registry
+ns.CombatQueue = EllesmereUI.NewCombatQueue(CreateFrame("Frame"))
 
 local ENP = EllesmereUI.Lite.NewAddon("EllesmereUINameplates")
 
@@ -5237,12 +5238,16 @@ local function SetupAuraCVars()
             end)
         end
         -- Suppress the Blizzard UnitFrame before our NAME_PLATE_UNIT_ADDED fires
-        -- so its initial layout pass never affects nameplate bounds.
+        -- so its initial layout pass never affects nameplate bounds. Any other
+        -- unit gets back what an earlier enemy parked on this pooled UnitFrame.
         hooksecurefunc(NamePlateDriverFrame, "OnNamePlateAdded", function(_, addedUnit)
-            if addedUnit == "preview" then return end
+            if not addedUnit or addedUnit == "preview" then return end
             local np = C_NamePlate.GetNamePlateForUnit(addedUnit)
-            if np and addedUnit and UnitCanAttack("player", addedUnit) then
+            if not np then return end
+            if UnitCanAttack("player", addedUnit) then
                 ns.HideBlizzardFrame(np, addedUnit)
+            else
+                ns.NP_ReclaimBlizzardFrame(np.UnitFrame)
             end
         end)
     end
@@ -6587,8 +6592,8 @@ function ns.NP_PaintSlotClassColors(plate, unit, skipName)
     return ns._npSlotClassName
 end
 -- Blizzard's own plate for this unit, colored by untainted code. Under HideBlizzardFrame the
--- UnitFrame keeps its unit and its events (only castBar is silenced), so its health bar still
--- carries whatever CompactUnitFrame_UpdateHealthColor last resolved -- including the class
+-- UnitFrame keeps its unit (its events are killed), so its health bar still carries whatever
+-- CompactUnitFrame_UpdateHealthColor resolved in the driver's SetUnit -- including the class
 -- color we are not allowed to look up ourselves. Returns a PLAIN "have it" boolean plus three
 -- numbers that may be secret: never branch on the numbers, only ever hand them to a setter.
 -- On ns (module file is at the 200-local cap).
@@ -7108,6 +7113,9 @@ local hookedSoftTargetIcons = {}
 local npOffscreenParent = CreateFrame("Frame")
 npOffscreenParent:Hide()
 local storedParents = {}
+-- Park record per pooled UnitFrame (our table, weak on the frame): the swept children in park
+-- order, plus .held while HideBlizzardFrame owns the frame. Wiped and reused by the reclaim.
+ns._npParked = setmetatable({}, { __mode = "k" })
 local function MoveToOffscreen(element, unit)
     if not element then return end
     -- PERF: skip SetParent if already offscreen (saves ~14 calls per plate respawn)
@@ -7116,14 +7124,6 @@ local function MoveToOffscreen(element, unit)
         storedParents[element] = element:GetParent()
     end
     element:SetParent(npOffscreenParent)
-end
-local function RestoreFromOffscreen(element)
-    if not element then return end
-    local origParent = storedParents[element]
-    if origParent then
-        element:SetParent(origParent)
-        storedParents[element] = nil
-    end
 end
 local function HideBlizzardFrame(nameplate, unit)
     if not nameplate then return end
@@ -7134,6 +7134,9 @@ local function HideBlizzardFrame(nameplate, unit)
     -- registered), skipping the whole block and leaving Blizzard's UnitFrame visible as a
     -- giant black box.
     uf:SetAlpha(0)
+    local rec = ns._npParked[uf]
+    if not rec then rec = {}; ns._npParked[uf] = rec end
+    rec.held = true
     -- The AurasFrame rides offscreen with the other children (WidgetContainer is the one child
     -- kept live, below): our containers own plate auras and these lists are taint-locked and
     -- unused. Alpha-0 keep-alive is NOT enough -- its item frames are mouse-enabled Blizzard
@@ -7147,12 +7150,19 @@ local function HideBlizzardFrame(nameplate, unit)
     -- -- parking the whole frame under a hidden holder flips every plate's content to
     -- IsVisible()==false and breaks click target selection between overlapping plates in packs.
     -- Exclusions: kept-live frames, plus protected/forbidden children (alpha 0 hides them).
-    for i = 1, uf:GetNumChildren() do
-        local child = select(i, uf:GetChildren())
+    -- Walk backwards: each SetParent below removes that child from uf's list, and only the
+    -- indices already visited shift, so none is skipped. Runs twice per enemy plate add, so
+    -- it reads the live list instead of building a table. A child is recorded once: an enemy
+    -- re-acquire finds its children already parked, so the record never grows.
+    for i = uf:GetNumChildren(), 1, -1 do
+        local child = (select(i, uf:GetChildren()))
         if child and child ~= uf.WidgetContainer and child ~= uf.AurasFrame
         and child ~= uf.SoftTargetFrame
            and not child:IsForbidden() and not child:IsProtected() then
-            if not storedParents[child] then storedParents[child] = uf end
+            if not storedParents[child] then
+                storedParents[child] = uf
+                rec[#rec + 1] = child
+            end
             child:SetParent(npOffscreenParent)
         end
     end
@@ -7163,9 +7173,11 @@ local function HideBlizzardFrame(nameplate, unit)
     -- ~20 globals (incl. UPDATE_MOUSEOVER_UNIT) per plate, and its dirty
     -- flags arm a real OnUpdate on this alpha-0 frame -- none of which our
     -- rendering uses, all of which was running under every plate all combat
-    -- long. Self-healing: our restore runs only on NAME_PLATE_UNIT_REMOVED,
-    -- and the driver's next secure CompactUnitFrame_SetUnit re-registers
-    -- everything on reacquisition. The soft-target trio comes back below:
+    -- long. Partial self-heal: the driver's secure CompactUnitFrame_SetUnit
+    -- restores the unit events and OnUnitSet's set when the pooled frame is
+    -- next acquired, for any unit; the globals CompactUnitFrame_OnLoad
+    -- registers never come back, and UpdateAll on each acquire keeps that
+    -- stale window to one plate life. The soft-target trio comes back below:
     -- the kept-alive SoftTargetFrame icon is driven by exactly those events
     -- (the OnEvent script itself stays -- Blizzard set it, and
     -- UnregisterAllEvents clears registrations only).
@@ -7173,9 +7185,11 @@ local function HideBlizzardFrame(nameplate, unit)
     uf:RegisterEvent("PLAYER_TARGET_CHANGED")
     uf:RegisterEvent("PLAYER_SOFT_FRIEND_CHANGED")
     uf:RegisterEvent("PLAYER_SOFT_ENEMY_CHANGED")
-    -- The castBar is its own frame with its own registrations (we render our own).
-    if uf.castBar then
-        uf.castBar:UnregisterAllEvents()
+    -- The cast bar is its own frame with its own registrations (we render our own). It lives
+    -- at CastBarsContainer.castBar; the driver's SetUnit re-registers it on reacquisition.
+    local blizzCastBar = uf.castBar or (uf.CastBarsContainer and uf.CastBarsContainer.castBar)
+    if blizzCastBar and not blizzCastBar:IsForbidden() then
+        blizzCastBar:UnregisterAllEvents()
     end
     -- Keep WidgetContainer functional but reparent to the nameplate itself so its layout
     -- doesn't affect the UnitFrame's bounds.
@@ -7189,17 +7203,15 @@ local function HideBlizzardFrame(nameplate, unit)
         uf.SoftTargetFrame:SetAlpha(1)
         -- Same icon is reused for enemy/friend/interact soft-targets; only allow the
         -- interact case through. The hook cannot be uninstalled, so it gates on the
-        -- reparented state: while WE hold the frame its grandparent is the plate BASE,
-        -- which carries namePlateUnitToken (the field this file already uses for
-        -- base->unit resolution); after RestoreBlizzardFrame the grandparent is the
-        -- UnitFrame, the token read misses, and Blizzard's stock behavior stands.
+        -- pooled UnitFrame's own current unit (the driver's SetUnit sets it before it
+        -- shows the icon), never on where the icon hangs: the first Show of an add
+        -- runs before we park or reclaim the frame. Every attackable unit is ours.
         local icon = uf.SoftTargetFrame.Icon
         if icon and not hookedSoftTargetIcons[icon] then
-            hookedSoftTargetIcons[icon] = true
+            hookedSoftTargetIcons[icon] = uf
             hooksecurefunc(icon, "Show", function(self)
-                local stf = self:GetParent()
-                local base = stf and stf:GetParent()
-                local ufUnit = base and base.namePlateUnitToken
+                local owner = hookedSoftTargetIcons[self]
+                local ufUnit = owner and owner.unit
                 if not ufUnit then return end
                 -- Hide only for attackable enemies. NPCs and non-attackable
                 -- objects, even hostile ones, keep the icon.
@@ -7251,40 +7263,33 @@ local function HideBlizzardFrame(nameplate, unit)
         end)
     end
 end
--- Restore Blizzard UnitFrame elements when a nameplate is removed, so the recycled frame is
--- clean for the next unit.
-local function RestoreBlizzardFrame(nameplate)
-    if not nameplate then return end
-    local uf = nameplate.UnitFrame
-    if not uf then return end
-    -- Return this UnitFrame's parked children from the hidden holder (shared by every plate,
-    -- filter by recorded owner), then re-home the kept-live frames.
-    for i = npOffscreenParent:GetNumChildren(), 1, -1 do
-        local child = select(i, npOffscreenParent:GetChildren())
-        if child and storedParents[child] == uf then
-            child:SetParent(uf)
+-- Hand a pooled UnitFrame back its parked pieces when the driver acquires it for a unit we do
+-- not take over. Not at NAME_PLATE_UNIT_REMOVED: the driver has already released the frame
+-- (base.UnitFrame is nil) before any addon sees that event. Enemy re-acquires skip this and
+-- re-park in place. Zero cost for a frame no enemy ever held: one lookup.
+function ns.NP_ReclaimBlizzardFrame(uf)
+    local rec = uf and ns._npParked[uf]
+    if not (rec and rec.held) or uf:IsForbidden() then return end
+    -- Reverse park order, so the children return to uf in their original order.
+    for i = #rec, 1, -1 do
+        local child = rec[i]
+        if storedParents[child] == uf then
             storedParents[child] = nil
+            if child:GetParent() == npOffscreenParent then child:SetParent(uf) end
         end
     end
-    -- Safety if the whole UnitFrame was ever parked; normally a no-op.
-    if storedParents[uf] then
-        uf:SetParent(storedParents[uf])
-        storedParents[uf] = nil
-    end
+    wipe(rec)
     uf:SetAlpha(1)
-    if uf.AurasFrame then
-        if storedParents[uf.AurasFrame] then
-            uf.AurasFrame:SetParent(storedParents[uf.AurasFrame])
-            storedParents[uf.AurasFrame] = nil
-        end
-        uf.AurasFrame:SetAlpha(1)
+    local auras = uf.AurasFrame
+    local auraParent = auras and storedParents[auras]
+    if auraParent then
+        storedParents[auras] = nil
+        if auras:GetParent() == npOffscreenParent then auras:SetParent(auraParent) end
     end
-    if uf.WidgetContainer then
-        uf.WidgetContainer:SetParent(uf)
-    end
-    if uf.SoftTargetFrame then
-        uf.SoftTargetFrame:SetParent(uf)
-    end
+    -- The kept-live frames still sit on the base of the enemy that last held this frame.
+    local wc, stf = uf.WidgetContainer, uf.SoftTargetFrame
+    if wc and wc:GetParent() ~= uf then wc:SetParent(uf) end
+    if stf and stf:GetParent() ~= uf then stf:SetParent(uf) end
 end
 ns.HideBlizzardFrame = HideBlizzardFrame
 local castFallbackFrame = CreateFrame("Frame")
@@ -10786,9 +10791,9 @@ manager:SetScript("OnEvent", function(self, event, unit)
             if ns.TryColorFriendlyNPCName then ns.TryColorFriendlyNPCName(unit, nameplate) end
             -- Hide NPC health bars in name-only mode (show name only)
             if ns.TrySuppressNPCHealthBar then ns.TrySuppressNPCHealthBar(unit, nameplate) end
-            -- Ensure the Blizzard UF is visible for name-only friendly plates. Nameplate
-            -- frames are recycled; a UF previously used for an enemy may still have alpha 0
-            -- or children parented offscreen.
+            -- Ensure the Blizzard UF is visible for name-only friendly plates. UnitFrames are
+            -- pooled; children an earlier enemy parked already came back in the
+            -- OnNamePlateAdded hook (ns.NP_ReclaimBlizzardFrame).
             local db = p or defaults
             if db.friendlyNameOnly ~= false then
                 local uf = nameplate.UnitFrame
@@ -10806,11 +10811,6 @@ manager:SetScript("OnEvent", function(self, event, unit)
                         uf:SetParent(nameplate)
                         uf:SetAlpha(1)
                         uf:Show()
-                    end
-                    -- Restore RaidTargetFrame if it was moved offscreen by a
-                    -- previous enemy plate on this recycled nameplate.
-                    if uf.RaidTargetFrame then
-                        RestoreFromOffscreen(uf.RaidTargetFrame)
                     end
                 end
                 -- Apply Y-offset (+ the name-only baseline lift; see
@@ -10844,11 +10844,9 @@ manager:SetScript("OnEvent", function(self, event, unit)
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
         questMobCache[unit] = nil
         ns._questObjText[unit] = nil
-        -- Restore Blizzard UnitFrame elements so the recycled nameplate is clean
+        -- The driver has already released this base's UnitFrame (base.UnitFrame is nil
+        -- here); its parked pieces come back on the next acquire (ns.NP_ReclaimBlizzardFrame).
         local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
-        if nameplate then
-            RestoreBlizzardFrame(nameplate)
-        end
         -- Restore NPC name color if we tinted it
         if nameplate and ns.RestoreFriendlyNPCNameColor then
             ns.RestoreFriendlyNPCNameColor(nameplate)
@@ -10857,13 +10855,9 @@ manager:SetScript("OnEvent", function(self, event, unit)
         if nameplate and ns.RestoreNPCHealthBar then
             ns.RestoreNPCHealthBar(nameplate)
         end
-        -- Restore name-only Y-offset if we applied one
-        if nameplate and _npYOffsetState[nameplate] then
-            local uf = nameplate.UnitFrame
-            if uf then
-                uf:SetPoint("TOPLEFT", nameplate, "TOPLEFT", 0, 0)
-                uf:SetPoint("BOTTOMRIGHT", nameplate, "BOTTOMRIGHT", 0, 0)
-            end
+        -- Drop the name-only Y-offset flag only: the pool release clears the UnitFrame's
+        -- anchors and the next acquire re-anchors it (SetAllPoints).
+        if nameplate then
             _npYOffsetState[nameplate] = nil
         end
         pendingUnits[unit] = nil

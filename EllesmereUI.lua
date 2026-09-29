@@ -146,76 +146,79 @@ end
 -- EllesmereUIDB arrives from SavedVariables at ADDON_LOADED. Do NOT create it here --
 -- that overwrites saved data. (Stale child SV copy guard lives in EllesmereUI_Lite.lua.)
 
--- Panel background
-local PANEL_BG_R, PANEL_BG_G, PANEL_BG_B     = 0.05, 0.07, 0.09
+-- Widget style constants, one table instead of ~75 file-scope locals, which
+-- would push this main chunk past Lua 5.1's 200-active-locals limit. Read them
+-- as STYLE.X here; other files get them through the EllesmereUI.X exports below.
+local STYLE = {
+    -- Panel background
+    PANEL_BG_R = 0.05, PANEL_BG_G = 0.07, PANEL_BG_B = 0.09,
 
--- Global border  (white + alpha -- adapts to any background tint)
-local BORDER_R, BORDER_G, BORDER_B            = 1, 1, 1
-local BORDER_A                                = 0.05
+    -- Global border  (white + alpha -- adapts to any background tint)
+    BORDER_R = 1, BORDER_G = 1, BORDER_B = 1,
+    BORDER_A = 0.05,
 
--- Text  (white + alpha -- adapts to any background tint)
-local TEXT_WHITE_R, TEXT_WHITE_G, TEXT_WHITE_B = 1, 1, 1
-local TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B       = 1, 1, 1
-local TEXT_DIM_A                              = 0.53
-local TEXT_SECTION_R, TEXT_SECTION_G, TEXT_SECTION_B = 1, 1, 1
-local TEXT_SECTION_A                          = 0.41
+    -- Text  (white + alpha -- adapts to any background tint)
+    TEXT_WHITE_R = 1, TEXT_WHITE_G = 1, TEXT_WHITE_B = 1,
+    TEXT_DIM_R = 1, TEXT_DIM_G = 1, TEXT_DIM_B = 1,
+    TEXT_DIM_A = 0.53,
+    TEXT_SECTION_R = 1, TEXT_SECTION_G = 1, TEXT_SECTION_B = 1,
+    TEXT_SECTION_A = 0.41,
 
--- Row alternating background alpha  (black overlay on option rows)
-local ROW_BG_ODD        = 0.1
-local ROW_BG_EVEN       = 0.2
+    -- Row alternating background alpha  (black overlay on option rows)
+    ROW_BG_ODD = 0.1,
+    ROW_BG_EVEN = 0.2,
 
--- Slider  (white + alpha for track -- adapts to any background tint)
-local SL_TRACK_R, SL_TRACK_G, SL_TRACK_B     = 1, 1, 1               -- track bg (white + alpha)
-local SL_TRACK_A                              = 0.16                   -- track bg alpha
-local SL_FILL_A                               = 0.75                   -- filled portion alpha (colour = accent)
-local SL_INPUT_R, SL_INPUT_G, SL_INPUT_B     = 0.02, 0.03, 0.04      -- input box background (darker than bg, stays as-is)
-local SL_INPUT_A                              = 0.25                   -- input box alpha (all sliders)
-local SL_INPUT_BRD_A                          = 0.02                   -- input box border alpha (white)
+    -- Slider  (white + alpha for track -- adapts to any background tint)
+    SL_TRACK_R = 1, SL_TRACK_G = 1, SL_TRACK_B = 1,        -- track bg (white + alpha)
+    SL_TRACK_A = 0.16,                                     -- track bg alpha
+    SL_FILL_A = 0.75,                                      -- filled portion alpha (colour = accent)
+    SL_INPUT_R = 0.02, SL_INPUT_G = 0.03, SL_INPUT_B = 0.04, -- input box background (darker than bg, stays as-is)
+    SL_INPUT_A = 0.25,                                     -- input box alpha (all sliders)
+    SL_INPUT_BRD_A = 0.02,                                 -- input box border alpha (white)
 
--- Multi-widget slider overrides  (applied additively in BuildSliderCore)
-local MW_INPUT_ALPHA_BOOST                    = 0.15                   -- additive alpha boost for multi-widget input fields
-local MW_TRACK_ALPHA_BOOST                    = 0.06                   -- additive alpha boost for multi-widget slider track
+    -- Multi-widget slider overrides  (applied additively in BuildSliderCore)
+    MW_INPUT_ALPHA_BOOST = 0.15,                           -- additive alpha boost for multi-widget input fields
+    MW_TRACK_ALPHA_BOOST = 0.06,                           -- additive alpha boost for multi-widget slider track
 
--- Toggle  (white + alpha for off states -- adapts to any background tint)
-local TG_OFF_R, TG_OFF_G, TG_OFF_B          = 0.267, 0.267, 0.267    -- track when OFF (#444)
-local TG_OFF_A                               = 0.65                   -- track OFF alpha
-local TG_ON_A                                = 0.75                    -- track alpha at full ON (colour = accent)
-local TG_KNOB_OFF_R, TG_KNOB_OFF_G, TG_KNOB_OFF_B = 1, 1, 1         -- knob when OFF (white + alpha)
-local TG_KNOB_OFF_A                          = 0.5                    -- knob OFF alpha
-local TG_KNOB_ON_R, TG_KNOB_ON_G, TG_KNOB_ON_B    = 1, 1, 1          -- knob when ON
-local TG_KNOB_ON_A                           = 1                       -- knob ON alpha
+    -- Toggle  (white + alpha for off states -- adapts to any background tint)
+    TG_OFF_R = 0.267, TG_OFF_G = 0.267, TG_OFF_B = 0.267,  -- track when OFF (#444)
+    TG_OFF_A = 0.65,                                       -- track OFF alpha
+    TG_ON_A = 0.75,                                        -- track alpha at full ON (colour = accent)
+    TG_KNOB_OFF_R = 1, TG_KNOB_OFF_G = 1, TG_KNOB_OFF_B = 1, -- knob when OFF (white + alpha)
+    TG_KNOB_OFF_A = 0.5,                                   -- knob OFF alpha
+    TG_KNOB_ON_R = 1, TG_KNOB_ON_G = 1, TG_KNOB_ON_B = 1,  -- knob when ON
+    TG_KNOB_ON_A = 1,                                      -- knob ON alpha
 
--- Checkbox
-local CB_BOX_R, CB_BOX_G, CB_BOX_B           = 0.10, 0.12, 0.16       -- box background
-local CB_BRD_A, CB_ACT_BRD_A                  = 0.05, 0.15             -- box border alpha / checked border alpha
+    -- Checkbox
+    CB_BOX_R = 0.10, CB_BOX_G = 0.12, CB_BOX_B = 0.16,     -- box background
+    CB_BRD_A = 0.05, CB_ACT_BRD_A = 0.15,                  -- box border alpha / checked border alpha
 
--- Button / WideButton
-local BTN_BG_R, BTN_BG_G, BTN_BG_B           = 0.061, 0.095, 0.120   -- background
-local BTN_BG_A                                = 0.6
-local BTN_BG_HA                               = 0.65                   -- background alpha hovered
-local BTN_BRD_A                               = 0.3                    -- border alpha (colour = white)
-local BTN_BRD_HA                              = 0.45                   -- border alpha hovered
-local BTN_TXT_A                               = 0.55                   -- text alpha (colour = white)
-local BTN_TXT_HA                              = 0.70                   -- text alpha hovered
+    -- Button / WideButton
+    BTN_BG_R = 0.061, BTN_BG_G = 0.095, BTN_BG_B = 0.120,  -- background
+    BTN_BG_A = 0.6,
+    BTN_BG_HA = 0.65,                                      -- background alpha hovered
+    BTN_BRD_A = 0.3,                                       -- border alpha (colour = white)
+    BTN_BRD_HA = 0.45,                                     -- border alpha hovered
+    BTN_TXT_A = 0.55,                                      -- text alpha (colour = white)
+    BTN_TXT_HA = 0.70,                                     -- text alpha hovered
 
--- Dropdown
-local DD_BG_R, DD_BG_G, DD_BG_B              = 0.075, 0.113, 0.141   -- background
-local DD_BG_A                                 = 0.9
-local DD_BG_HA                                = 0.98                   -- background alpha hovered
-local DD_BRD_A                                = 0.20                   -- border alpha (colour = white)
-local DD_BRD_HA                               = 0.30                   -- border alpha hovered
-local DD_TXT_A                                = 0.50                   -- selected value text alpha (colour = white)
-local DD_TXT_HA                               = 0.60                   -- selected value text alpha hovered
-local DD_ITEM_HL_A                            = 0.08                   -- menu item highlight alpha (hover)
-local DD_ITEM_SEL_A                           = 0.04                   -- menu item highlight alpha (active selection)
+    -- Dropdown
+    DD_BG_R = 0.075, DD_BG_G = 0.113, DD_BG_B = 0.141,     -- background
+    DD_BG_A = 0.9,
+    DD_BG_HA = 0.98,                                       -- background alpha hovered
+    DD_BRD_A = 0.20,                                       -- border alpha (colour = white)
+    DD_BRD_HA = 0.30,                                      -- border alpha hovered
+    DD_TXT_A = 0.50,                                       -- selected value text alpha (colour = white)
+    DD_TXT_HA = 0.60,                                      -- selected value text alpha hovered
+    DD_ITEM_HL_A = 0.08,                                   -- menu item highlight alpha (hover)
+    DD_ITEM_SEL_A = 0.04,                                  -- menu item highlight alpha (active selection)
 
--- Sidebar nav values inlined into NAV_* locals below to avoid an extra file-scope local
-
--- Multi-widget layout  (dual = 2-up, triple = 3-up -- shared by all widget types)
-local DUAL_ITEM_W       = 350              -- width of each item in a 2-up row
-local DUAL_GAP          = 42               -- gap between 2-up items
-local TRIPLE_ITEM_W     = 180              -- width of each item in a 3-up row
-local TRIPLE_GAP        = 50               -- gap between 3-up items
+    -- Multi-widget layout  (dual = 2-up, triple = 3-up -- shared by all widget types)
+    DUAL_ITEM_W = 350,                                     -- width of each item in a 2-up row
+    DUAL_GAP = 42,                                         -- gap between 2-up items
+    TRIPLE_ITEM_W = 180,                                   -- width of each item in a 3-up row
+    TRIPLE_GAP = 50,                                       -- gap between 3-up items
+}
 
 -- Color swatch border (packed into table)
 local CS = {
@@ -259,16 +262,16 @@ local function RegAccent(entry)
         if key then _accentElements._idx[key] = #_accentElements end
     end
 end
-local DARK_BG         = { r = PANEL_BG_R, g = PANEL_BG_G, b = PANEL_BG_B }
-local BORDER_COLOR    = { r = BORDER_R, g = BORDER_G, b = BORDER_B, a = BORDER_A }
-local TEXT_WHITE      = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B }
-local TEXT_DIM        = { r = TEXT_DIM_R, g = TEXT_DIM_G, b = TEXT_DIM_B, a = TEXT_DIM_A }
-local TEXT_SECTION    = { r = TEXT_SECTION_R, g = TEXT_SECTION_G, b = TEXT_SECTION_B, a = TEXT_SECTION_A }
+local DARK_BG         = { r = STYLE.PANEL_BG_R, g = STYLE.PANEL_BG_G, b = STYLE.PANEL_BG_B }
+local BORDER_COLOR    = { r = STYLE.BORDER_R, g = STYLE.BORDER_G, b = STYLE.BORDER_B, a = STYLE.BORDER_A }
+local TEXT_WHITE      = { r = STYLE.TEXT_WHITE_R, g = STYLE.TEXT_WHITE_G, b = STYLE.TEXT_WHITE_B }
+local TEXT_DIM        = { r = STYLE.TEXT_DIM_R, g = STYLE.TEXT_DIM_G, b = STYLE.TEXT_DIM_B, a = STYLE.TEXT_DIM_A }
+local TEXT_SECTION    = { r = STYLE.TEXT_SECTION_R, g = STYLE.TEXT_SECTION_G, b = STYLE.TEXT_SECTION_B, a = STYLE.TEXT_SECTION_A }
 
 -- Sidebar nav states
-local NAV_SELECTED_TEXT   = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B, a = 1 }
+local NAV_SELECTED_TEXT   = { r = STYLE.TEXT_WHITE_R, g = STYLE.TEXT_WHITE_G, b = STYLE.TEXT_WHITE_B, a = 1 }
 local NAV_SELECTED_ICON_A = 1
-local NAV_ENABLED_TEXT    = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B, a = 0.6 }
+local NAV_ENABLED_TEXT    = { r = STYLE.TEXT_WHITE_R, g = STYLE.TEXT_WHITE_G, b = STYLE.TEXT_WHITE_B, a = 0.6 }
 local NAV_ENABLED_ICON_A  = 0.60
 local NAV_DISABLED_TEXT   = { r = 1, g = 1, b = 1, a = 0.11 }
 local NAV_DISABLED_ICON_A = 0.20
@@ -373,6 +376,18 @@ EllesmereUI.SEASON_PORTALS = {
     { spellID = 1286828, short = "ToS", dungeonID = 1694, names = { "temple of sethraliss", "храм сетралисс" } },
     { spellID = 1286831, short = "KR",  dungeonID = 1785, names = { "kings' rest", "king's rest", "гробница королей" } },
 }
+
+-- Great Vault shortcut (Minimap button, Data Bars block, character sheet
+-- season panel): loads Blizzard's vault on first use and toggles it directly,
+-- so opening it closes no other panel (the UIPanel fit check would close the
+-- character sheet). Escape still closes it (RegisterEscapeClose, notOwned).
+function EllesmereUI.ToggleGreatVault()
+    if not C_AddOns.IsAddOnLoaded("Blizzard_WeeklyRewards") then
+        C_AddOns.LoadAddOn("Blizzard_WeeklyRewards")
+    end
+    local vault = _G.WeeklyRewardsFrame
+    if vault then vault:SetShown(not vault:IsShown()) end
+end
 
 -- Portal flyout (Chat sidebar and Minimap): SEASON_PORTALS spell buttons plus a
 -- hearthstone column, all secure. Build lazily, never in combat; the caller
@@ -2115,7 +2130,7 @@ local rowCounters = {}
 local function RowBg(frame, parent)
     if not rowCounters[parent] then rowCounters[parent] = 0 end
     rowCounters[parent] = rowCounters[parent] + 1
-    local alpha = (rowCounters[parent] % 2 == 0) and ROW_BG_EVEN or ROW_BG_ODD
+    local alpha = (rowCounters[parent] % 2 == 0) and STYLE.ROW_BG_EVEN or STYLE.ROW_BG_ODD
     local splitParent = parent._splitParent
     local bgParent = splitParent or frame
     local bg = bgParent:CreateTexture(nil, "BACKGROUND")
@@ -2181,6 +2196,19 @@ function EllesmereUI.BuildFullName(charName, realmName)
         suffix = suffix:sub(1, half)
     end
     return base .. "-" .. suffix
+end
+
+-- A friend or guild note for display. Old Friends builds wrote a "||EUI:Group||" tag
+-- into friend notes that was never removed: the text before it is kept, trailing
+-- space trimmed. nil for a non-string, secret or empty note.
+function EllesmereUI.StripFriendNoteTag(note)
+    if type(note) ~= "string" or issecretvalue(note) or note == "" then return nil end
+    local s = note:find("||EUI:", 1, true)
+    if s and note:find("||", s + 6, true) then
+        note = note:sub(1, s - 1):match("^(.-)%s*$")
+        if note == "" then return nil end
+    end
+    return note
 end
 
 -------------------------------------------------------------------------------
@@ -2353,78 +2381,78 @@ function EllesmereUI.BuildBarTextureTables(includeExtras)
 end
 
 -- Numeric constants
-EllesmereUI.TEXT_WHITE_R = TEXT_WHITE_R
-EllesmereUI.TEXT_WHITE_G = TEXT_WHITE_G
-EllesmereUI.TEXT_WHITE_B = TEXT_WHITE_B
-EllesmereUI.TEXT_DIM_R = TEXT_DIM_R
-EllesmereUI.TEXT_DIM_G = TEXT_DIM_G
-EllesmereUI.TEXT_DIM_B = TEXT_DIM_B
-EllesmereUI.TEXT_DIM_A = TEXT_DIM_A
-EllesmereUI.TEXT_SECTION_R = TEXT_SECTION_R
-EllesmereUI.TEXT_SECTION_G = TEXT_SECTION_G
-EllesmereUI.TEXT_SECTION_B = TEXT_SECTION_B
-EllesmereUI.TEXT_SECTION_A = TEXT_SECTION_A
-EllesmereUI.ROW_BG_ODD  = ROW_BG_ODD
-EllesmereUI.ROW_BG_EVEN = ROW_BG_EVEN
-EllesmereUI.BORDER_R = BORDER_R
-EllesmereUI.BORDER_G = BORDER_G
-EllesmereUI.BORDER_B = BORDER_B
+EllesmereUI.TEXT_WHITE_R = STYLE.TEXT_WHITE_R
+EllesmereUI.TEXT_WHITE_G = STYLE.TEXT_WHITE_G
+EllesmereUI.TEXT_WHITE_B = STYLE.TEXT_WHITE_B
+EllesmereUI.TEXT_DIM_R = STYLE.TEXT_DIM_R
+EllesmereUI.TEXT_DIM_G = STYLE.TEXT_DIM_G
+EllesmereUI.TEXT_DIM_B = STYLE.TEXT_DIM_B
+EllesmereUI.TEXT_DIM_A = STYLE.TEXT_DIM_A
+EllesmereUI.TEXT_SECTION_R = STYLE.TEXT_SECTION_R
+EllesmereUI.TEXT_SECTION_G = STYLE.TEXT_SECTION_G
+EllesmereUI.TEXT_SECTION_B = STYLE.TEXT_SECTION_B
+EllesmereUI.TEXT_SECTION_A = STYLE.TEXT_SECTION_A
+EllesmereUI.ROW_BG_ODD  = STYLE.ROW_BG_ODD
+EllesmereUI.ROW_BG_EVEN = STYLE.ROW_BG_EVEN
+EllesmereUI.BORDER_R = STYLE.BORDER_R
+EllesmereUI.BORDER_G = STYLE.BORDER_G
+EllesmereUI.BORDER_B = STYLE.BORDER_B
 EllesmereUI.CONTENT_PAD = CONTENT_PAD
 -- Slider
-EllesmereUI.SL_TRACK_R = SL_TRACK_R
-EllesmereUI.SL_TRACK_G = SL_TRACK_G
-EllesmereUI.SL_TRACK_B = SL_TRACK_B
-EllesmereUI.SL_TRACK_A = SL_TRACK_A
-EllesmereUI.SL_FILL_A  = SL_FILL_A
-EllesmereUI.SL_INPUT_R = SL_INPUT_R
-EllesmereUI.SL_INPUT_G = SL_INPUT_G
-EllesmereUI.SL_INPUT_B = SL_INPUT_B
-EllesmereUI.SL_INPUT_A = SL_INPUT_A
-EllesmereUI.SL_INPUT_BRD_A = SL_INPUT_BRD_A
-EllesmereUI.MW_INPUT_ALPHA_BOOST = MW_INPUT_ALPHA_BOOST
-EllesmereUI.MW_TRACK_ALPHA_BOOST = MW_TRACK_ALPHA_BOOST
+EllesmereUI.SL_TRACK_R = STYLE.SL_TRACK_R
+EllesmereUI.SL_TRACK_G = STYLE.SL_TRACK_G
+EllesmereUI.SL_TRACK_B = STYLE.SL_TRACK_B
+EllesmereUI.SL_TRACK_A = STYLE.SL_TRACK_A
+EllesmereUI.SL_FILL_A  = STYLE.SL_FILL_A
+EllesmereUI.SL_INPUT_R = STYLE.SL_INPUT_R
+EllesmereUI.SL_INPUT_G = STYLE.SL_INPUT_G
+EllesmereUI.SL_INPUT_B = STYLE.SL_INPUT_B
+EllesmereUI.SL_INPUT_A = STYLE.SL_INPUT_A
+EllesmereUI.SL_INPUT_BRD_A = STYLE.SL_INPUT_BRD_A
+EllesmereUI.MW_INPUT_ALPHA_BOOST = STYLE.MW_INPUT_ALPHA_BOOST
+EllesmereUI.MW_TRACK_ALPHA_BOOST = STYLE.MW_TRACK_ALPHA_BOOST
 -- Toggle
-EllesmereUI.TG_OFF_R = TG_OFF_R
-EllesmereUI.TG_OFF_G = TG_OFF_G
-EllesmereUI.TG_OFF_B = TG_OFF_B
-EllesmereUI.TG_OFF_A = TG_OFF_A
-EllesmereUI.TG_ON_A  = TG_ON_A
-EllesmereUI.TG_KNOB_OFF_R = TG_KNOB_OFF_R
-EllesmereUI.TG_KNOB_OFF_G = TG_KNOB_OFF_G
-EllesmereUI.TG_KNOB_OFF_B = TG_KNOB_OFF_B
-EllesmereUI.TG_KNOB_OFF_A = TG_KNOB_OFF_A
-EllesmereUI.TG_KNOB_ON_R  = TG_KNOB_ON_R
-EllesmereUI.TG_KNOB_ON_G  = TG_KNOB_ON_G
-EllesmereUI.TG_KNOB_ON_B  = TG_KNOB_ON_B
-EllesmereUI.TG_KNOB_ON_A  = TG_KNOB_ON_A
+EllesmereUI.TG_OFF_R = STYLE.TG_OFF_R
+EllesmereUI.TG_OFF_G = STYLE.TG_OFF_G
+EllesmereUI.TG_OFF_B = STYLE.TG_OFF_B
+EllesmereUI.TG_OFF_A = STYLE.TG_OFF_A
+EllesmereUI.TG_ON_A  = STYLE.TG_ON_A
+EllesmereUI.TG_KNOB_OFF_R = STYLE.TG_KNOB_OFF_R
+EllesmereUI.TG_KNOB_OFF_G = STYLE.TG_KNOB_OFF_G
+EllesmereUI.TG_KNOB_OFF_B = STYLE.TG_KNOB_OFF_B
+EllesmereUI.TG_KNOB_OFF_A = STYLE.TG_KNOB_OFF_A
+EllesmereUI.TG_KNOB_ON_R  = STYLE.TG_KNOB_ON_R
+EllesmereUI.TG_KNOB_ON_G  = STYLE.TG_KNOB_ON_G
+EllesmereUI.TG_KNOB_ON_B  = STYLE.TG_KNOB_ON_B
+EllesmereUI.TG_KNOB_ON_A  = STYLE.TG_KNOB_ON_A
 -- Checkbox
-EllesmereUI.CB_BOX_R = CB_BOX_R
-EllesmereUI.CB_BOX_G = CB_BOX_G
-EllesmereUI.CB_BOX_B = CB_BOX_B
-EllesmereUI.CB_BRD_A     = CB_BRD_A
-EllesmereUI.CB_ACT_BRD_A = CB_ACT_BRD_A
+EllesmereUI.CB_BOX_R = STYLE.CB_BOX_R
+EllesmereUI.CB_BOX_G = STYLE.CB_BOX_G
+EllesmereUI.CB_BOX_B = STYLE.CB_BOX_B
+EllesmereUI.CB_BRD_A     = STYLE.CB_BRD_A
+EllesmereUI.CB_ACT_BRD_A = STYLE.CB_ACT_BRD_A
 -- Button
-EllesmereUI.BTN_BG_R  = BTN_BG_R
-EllesmereUI.BTN_BG_G  = BTN_BG_G
-EllesmereUI.BTN_BG_B  = BTN_BG_B
-EllesmereUI.BTN_BG_A  = BTN_BG_A
-EllesmereUI.BTN_BG_HA = BTN_BG_HA
-EllesmereUI.BTN_BRD_A  = BTN_BRD_A
-EllesmereUI.BTN_BRD_HA = BTN_BRD_HA
-EllesmereUI.BTN_TXT_A  = BTN_TXT_A
-EllesmereUI.BTN_TXT_HA = BTN_TXT_HA
+EllesmereUI.BTN_BG_R  = STYLE.BTN_BG_R
+EllesmereUI.BTN_BG_G  = STYLE.BTN_BG_G
+EllesmereUI.BTN_BG_B  = STYLE.BTN_BG_B
+EllesmereUI.BTN_BG_A  = STYLE.BTN_BG_A
+EllesmereUI.BTN_BG_HA = STYLE.BTN_BG_HA
+EllesmereUI.BTN_BRD_A  = STYLE.BTN_BRD_A
+EllesmereUI.BTN_BRD_HA = STYLE.BTN_BRD_HA
+EllesmereUI.BTN_TXT_A  = STYLE.BTN_TXT_A
+EllesmereUI.BTN_TXT_HA = STYLE.BTN_TXT_HA
 -- Dropdown
-EllesmereUI.DD_BG_R  = DD_BG_R
-EllesmereUI.DD_BG_G  = DD_BG_G
-EllesmereUI.DD_BG_B  = DD_BG_B
-EllesmereUI.DD_BG_A  = DD_BG_A
-EllesmereUI.DD_BG_HA = DD_BG_HA
-EllesmereUI.DD_BRD_A  = DD_BRD_A
-EllesmereUI.DD_BRD_HA = DD_BRD_HA
-EllesmereUI.DD_TXT_A  = DD_TXT_A
-EllesmereUI.DD_TXT_HA = DD_TXT_HA
-EllesmereUI.DD_ITEM_HL_A  = DD_ITEM_HL_A
-EllesmereUI.DD_ITEM_SEL_A = DD_ITEM_SEL_A
+EllesmereUI.DD_BG_R  = STYLE.DD_BG_R
+EllesmereUI.DD_BG_G  = STYLE.DD_BG_G
+EllesmereUI.DD_BG_B  = STYLE.DD_BG_B
+EllesmereUI.DD_BG_A  = STYLE.DD_BG_A
+EllesmereUI.DD_BG_HA = STYLE.DD_BG_HA
+EllesmereUI.DD_BRD_A  = STYLE.DD_BRD_A
+EllesmereUI.DD_BRD_HA = STYLE.DD_BRD_HA
+EllesmereUI.DD_TXT_A  = STYLE.DD_TXT_A
+EllesmereUI.DD_TXT_HA = STYLE.DD_TXT_HA
+EllesmereUI.DD_ITEM_HL_A  = STYLE.DD_ITEM_HL_A
+EllesmereUI.DD_ITEM_SEL_A = STYLE.DD_ITEM_SEL_A
 -- Blizzard reskin colors (tooltips, context menus, popups)
 EllesmereUI.RESKIN = {
     BG_R = 0.067, BG_G = 0.067, BG_B = 0.067,
@@ -2466,10 +2494,10 @@ function EllesmereUI.GetTooltipBorder()
     return r, g, b, a, size
 end
 -- Layout
-EllesmereUI.DUAL_ITEM_W  = DUAL_ITEM_W
-EllesmereUI.DUAL_GAP     = DUAL_GAP
-EllesmereUI.TRIPLE_ITEM_W = TRIPLE_ITEM_W
-EllesmereUI.TRIPLE_GAP    = TRIPLE_GAP
+EllesmereUI.DUAL_ITEM_W  = STYLE.DUAL_ITEM_W
+EllesmereUI.DUAL_GAP     = STYLE.DUAL_GAP
+EllesmereUI.TRIPLE_ITEM_W = STYLE.TRIPLE_ITEM_W
+EllesmereUI.TRIPLE_GAP    = STYLE.TRIPLE_GAP
 
 -- Table constants
 EllesmereUI.CLASS_COLOR_MAP = CLASS_COLOR_MAP
@@ -2683,12 +2711,7 @@ do
     --- Defers to PLAYER_REGEN_ENABLED if called during combat.
     function PP.SetUIScale(newScale)
         if InCombatLockdown() then
-            local deferFrame = CreateFrame("Frame")
-            deferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-            deferFrame:SetScript("OnEvent", function(self)
-                self:UnregisterAllEvents()
-                PP.SetUIScale(newScale)
-            end)
+            EllesmereUI.CombatQueue.Defer("SetUIScale", function() PP.SetUIScale(newScale) end)
             return
         end
         if not EllesmereUIDB then EllesmereUIDB = {} end
@@ -4051,6 +4074,35 @@ do
         end
         if not (es and es > 0.01) then es = UIParent and UIParent:GetEffectiveScale() or 1 end
         return PP.SnapForES(sepSize * edge * (ratio or 1) / 16, es)
+    end
+
+    --- Places a border style's vertical divider art (GetBorderCompanion "sepV") on tex, a
+    --- texture we own, along a vertical edge of anchor at its full height, as wide as
+    --- BorderCompanionThickness(textureKey, step, edgePx, es) (es = the scale tex draws
+    --- at). The art's line lies 2 / sepSize of that width in from its lead side, and the
+    --- lead crosses the edge by that much. right = the lead side is right of the edge (the
+    --- art mirrored), else left. over = the edge is anchor's side away from the lead, so
+    --- the lead overlaps anchor; else it is anchor's side toward the lead and the lead
+    --- hangs past anchor. Hides tex when the style has no divider or its border is off.
+    --- The caller tints tex. Settings and UI-scale re-layout passes only.
+    function EllesmereUI.PlaceBorderDividerV(tex, anchor, right, over, textureKey, step, edgePx, es)
+        local thick = EllesmereUI.BorderCompanionThickness(textureKey, step, edgePx, es)
+        if not thick or thick <= 0 then tex:Hide(); return end
+        local PP = EllesmereUI.PP
+        local lead = PP.SnapForES(thick * 2 / EllesmereUI.GetBorderCompanion(textureKey, "sepSize"), es)
+        tex:SetTexture(EllesmereUI.GetBorderCompanion(textureKey, "sepV"))
+        tex:ClearAllPoints()
+        if right then
+            tex:SetTexCoord(1, 0, 0, 1)
+            tex:SetPoint("TOPRIGHT", anchor, over and "TOPLEFT" or "TOPRIGHT", lead, 0)
+            tex:SetPoint("BOTTOMRIGHT", anchor, over and "BOTTOMLEFT" or "BOTTOMRIGHT", lead, 0)
+        else
+            tex:SetTexCoord(0, 1, 0, 1)
+            tex:SetPoint("TOPLEFT", anchor, over and "TOPRIGHT" or "TOPLEFT", -lead, 0)
+            tex:SetPoint("BOTTOMLEFT", anchor, over and "BOTTOMRIGHT" or "BOTTOMLEFT", -lead, 0)
+        end
+        tex:SetWidth(thick)
+        tex:Show()
     end
 
     --- Check if a border texture uses scaled offset (edgeSize/2 base).
@@ -5551,6 +5603,24 @@ end
 function EllesmereUI.GetClassColor(classToken)
     if EllesmereUI._colorCacheDirty then EllesmereUI._RebuildColorCache() end
     return EllesmereUI._colorCache.class[classToken] or EllesmereUI._COLOR_WHITE
+end
+
+-- Class token from a localized class name (friend list entries carry only that).
+-- Male and female forms both map; built once on first use. Unknown or secret -> nil.
+function EllesmereUI.ClassTokenFromLocalized(name)
+    if type(name) ~= "string" or issecretvalue(name) then return nil end
+    local map = EllesmereUI._classByLocalName
+    if not map then
+        map = {}
+        if LOCALIZED_CLASS_NAMES_MALE then
+            for token, n in pairs(LOCALIZED_CLASS_NAMES_MALE) do map[n] = token end
+        end
+        if LOCALIZED_CLASS_NAMES_FEMALE then
+            for token, n in pairs(LOCALIZED_CLASS_NAMES_FEMALE) do map[n] = token end
+        end
+        EllesmereUI._classByLocalName = map
+    end
+    return map[name]
 end
 
 -- Custom class colour for a unit whose identity is RESTRICTED (target-of-target, focus-target):
@@ -11185,19 +11255,19 @@ BuildTabs = function(pageNames, disabledPages, disabledTooltips)
         searchFrame:SetPoint("BOTTOMRIGHT", tabBar, "BOTTOMRIGHT", -10, (TAB_BAR_H - SEARCH_H) / 2 + 2)
         searchFrame:SetFrameLevel(tabBar:GetFrameLevel() + 2)
 
-        local searchBg = SolidTex(searchFrame, "BACKGROUND", SL_INPUT_R, SL_INPUT_G, SL_INPUT_B, SL_INPUT_A + 0.10)
+        local searchBg = SolidTex(searchFrame, "BACKGROUND", STYLE.SL_INPUT_R, STYLE.SL_INPUT_G, STYLE.SL_INPUT_B, STYLE.SL_INPUT_A + 0.10)
         searchBg:SetAllPoints()
-        local searchBrd = MakeBorder(searchFrame, BORDER_R, BORDER_G, BORDER_B, 0.10)
+        local searchBrd = MakeBorder(searchFrame, STYLE.BORDER_R, STYLE.BORDER_G, STYLE.BORDER_B, 0.10)
 
         local editBox = CreateFrame("EditBox", nil, searchFrame)
         editBox:SetAllPoints()
         editBox:SetAutoFocus(false)
         editBox:SetFont(EllesmereUI.EXPRESSWAY, 13, "")
-        editBox:SetTextColor(TEXT_WHITE_R, TEXT_WHITE_G, TEXT_WHITE_B, 1)
+        editBox:SetTextColor(STYLE.TEXT_WHITE_R, STYLE.TEXT_WHITE_G, STYLE.TEXT_WHITE_B, 1)
         editBox:SetTextInsets(10, 24, 0, 0)
         editBox:SetMaxLetters(40)
 
-        local placeholder = MakeFont(searchFrame, 12, nil, TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B, 0.3)
+        local placeholder = MakeFont(searchFrame, 12, nil, STYLE.TEXT_DIM_R, STYLE.TEXT_DIM_G, STYLE.TEXT_DIM_B, 0.3)
         placeholder:SetPoint("LEFT", searchFrame, "LEFT", 10, 0)
         placeholder:SetText(EllesmereUI.L("Search Module Settings..."))
 
@@ -11207,21 +11277,21 @@ BuildTabs = function(pageNames, disabledPages, disabledTooltips)
         clearBtn:SetPoint("RIGHT", searchFrame, "RIGHT", -4, 0)
         clearBtn:SetFrameLevel(editBox:GetFrameLevel() + 2)
         clearBtn:Hide()
-        local clearLabel = MakeFont(clearBtn, 15, nil, TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B, 0.35)
+        local clearLabel = MakeFont(clearBtn, 15, nil, STYLE.TEXT_DIM_R, STYLE.TEXT_DIM_G, STYLE.TEXT_DIM_B, 0.35)
         clearLabel:SetPoint("CENTER")
         clearLabel:SetText("x")
         clearBtn:SetScript("OnEnter", function() clearLabel:SetTextColor(1, 1, 1, 1) end)
-        clearBtn:SetScript("OnLeave", function() clearLabel:SetTextColor(TEXT_DIM_R, TEXT_DIM_G, TEXT_DIM_B, 0.35) end)
+        clearBtn:SetScript("OnLeave", function() clearLabel:SetTextColor(STYLE.TEXT_DIM_R, STYLE.TEXT_DIM_G, STYLE.TEXT_DIM_B, 0.35) end)
         clearBtn:SetScript("OnClick", function()
             editBox:SetText("")
             editBox:ClearFocus()
         end)
 
         -- Border hover effect
-        searchFrame:SetScript("OnEnter", function() searchBrd:SetColor(BORDER_R, BORDER_G, BORDER_B, 0.15) end)
-        searchFrame:SetScript("OnLeave", function() searchBrd:SetColor(BORDER_R, BORDER_G, BORDER_B, 0.10) end)
-        editBox:SetScript("OnEditFocusGained", function() searchBrd:SetColor(BORDER_R, BORDER_G, BORDER_B, 0.15) end)
-        editBox:SetScript("OnEditFocusLost", function() searchBrd:SetColor(BORDER_R, BORDER_G, BORDER_B, 0.10) end)
+        searchFrame:SetScript("OnEnter", function() searchBrd:SetColor(STYLE.BORDER_R, STYLE.BORDER_G, STYLE.BORDER_B, 0.15) end)
+        searchFrame:SetScript("OnLeave", function() searchBrd:SetColor(STYLE.BORDER_R, STYLE.BORDER_G, STYLE.BORDER_B, 0.10) end)
+        editBox:SetScript("OnEditFocusGained", function() searchBrd:SetColor(STYLE.BORDER_R, STYLE.BORDER_G, STYLE.BORDER_B, 0.15) end)
+        editBox:SetScript("OnEditFocusLost", function() searchBrd:SetColor(STYLE.BORDER_R, STYLE.BORDER_G, STYLE.BORDER_B, 0.10) end)
 
         local searchDebounceTimer
         editBox:SetScript("OnTextChanged", function(self, userInput)
@@ -12931,7 +13001,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "9.3.1"
+EllesmereUI.VERSION = "9.3.3"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -13830,8 +13900,9 @@ initFrame:SetScript("OnEvent", function(self, event)
         -- Skin our custom buttons the same way as pooled Blizzard buttons
         if _reskinMenu then
             for _, customBtn in ipairs({ btn, unlockBtn }) do
-                for j = 1, select("#", customBtn:GetRegions()) do
-                    local r = select(j, customBtn:GetRegions())
+                local regions = { customBtn:GetRegions() }
+                for j = 1, #regions do
+                    local r = regions[j]
                     if r and r:IsObjectType("Texture") and r ~= customBtn:GetFontString() then
                         r:SetAlpha(0)
                     end
@@ -14730,7 +14801,7 @@ function EllesmereUI.IsPartyModeActive()
 end
 do
     local callbacks = {}
-    local pending, regenF = false, nil
+    local pending = false
     function EllesmereUI.RegisterVisEdge(fn)
         if type(fn) == "function" then callbacks[#callbacks + 1] = fn end
     end
@@ -14741,14 +14812,7 @@ do
     end
     function EllesmereUI.FireVisEdge()
         if InCombatLockdown() then
-            if not regenF then
-                regenF = CreateFrame("Frame")
-                regenF:SetScript("OnEvent", function(self)
-                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                    EllesmereUI.FireVisEdge()
-                end)
-            end
-            regenF:RegisterEvent("PLAYER_REGEN_ENABLED")
+            EllesmereUI.CombatQueue.Defer("FireVisEdge", EllesmereUI.FireVisEdge)
         end
         -- Coalesced and deferred one frame: a clean execution context, and a
         -- toggle that stops and restarts in one frame costs one pass.

@@ -4,7 +4,6 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local MEDIA = ns.MEDIA
 local K = ns.BlockKit
 
 -- Upvalues
@@ -44,7 +43,7 @@ ns.BlockFactories.bags = function(blockCfg, slot, content, barCtx)
     -- BAG_UPDATE_DELAYED: one event per batch of bag changes, not one per bag.
     inst.events = { "BAG_UPDATE_DELAYED", "PLAYER_ENTERING_WORLD" }
 
-    local BAG_TEX = MEDIA .. "lootbag.png"
+    local BAG_TEX = ns.MICROMENU_MEDIA .. "menu-bags.png"
     local mouseOver = false
 
     local function D() return blockCfg.settings or {} end

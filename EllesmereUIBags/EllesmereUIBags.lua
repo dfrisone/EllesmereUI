@@ -3267,6 +3267,7 @@ local function GetOrCreateBagSlot(idx)
     local btn = CreateFrame("Button", nil, slotParent)
     btn:SetAllPoints(slotParent)
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:RegisterForDrag("LeftButton")
     btn.icon = btn:CreateTexture(nil, "ARTWORK")
     local z = BP().bagItemIconZoom or 0.08
     btn.icon:SetTexCoord(z, 1 - z, z, 1 - z)
@@ -3278,18 +3279,48 @@ local function GetOrCreateBagSlot(idx)
     CreateInsetBorder(btn)
     SetInsetBorderColor(btn, 0.25, 0.25, 0.25, 1)
 
-    -- Drag-and-drop: equip a bag into this slot
+    -- Drag-and-drop: equip a bag into this slot, or swap it with the
+    -- equipped bag on the cursor
     local function TrySwapBag(self)
         if InCombatLockdown() then return end
         if not CursorHasItem() then return end
         local bagID = self:GetID()
         if bagID == 0 then return end  -- can't replace backpack
-        local invID = C_Container.ContainerIDToInventoryID(bagID)
-        PickupInventoryItem(invID)
+        PutItemInBag(C_Container.ContainerIDToInventoryID(bagID))
         EUI_Bags._pendingBagSwap = true
     end
     btn:SetScript("OnReceiveDrag", TrySwapBag)
     btn:HookScript("OnClick", TrySwapBag)
+    -- Drag an equipped bag out of its slot (drop it on another slot to swap)
+    btn:SetScript("OnDragStart", function(self)
+        if InCombatLockdown() then return end
+        local bagID = self:GetID()
+        if bagID == 0 then return end  -- the backpack can't be moved
+        PickupBagFromSlot(C_Container.ContainerIDToInventoryID(bagID))
+        EUI_Bags._pendingBagSwap = true
+    end)
+
+    -- Tooltip: bag name + used/total slots (computed live on hover)
+    btn:SetScript("OnEnter", function(self)
+        SetInsetBorderColor(self, 1, 1, 1, 1)
+        local bagIdx = self:GetID()
+        local bName
+        if bagIdx == 0 then
+            bName = "Backpack"
+        else
+            local bLink = GetInventoryItemLink("player", C_Container.ContainerIDToInventoryID(bagIdx))
+            bName = bLink and GetItemInfo(bLink) or EUI.Lf("Bag %1$d", bagIdx)
+        end
+        local bTotal = C_Container.GetContainerNumSlots(bagIdx)
+        local bFree = C_Container.GetContainerNumFreeSlots(bagIdx)
+        local tip = bName
+        if bTotal > 0 then tip = tip .. "  (" .. (bTotal - bFree) .. "/" .. bTotal .. ")" end
+        EUI.ShowWidgetTooltip(self, tip)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        SetInsetBorderColor(self, self._bdrR, self._bdrG, self._bdrB, 1)
+        EUI.HideWidgetTooltip()
+    end)
 
     bagSlots[idx] = btn
     return btn
@@ -7657,33 +7688,9 @@ function EUI_BagsWindow:RefreshBags()
         SetInsetBorderColor(btn, bdrR, bdrG, bdrB, 1)
         btn._bdrR, btn._bdrG, btn._bdrB = bdrR, bdrG, bdrB
 
-        -- Tooltip: bag name + free/total slots (computed live on hover)
-        local bagIdx = i
-        btn:SetScript("OnEnter", function(self)
-            SetInsetBorderColor(self, 1, 1, 1, 1)
-            if EUI.ShowWidgetTooltip then
-                local bName
-                if bagIdx == 0 then
-                    bName = "Backpack"
-                else
-                    local bInvID = C_Container.ContainerIDToInventoryID(bagIdx)
-                    local bLink = GetInventoryItemLink("player", bInvID)
-                    bName = bLink and GetItemInfo(bLink) or EUI.Lf("Bag %1$d", bagIdx)
-                end
-                local bTotal = C_Container.GetContainerNumSlots(bagIdx)
-                local bFree = C_Container.GetContainerNumFreeSlots(bagIdx)
-                local tip = bName
-                if bTotal > 0 then tip = tip .. "  (" .. (bTotal - bFree) .. "/" .. bTotal .. ")" end
-                EUI.ShowWidgetTooltip(self, tip)
-            end
-        end)
-        btn:SetScript("OnLeave", function(self)
-            SetInsetBorderColor(self, self._bdrR, self._bdrG, self._bdrB, 1)
-            EUI.HideWidgetTooltip()
-        end)
-
+        -- Blizzard's bag bar order: backpack on the right, reagent bag on the left
         parent:ClearAllPoints()
-        parent:SetPoint("TOPLEFT", EUI_BagsWindow, "TOPLEFT", startX + (i * (SLOT_SIZE + SPACING)), startY)
+        parent:SetPoint("TOPLEFT", EUI_BagsWindow, "TOPLEFT", startX + ((BAG_COLUMNS - 1 - i) * (SLOT_SIZE + SPACING)), startY)
     end
     EUI_BagsWindow:SetSize((BAG_COLUMNS * (SLOT_SIZE + SPACING)) + 15, SLOT_SIZE + 20)
 end

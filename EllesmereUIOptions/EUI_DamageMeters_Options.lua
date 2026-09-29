@@ -301,8 +301,9 @@ initFrame:SetScript("OnEvent", function(self)
             suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
             suffix:SetTextColor(1, 1, 1, 0.35)
             local rrLabel
-            for i = 1, rgn:GetNumRegions() do
-                local reg = select(i, rgn:GetRegions())
+            local regions = { rgn:GetRegions() }
+            for i = 1, #regions do
+                local reg = regions[i]
                 if reg and reg.GetText and EllesmereUI.EnKey(reg:GetText()) == "Refresh Rate" then
                     rrLabel = reg
                     break
@@ -1084,8 +1085,9 @@ initFrame:SetScript("OnEvent", function(self)
             suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
             suffix:SetTextColor(1, 1, 1, 0.35)
             local hnLabel
-            for i = 1, rgn:GetNumRegions() do
-                local reg = select(i, rgn:GetRegions())
+            local regions = { rgn:GetRegions() }
+            for i = 1, #regions do
+                local reg = regions[i]
                 if reg and reg.GetText and EllesmereUI.EnKey(reg:GetText()) == "Hide Rank Numbers" then
                     hnLabel = reg
                     break

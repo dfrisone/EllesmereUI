@@ -375,8 +375,9 @@ local function SuppressItemButtonChrome(itemFrame)
         SuppressTexture(itemFrame:GetHighlightTexture())
     end
 
-    for i = 1, select("#", itemFrame:GetRegions()) do
-        local region = select(i, itemFrame:GetRegions())
+    local regions = { itemFrame:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") and region ~= itemFrame.Icon and not region._euiOwned then
             SuppressTexture(region)
         end

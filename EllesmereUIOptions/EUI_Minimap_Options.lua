@@ -489,8 +489,9 @@ initFrame:SetScript("OnEvent", function(self)
             suffix:SetFont(EllesmereUI.EXPRESSWAY, 11, "")
             suffix:SetTextColor(1, 1, 1, 0.35)
             local rzLabel
-            for i = 1, rgn:GetNumRegions() do
-                local reg = select(i, rgn:GetRegions())
+            local regions = { rgn:GetRegions() }
+            for i = 1, #regions do
+                local reg = regions[i]
                 if reg and reg.GetText and EllesmereUI.EnKey(reg:GetText()) == "Reset Zoom" then
                     rzLabel = reg
                     break
@@ -736,10 +737,11 @@ initFrame:SetScript("OnEvent", function(self)
         end
         y = y - h
 
-        -- Friends Tooltip Cap | Custom Tooltip Size
-        _, h = W:DualRow(parent, y,
+        -- Friends Tooltip Cap (+ cog: Show Notes) | Custom Tooltip Size
+        local friendsCapRow
+        friendsCapRow, h = W:DualRow(parent, y,
             { type="slider", text="Friends Tooltip Cap", min=0, max=30, step=1,
-              tooltip="Max rows per section in the Friends Online tooltip (0 = the 30-row max).",
+              tooltip="Max rows per section in the Friends Online tooltip (0 = the 30-row max). The cog can show each note under its row.",
               getValue=function() local m = MinimapDB(); return m and m.friendsMaxRows or 0 end,
               setValue=function(v)
                 local m = MinimapDB(); if not m then return end
@@ -753,6 +755,21 @@ initFrame:SetScript("OnEvent", function(self)
                 m.customTooltipScale = v
               end }
         );  y = y - h
+        -- Inline cog on Friends Tooltip Cap: Show Notes
+        if not EllesmereUI._prebuilding then
+            EllesmereUI.BuildInlineCog(friendsCapRow._leftRegion, {
+                title = "Friends Tooltip",
+                rows = {
+                    { type = "toggle", label = "Show Notes",
+                      tooltip = "Shows each guild or friend note on a second line under its row. The tooltip gets taller.",
+                      get = function() local m = MinimapDB(); return m and m.friendsShowNotes or false end,
+                      set = function(v)
+                          local m = MinimapDB(); if not m then return end
+                          m.friendsShowNotes = v
+                      end },
+                },
+            })
+        end
 
         -- Shared row-position choices (QoL button row + Blizzard element row).
         -- The two rows are mutually exclusive per position: a value picked on

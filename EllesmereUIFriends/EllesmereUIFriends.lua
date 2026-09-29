@@ -4,8 +4,10 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  native ScrollBox and buttons: no custom DataProvider, no friend groups.
 -------------------------------------------------------------------------------
 local ADDON_NAME = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
-EllesmereUI._ModuleNS[ADDON_NAME] = select(2, ...)  -- LOD options files read this module ns via the registry
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+local ns = select(2, ...)
+EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
+ns.CombatQueue = EllesmereUI.NewCombatQueue(CreateFrame("Frame"))
 
 local EBS = EllesmereUI.Lite.NewAddon("EllesmereUIFriends")
 
@@ -90,29 +92,18 @@ end
 -------------------------------------------------------------------------------
 --  Combat safety
 -------------------------------------------------------------------------------
-local pendingApply = false
 local ApplyAll  -- forward declaration
 
-local combatFrame = CreateFrame("Frame")
-combatFrame:SetScript("OnEvent", function(self)
-    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-    if pendingApply then
-        pendingApply = false
-        ApplyAll()
-    end
-end)
-
--- Regen listener is armed only while an apply is pending: zero cost otherwise.
+-- Keyed queue entry: repeat requests before regen collapse into one apply.
 local function QueueApplyAll()
-    if pendingApply then return end
-    pendingApply = true
-    combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    ns.CombatQueue.Defer("ApplyAll", ApplyAll)
 end
 
 local function StripTextures(f)
     if not f then return end
-    for i = 1, select("#", f:GetRegions()) do
-        local region = select(i, f:GetRegions())
+    local regions = { f:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region:IsObjectType("Texture") then
             region:SetAlpha(0)
         end
@@ -134,8 +125,9 @@ local function SkinRaidTabButton(btn)
     if not btn or GetFFD(btn).btnSkinned then return end
     GetFFD(btn).btnSkinned = true
     local fontPath = EllesmereUI.GetFontPath("friends") or STANDARD_TEXT_FONT
-    for i = 1, select("#", btn:GetRegions()) do
-        local region = select(i, btn:GetRegions())
+    local regions = { btn:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") then
             region:SetTexture("")
             region:SetAlpha(0)
@@ -207,8 +199,9 @@ local function SkinCheckbox(checkbox)
     if checkbox.SetPushedTexture then checkbox:SetPushedTexture("") end
     if checkbox.SetHighlightTexture then checkbox:SetHighlightTexture("") end
     if checkbox.SetDisabledTexture then checkbox:SetDisabledTexture("") end
-    for i = 1, select("#", checkbox:GetRegions()) do
-        local region = select(i, checkbox:GetRegions())
+    local regions = { checkbox:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") then
             region:SetTexture("")
         end
@@ -226,8 +219,9 @@ local function SkinRaidGroup(group)
     local fontPath = EllesmereUI.GetFontPath("friends") or STANDARD_TEXT_FONT
     local ar, ag, ab = EG.r, EG.g, EG.b
     local groupName = group:GetName()
-    for i = 1, select("#", group:GetRegions()) do
-        local region = select(i, group:GetRegions())
+    local regions = { group:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") then
             region:SetTexture("")
         end
@@ -244,8 +238,9 @@ local function SkinRaidGroup(group)
     end
     local labelFrame = _G[groupName .. "Label"]
     if labelFrame then
-        for i = 1, select("#", labelFrame:GetRegions()) do
-            local region = select(i, labelFrame:GetRegions())
+        local regions2 = { labelFrame:GetRegions() }
+        for i = 1, #regions2 do
+            local region = regions2[i]
             if region and region:IsObjectType("FontString") then
                 EllesmereUI.PrimeFontShadow(region, true)
                 region:SetFont(fontPath, 10, "")
@@ -265,8 +260,9 @@ local function SkinRaidSlot(slot)
     if not slot or GetFFD(slot).skinned then return end
     GetFFD(slot).skinned = true
     local fontPath = EllesmereUI.GetFontPath("friends") or STANDARD_TEXT_FONT
-    for i = 1, select("#", slot:GetRegions()) do
-        local region = select(i, slot:GetRegions())
+    local regions = { slot:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") then
             region:SetTexture("")
         end
@@ -281,8 +277,9 @@ local function SkinRaidSlot(slot)
         slot:SetBackdropColor(0.045, 0.045, 0.05, 0.9)
         slot:SetBackdropBorderColor(0.15, 0.15, 0.15, 0.7)
     end
-    for i = 1, select("#", slot:GetRegions()) do
-        local region = select(i, slot:GetRegions())
+    local regions2 = { slot:GetRegions() }
+    for i = 1, #regions2 do
+        local region = regions2[i]
         if region and region:IsObjectType("FontString") then
             region:SetFont(fontPath, 9, "")
         end
@@ -299,8 +296,9 @@ local function SkinRaidGroupButton(btn)
     if not btn or GetFFD(btn).skinned then return end
     GetFFD(btn).skinned = true
     local fontPath = EllesmereUI.GetFontPath("friends") or STANDARD_TEXT_FONT
-    for i = 1, select("#", btn:GetRegions()) do
-        local region = select(i, btn:GetRegions())
+    local regions = { btn:GetRegions() }
+    for i = 1, #regions do
+        local region = regions[i]
         if region and region:IsObjectType("Texture") then
             region:SetTexture("")
         end
@@ -315,8 +313,9 @@ local function SkinRaidGroupButton(btn)
         btn:SetBackdropColor(0.06, 0.06, 0.07, 0.95)
         btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.9)
     end
-    for i = 1, select("#", btn:GetRegions()) do
-        local region = select(i, btn:GetRegions())
+    local regions2 = { btn:GetRegions() }
+    for i = 1, #regions2 do
+        local region = regions2[i]
         if region and region:IsObjectType("FontString") then
             region:SetFont(fontPath, 9, "")
         end
@@ -364,11 +363,13 @@ local function SkinRaidTab()
     end
     local raidFrame = _G.RaidFrame
     if raidFrame then
-        for i = 1, select("#", raidFrame:GetChildren()) do
-            local child = select(i, raidFrame:GetChildren())
+        local children = { raidFrame:GetChildren() }
+        for i = 1, #children do
+            local child = children[i]
             if child then
-                for j = 1, select("#", child:GetRegions()) do
-                    local region = select(j, child:GetRegions())
+                local regions = { child:GetRegions() }
+                for j = 1, #regions do
+                    local region = regions[j]
                     if region and region:IsObjectType("Texture") then
                         local tex = region:GetTexture()
                         if tex and type(tex) == "string" then
@@ -609,24 +610,6 @@ local function GetFriendClassFile(bnetInfo, wowInfo)
         return classFileByLocalName[wowInfo.className]
     end
     return nil
-end
-
--- Group tag ||EUI:GroupName|| in Blizzard friend notes; display only, stripped.
-local EUI_NOTE_TAG = "||EUI:"
-local EUI_NOTE_END = "||"
-
-local function ParseGroupFromNote(note)
-    if not note or note == "" then return nil, note end
-    local tagStart = note:find(EUI_NOTE_TAG, 1, true)
-    if not tagStart then return nil, note end
-    local groupStart = tagStart + #EUI_NOTE_TAG
-    local tagEnd = note:find(EUI_NOTE_END, groupStart, true)
-    if not tagEnd then return nil, note end
-    local group = note:sub(groupStart, tagEnd - 1)
-    local clean = note:sub(1, tagStart - 1)
-    clean = clean:match("^(.-)%s*$") or clean
-    if group == "" then return nil, clean end
-    return group, clean
 end
 
 local OFFLINE_ICON = "Interface\\AddOns\\EllesmereUIFriends\\Media\\offline.png"
@@ -940,16 +923,10 @@ local function PostUpdateFriendButton(button)
         local userNote
         if button.buttonType == FRIENDS_BUTTON_TYPE_BNET then
             local cached = _friendCache[button.id]
-            if cached and cached.note then
-                local _, clean = ParseGroupFromNote(cached.note)
-                if clean and clean ~= "" then userNote = clean end
-            end
+            if cached then userNote = EllesmereUI.StripFriendNoteTag(cached.note) end
         elseif button.buttonType == FRIENDS_BUTTON_TYPE_WOW then
             local cached = _friendCache[button.id + _FC_WOW_OFFSET]
-            if cached and cached.notes then
-                local _, clean = ParseGroupFromNote(cached.notes)
-                if clean and clean ~= "" then userNote = clean end
-            end
+            if cached then userNote = EllesmereUI.StripFriendNoteTag(cached.notes) end
         end
         if userNote then
             if origInfo ~= "" then
@@ -1677,8 +1654,9 @@ local function SkinFriendsFrame()
     for i = 1, frame.numTabs or 4 do
         local tab = _G["FriendsFrameTab" .. i]
         if tab then
-            for j = 1, select("#", tab:GetRegions()) do
-                local region = select(j, tab:GetRegions())
+            local regions = { tab:GetRegions() }
+            for j = 1, #regions do
+                local region = regions[j]
                 if region and region:IsObjectType("Texture") then
                     region:SetTexture("")
                     if region.SetAtlas then region:SetAtlas("") end
@@ -1980,13 +1958,15 @@ local function SkinFriendsFrame()
     local bnetFrame = _G.FriendsFrameBattlenetFrame
     if bnetFrame then
         StripTextures(bnetFrame)
-        for i = 1, select("#", bnetFrame:GetChildren()) do
-            local child = select(i, bnetFrame:GetChildren())
+        local children = { bnetFrame:GetChildren() }
+        for i = 1, #children do
+            local child = children[i]
             child:SetAlpha(0)
             child:EnableMouse(false)
         end
-        for i = 1, select("#", bnetFrame:GetRegions()) do
-            local region = select(i, bnetFrame:GetRegions())
+        local regions = { bnetFrame:GetRegions() }
+        for i = 1, #regions do
+            local region = regions[i]
             if region:IsObjectType("FontString") then
                 region:SetAlpha(0)
             end
@@ -2026,8 +2006,9 @@ local function SkinFriendsFrame()
         if not tabSystem then return end
 
         local blizSubTabs = {}
-        for i = 1, select("#", tabSystem:GetChildren()) do
-            local st = select(i, tabSystem:GetChildren())
+        local children = { tabSystem:GetChildren() }
+        for i = 1, #children do
+            local st = children[i]
             if st and st:IsObjectType("Button") then
                 local text = st:GetFontString()
                 local name = text and text:GetText() or ("Tab " .. i)

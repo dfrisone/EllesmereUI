@@ -562,7 +562,7 @@ ns.BlockFactories.durability = function(blockCfg, slot, content, barCtx)
 
     return MakeStatBlock(blockCfg, slot, content, barCtx, {
         hbPrefix = "durability",
-        texture  = MEDIA .. "forge.png",
+        texture  = ns.MICROMENU_MEDIA .. "menu-professions.png",
         iconExtra = 7,
         -- Durability only moves on damage/repair edges the game announces, so
         -- the block samples on those events alone -- no heartbeat, and with no

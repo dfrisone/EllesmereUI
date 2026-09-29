@@ -443,6 +443,7 @@ function ns.CC_MergeComplementarySpellBindings(bindings)
                 combined.harmfulSpell = harmful.spell
                 combined.harmfulSpellID = harmful.spellID
                 combined.harmfulIcon = harmful.icon
+                combined.harmfulRankPinned = harmful.rankPinned
                 combined.hoverFriendly = true
                 combined.hoverEnemy = true
                 combined.smartRez = friendly.smartRez or harmful.smartRez
@@ -727,19 +728,113 @@ local function ResolveHarmfulSpellName(binding)
     return binding.harmfulSpell
 end
 
+-- WoW Forever spell ranks: /cast by name always casts the highest rank the
+-- character knows, so a binding picked from a LOWER rank (binding.rankPinned,
+-- its spellID is that rank; harmfulRankPinned for a merged harmful half) casts
+-- through a hidden per-rank proxy button instead: CastSpellByID on the exact
+-- rank, the path Blizzard's own rank flyout takes, reached by a
+-- "/click [conditions] <proxy>" line so every macro condition still applies.
+-- A binding picked from the top rank stays unpinned and follows the highest
+-- rank as the character learns more. Never set and never read off Forever.
+local RANKS = EllesmereUI.IS_FOREVER == true
+local rankProxies = {}
+local function PinnedRankID(binding, harmful)
+    if not RANKS then return nil end
+    local id
+    if harmful then
+        id = binding.harmfulRankPinned and binding.harmfulSpellID
+    else
+        id = binding.rankPinned and binding.spellID
+    end
+    if type(id) == "number" and id > 0 then return id end
+    return nil
+end
+
+-- The proxy's global name is deterministic, so a macro can name it before the
+-- button exists. Built out of combat only; every caller writes secure
+-- attributes, which are out-of-combat writes themselves.
+local function RankProxyName(id)
+    local name = "EUIClickCastRank" .. id
+    if not rankProxies[id] and not InCombatLockdown() then
+        local p = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate")
+        p:SetSize(1, 1)
+        p:SetAlpha(0)
+        p:EnableMouse(false)
+        p:RegisterForClicks("AnyUp")
+        p:SetAttribute("type", "spell")
+        for i = 1, 5 do p:SetAttribute("type" .. i, "spell") end
+        p:SetAttribute("spell", id)
+        p:SetAttribute("unit", "mouseover")
+        -- Act on the up-click the /click delivers, whatever the cast-on-key-down setting.
+        p:SetAttribute("useOnKeyDown", false)
+        rankProxies[id] = p
+    end
+    return name
+end
+
+-- One cast line for a spell binding (harmful = its merged harmful half) under
+-- the bracketed condition string condStr: /cast by name, or /click to the
+-- rank proxy while that half is pinned to a rank. Nil when there is no spell.
+local function SpellCastLine(binding, condStr, harmful)
+    local id = PinnedRankID(binding, harmful)
+    if id then return "/click " .. condStr .. " " .. RankProxyName(id) end
+    local name
+    if harmful then name = ResolveHarmfulSpellName(binding) else name = ResolveCastSpellName(binding) end
+    if not name then return nil end
+    return "/cast " .. condStr .. " " .. name
+end
+
+-- The rank a pinned WoW Forever binding casts ("Rank 2"), for display; nil for
+-- every other binding and while the spell's text is not loaded.
+function ns.CC_GetBindingRankText(b)
+    local id = b and b.type == "spell" and PinnedRankID(b)
+    if not id then return nil end
+    local sub = C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(id)
+    if sub and sub ~= "" then return sub end
+    return nil
+end
+
+-- The "already bound" key of a spell picker entry or binding: a pinned WoW
+-- Forever rank dims only its own rank, anything else its name.
+function ns.CC_SpellBoundKey(id, name, pinned)
+    if RANKS and pinned and id then return "#" .. id end
+    return name
+end
+
+-- True when a picker entry is already bound: by its own key, or (WoW Forever)
+-- by a binding pinned to exactly this rank -- bindings are account-wide, so
+-- another character's lower rank can be this one's top rank.
+function ns.CC_IsSpellBound(set, id, name, lowRank)
+    return set[ns.CC_SpellBoundKey(id, name, lowRank)] or (RANKS and id and set["#" .. id]) or false
+end
+
+-- Picker tooltip for a WoW Forever ranked spell entry; false when the entry
+-- carries no rank (the caller keeps its own tooltip, if any).
+function ns.CC_RankTip(owner, item)
+    if not (item and (item.lowRank or item.ranked)) then return false end
+    local text
+    if item.lowRank then
+        text = item.rankText and (item.name .. " (" .. item.rankText .. ")") or item.name
+    else
+        text = item.name .. "\n" .. EllesmereUI.L("Always casts your highest rank.")
+    end
+    EllesmereUI.ShowWidgetTooltip(owner, text)
+    return true
+end
+
 local function BuildReactionMacroText(binding, guard)
     local lines = {}
     local function AddAction(part, reaction)
         if part.type == "spell" then
-            local name = ResolveCastSpellName(part)
-            if not name then return end
             local conds = { "@mouseover", reaction }
             if not IsRezSpellBinding(part) then
                 conds[#conds + 1] = "exists"
                 conds[#conds + 1] = "nodead"
             end
             if binding.oocOnly then conds[#conds + 1] = "nocombat" end
-            lines[#lines + 1] = "/cast [" .. table.concat(conds, ",") .. guard .. "] " .. name
+            local line = SpellCastLine(part, "[" .. table.concat(conds, ",") .. guard .. "]")
+            if not line then return end
+            lines[#lines + 1] = line
         elseif part.type == "item" then
             local target = part.itemSlot or part.itemName
             if not target then return end
@@ -834,7 +929,7 @@ local function BuildBaseMacroText(binding)
             local harmfulName = ResolveHarmfulSpellName(binding)
             if harmfulName then
                 local lines = {}
-                local function AddReactionLine(reaction, spellName)
+                local function AddReactionLine(reaction, harmful)
                     local reactionEnabled = (reaction == "help" and unitType ~= "harmful")
                         or (reaction == "harm" and unitType ~= "friendly")
                     if not reactionEnabled then return end
@@ -844,10 +939,11 @@ local function BuildBaseMacroText(binding)
                         reactionConds[#reactionConds + 1] = "nodead"
                     end
                     if binding.oocOnly then reactionConds[#reactionConds + 1] = "nocombat" end
-                    lines[#lines + 1] = "/cast [" .. table.concat(reactionConds, ",") .. guard .. "] " .. spellName
+                    lines[#lines + 1] = SpellCastLine(binding,
+                        "[" .. table.concat(reactionConds, ",") .. guard .. "]", harmful)
                 end
-                AddReactionLine("help", name)
-                AddReactionLine("harm", harmfulName)
+                AddReactionLine("help", false)
+                AddReactionLine("harm", true)
                 if #lines == 0 then return nil end
                 return table.concat(lines, "\n")
             end
@@ -873,7 +969,7 @@ local function BuildBaseMacroText(binding)
         if isRez and not isHC and #conds == 1 then
             return nil
         end
-        return "/cast [" .. table.concat(conds, ",") .. guard .. "] " .. name
+        return SpellCastLine(binding, "[" .. table.concat(conds, ",") .. guard .. "]")
     elseif binding.type == "macro" then
         local macroName = binding.macroName
         if not macroName then return nil end
@@ -949,6 +1045,9 @@ end
 local function BuildMacroText(binding)
     local base = BuildBaseMacroText(binding)
     if not binding.smartRez then return base end
+    -- A pinned WoW Forever rez rank is the rez itself: the by-name rez lines
+    -- would cast the top rank ahead of it on every dead target.
+    if PinnedRankID(binding) and IsRezSpellBinding(binding) then return base end
     -- Smart Rez never applies to non-cast bindings or the rez binding itself.
     if binding.type == "target" or binding.type == "menu" or binding.type == "dynamicrez" then
         return base
@@ -964,9 +1063,9 @@ local function BuildMacroText(binding)
     -- A plain spell binding produces no base macro (applied as a direct spell);
     -- convert it to a macro so the rez lines can lead, then cast on the same unit.
     if binding.type == "spell" then
-        local name = ResolveCastSpellName(binding)
-        if not name then return rezText end
-        return rezText .. "\n/cast [@mouseover,exists,nodead" .. guard .. "] " .. name
+        local line = SpellCastLine(binding, "[@mouseover,exists,nodead" .. guard .. "]")
+        if not line then return rezText end
+        return rezText .. "\n" .. line
     end
     return rezText
 end
@@ -1049,8 +1148,12 @@ function ns.CC_GetBindingName(b)
     return EllesmereUI.L("Unknown")
 end
 
--- Spell enumeration (class/spec spells, non-passive, non-general).
-function ns.CC_GetClassSpells()
+-- Spell enumeration (class/spec spells, non-passive, non-general). WoW Forever
+-- lists every rank of a spell as its own spellbook item and each keeps its entry
+-- (a lower rank can own a key of its own): a lower rank carries lowRank and its
+-- rank text, the top rank of a ranked spell carries ranked, and the ranks of one
+-- spell sort together, top rank first. topOnly drops the lower ranks.
+function ns.CC_GetClassSpells(topOnly)
     local spells = {}
     if not C_SpellBook then return spells end
     local bank = Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
@@ -1058,6 +1161,7 @@ function ns.CC_GetClassSpells()
 
     local numTabs = C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetNumSpellBookSkillLines() or 0
     local seen = {}
+    local lowNames = {} -- WoW Forever: names that have lower ranks
 
     for tab = 1, numTabs do
         local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(tab)
@@ -1080,7 +1184,27 @@ function ns.CC_GetClassSpells()
                                 local name = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
                                 local icon = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)
                                 if name then
-                                    spells[#spells + 1] = { id = sid, name = name, icon = icon }
+                                    local sp = { id = sid, name = name, icon = icon }
+                                    if RANKS then
+                                        if C_SpellBook.IsSpellBookItemLowRank
+                                            and C_SpellBook.IsSpellBookItemLowRank(si, bank) then
+                                            sp.lowRank = true
+                                        end
+                                        local info = C_SpellBook.GetSpellBookItemInfo
+                                            and C_SpellBook.GetSpellBookItemInfo(si, bank)
+                                        local sub = info and info.subName
+                                        if (not sub or sub == "") and C_Spell.GetSpellSubtext then
+                                            sub = C_Spell.GetSpellSubtext(sid)
+                                        end
+                                        if sub and sub ~= "" then
+                                            sp.rankText = sub
+                                            sp.rankNum = tonumber(sub:match("(%d+)"))
+                                        end
+                                    end
+                                    if not (topOnly and sp.lowRank) then
+                                        spells[#spells + 1] = sp
+                                    end
+                                    if sp.lowRank then lowNames[name] = true end
                                 end
                             end
                         end
@@ -1090,7 +1214,21 @@ function ns.CC_GetClassSpells()
         end
     end
 
-    table.sort(spells, function(a, b) return a.name < b.name end)
+    if not RANKS then
+        table.sort(spells, function(a, b) return a.name < b.name end)
+        return spells
+    end
+    for i = 1, #spells do
+        local sp = spells[i]
+        if not sp.lowRank and lowNames[sp.name] then sp.ranked = true end
+    end
+    table.sort(spells, function(a, b)
+        if a.name ~= b.name then return a.name < b.name end
+        if (a.lowRank or false) ~= (b.lowRank or false) then return not a.lowRank end
+        local ra, rb = a.rankNum or 0, b.rankNum or 0
+        if ra ~= rb then return ra > rb end
+        return a.id > b.id
+    end)
     return spells
 end
 
@@ -1316,7 +1454,10 @@ local function ResolveBinding(b)
     end
 
     if b.type == "spell" then
-        return "spell", ResolveCastSpellName(b), nil
+        -- A pinned WoW Forever rank goes by id: the secure spell action casts a
+        -- numeric attribute with CastSpellByID, so exactly that rank.
+        local rankID = PinnedRankID(b)
+        return "spell", rankID and tostring(rankID) or ResolveCastSpellName(b), nil
     elseif b.type == "macro" then
         local macroName = b.macroName
         if macroName then
@@ -1877,7 +2018,8 @@ function ns.CC_ApplyBindings()
             if aType == "spell" then
                 mt = BuildMacroText(hb.b)
                 if not mt then
-                    mt = "/cast [@mouseover" .. MOUNT_GUARD .. "] " .. (spellName or "")
+                    mt = SpellCastLine(hb.b, "[@mouseover" .. MOUNT_GUARD .. "]")
+                        or ("/cast [@mouseover" .. MOUNT_GUARD .. "] ")
                 end
             elseif aType == "macro" then
                 mt = macrotext or ""
@@ -2037,7 +2179,10 @@ local function FindKeyConflicts(keyStr, excludeBinding)
     local conflicts = {}
     ForEachKeySharer(excludeBinding, function(b)
         if not ns.CC_AreComplementaryReactionBindings(excludeBinding, b) and IsBindingKnown(b) then
-            conflicts[#conflicts + 1] = ns.CC_GetBindingName(b)
+            -- A pinned WoW Forever rank is listed with its rank.
+            local rank = ns.CC_GetBindingRankText(b)
+            conflicts[#conflicts + 1] = rank and (ns.CC_GetBindingName(b) .. " (" .. rank .. ")")
+                or ns.CC_GetBindingName(b)
         end
     end)
     return conflicts
@@ -2378,12 +2523,12 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
     -- Lookup sets for already-bound spells/macros/items (used to dim in popups + strip)
     local boundSpells, boundMacros, boundItems = {}, {}, {}
     for _, b in ipairs(GetGlobalBindings()) do
-        if b.spell then boundSpells[b.spell] = true end
+        if b.spell then boundSpells[ns.CC_SpellBoundKey(b.spellID, b.spell, b.rankPinned)] = true end
         if b.macroName then boundMacros[b.macroName] = true end
         if b.itemSlot then boundItems[b.itemSlot] = true end
     end
     for _, b in ipairs(GetSpecBindings()) do
-        if b.spell then boundSpells[b.spell] = true end
+        if b.spell then boundSpells[ns.CC_SpellBoundKey(b.spellID, b.spell, b.rankPinned)] = true end
         if b.macroName then boundMacros[b.macroName] = true end
         if b.itemSlot then boundItems[b.itemSlot] = true end
     end
@@ -2561,7 +2706,10 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
         keySub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
         keySub:SetPoint("RIGHT", tile, "RIGHT", -30, 0)
         keySub:SetJustifyH("LEFT"); keySub:SetWordWrap(false)
-        keySub:SetText(binding.key and ns.CC_FormatKey(binding.key) or EllesmereUI.L("Not Bound"))
+        -- A pinned WoW Forever rank names its rank beside the key.
+        local rankTxt = ns.CC_GetBindingRankText(binding)
+        keySub:SetText((binding.key and ns.CC_FormatKey(binding.key) or EllesmereUI.L("Not Bound"))
+            .. (rankTxt and ("  -  " .. rankTxt) or ""))
 
         -- A spell the character has not got right now dims when another binding
         -- took its key; the binding stays for the loadout that has it.
@@ -3276,7 +3424,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                 local iconFr = CreateFrame("Frame", nil, cell); iconFr:SetSize(QB_ICON, QB_ICON)
                 local iconTx = iconFr:CreateTexture(nil, "ARTWORK"); iconTx:SetAllPoints()
                 iconTx:SetTexCoord(0.08, 0.92, 0.08, 0.92); iconTx:SetTexture(item.icon or 134400)
-                local dimmed3 = (item.id and boundSpells[item.name])
+                local dimmed3 = (item.id and ns.CC_IsSpellBound(boundSpells, item.id, item.name, item.lowRank))
                     or (item.macroName and boundMacros[item.macroName])
                     or (item.itemSlot and boundItems[item.itemSlot])
                 if dimmed3 then iconTx:SetAlpha(0.3) end
@@ -3287,7 +3435,9 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                 if rht3[r] and item.name and item.name ~= "" then
                     cellLbl3 = MakeFont(cell, QB_LFONT, 1, 1, 1, dimmed3 and 0.3 or 0.7)
                     cellLbl3:SetPoint("TOP", cell, "TOP", 0, 0); cellLbl3:SetWidth(QB_CELL + 4)
-                    cellLbl3:SetJustifyH("CENTER"); cellLbl3:SetWordWrap(false); cellLbl3:SetText(item.name)
+                    -- A WoW Forever lower rank labels itself by its rank.
+                    cellLbl3:SetJustifyH("CENTER"); cellLbl3:SetWordWrap(false)
+                    cellLbl3:SetText(item.lowRank and item.rankText or item.name)
                     iconFr:SetPoint("TOP", cellLbl3, "BOTTOM", 0, -QB_LGAP)
                 else
                     iconFr:SetPoint("TOP", cell, "TOP", 0, 0)
@@ -3297,12 +3447,14 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                     if cellLbl3 then cellLbl3:SetAlpha(1) end
                     hoveredItem = item
                     cell:EnableKeyboard(true)
+                    ns.CC_RankTip(cell, item)
                 end)
                 cell:SetScript("OnLeave", function()
                     iconBd:Hide()
                     if cellLbl3 then cellLbl3:SetAlpha(dimmed3 and 0.3 or 0.7) end
                     hoveredItem = nil
                     cell:EnableKeyboard(false)
+                    if item.lowRank or item.ranked then EllesmereUI.HideWidgetTooltip() end
                 end)
                 -- Key press while hovering: bind this item to that key
                 cell:SetScript("OnKeyDown", function(self, key)
@@ -3315,7 +3467,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                     if hoveredItem.id then
                         binding = { type = "spell", spell = hoveredItem.name, spellID = hoveredItem.id,
                             icon = hoveredItem.icon, key = captured, enabled = true,
-                            hoverFriendly = true, hoverEnemy = true }
+                            hoverFriendly = true, hoverEnemy = true, rankPinned = hoveredItem.lowRank }
                     elseif hoveredItem.macroName then
                         binding = { type = "macro", macroName = hoveredItem.macroName,
                             icon = hoveredItem.icon, key = captured, enabled = true,
@@ -3329,7 +3481,8 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                         ns.CC_AddSpecBinding(binding)
                         if hoveredItem.macroName then boundMacros[hoveredItem.macroName] = true
                         elseif hoveredItem.itemSlot then boundItems[hoveredItem.itemSlot] = true
-                        else boundSpells[hoveredItem.name or ""] = true end
+                        else boundSpells[ns.CC_SpellBoundKey(hoveredItem.id, hoveredItem.name or "",
+                            hoveredItem.lowRank)] = true end
                         UpdateToggleQB()
                         RebuildPage()
                     end
@@ -3344,7 +3497,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                     if hoveredItem.id then
                         binding = { type = "spell", spell = hoveredItem.name, spellID = hoveredItem.id,
                             icon = hoveredItem.icon, key = captured, enabled = true,
-                            hoverFriendly = true, hoverEnemy = true }
+                            hoverFriendly = true, hoverEnemy = true, rankPinned = hoveredItem.lowRank }
                     elseif hoveredItem.macroName then
                         binding = { type = "macro", macroName = hoveredItem.macroName,
                             icon = hoveredItem.icon, key = captured, enabled = true,
@@ -3358,7 +3511,8 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                         ns.CC_AddSpecBinding(binding)
                         if hoveredItem.macroName then boundMacros[hoveredItem.macroName] = true
                         elseif hoveredItem.itemSlot then boundItems[hoveredItem.itemSlot] = true
-                        else boundSpells[hoveredItem.name or ""] = true end
+                        else boundSpells[ns.CC_SpellBoundKey(hoveredItem.id, hoveredItem.name or "",
+                            hoveredItem.lowRank)] = true end
                         UpdateToggleQB()
                         RebuildPage()
                     end
@@ -3549,7 +3703,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                 iconTex:SetAllPoints()
                 iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                 iconTex:SetTexture(item.icon or 134400)
-                local dimmed = (item.id and boundSpells[item.name])
+                local dimmed = (item.id and ns.CC_IsSpellBound(boundSpells, item.id, item.name, item.lowRank))
                     or (item.macroName and boundMacros[item.macroName])
                     or (item.itemSlot and boundItems[item.itemSlot])
                 if dimmed then iconTex:SetAlpha(0.3) end
@@ -3565,7 +3719,8 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                     cellLbl2 = MakeFont(cell, LFONT2, 1, 1, 1, dimmed and 0.3 or 0.7)
                     cellLbl2:SetPoint("TOP", cell, "TOP", 0, 0)
                     cellLbl2:SetWidth(CW2 + 4); cellLbl2:SetJustifyH("CENTER"); cellLbl2:SetWordWrap(false)
-                    cellLbl2:SetText(item.name)
+                    -- A WoW Forever lower rank labels itself by its rank.
+                    cellLbl2:SetText(item.lowRank and item.rankText or item.name)
                     iconFrame2:SetPoint("TOP", cellLbl2, "BOTTOM", 0, -LGAP2)
                 else
                     iconFrame2:SetPoint("TOP", cell, "TOP", 0, 0)
@@ -3574,10 +3729,12 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                 cell:SetScript("OnEnter", function()
                     iconBdr2:Show()
                     if cellLbl2 then cellLbl2:SetAlpha(1) end
+                    ns.CC_RankTip(cell, item)
                 end)
                 cell:SetScript("OnLeave", function()
                     iconBdr2:Hide()
                     if cellLbl2 then cellLbl2:SetAlpha(0.7) end
+                    if item.lowRank or item.ranked then EllesmereUI.HideWidgetTooltip() end
                 end)
                 cell:SetScript("OnClick", function() onItemClick(item); popup:Hide() end)
             end
@@ -3598,6 +3755,8 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
                         type = "spell", spell = item.name, spellID = item.id, icon = item.icon,
                         enabled = true, oocOnly = false, hovercast = false,
                         hoverFriendly = true, hoverEnemy = true,
+                        -- A WoW Forever lower rank keeps casting that rank.
+                        rankPinned = item.lowRank,
                     })
                     ns._ccSelSide = "spec"; ns._ccSelIndex = #(GetSpecBindings()); RebuildPage()
                 end)
@@ -3882,7 +4041,9 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
             elseif selectedBinding.type == "external" then typeStr = "Preset"
             end
             local tType = MakeFont(titleRow, 11, 1, 1, 1, 0.4)
-            tType:SetText(EllesmereUI.L(typeStr))
+            -- A pinned WoW Forever rank names its rank beside the type.
+            local rankTxt = ns.CC_GetBindingRankText(selectedBinding)
+            tType:SetText(EllesmereUI.L(typeStr) .. (rankTxt and ("  -  " .. rankTxt) or ""))
 
             local tName = MakeFont(titleRow, 15, 1, 1, 1, 0.9)
             tName:SetText(EllesmereUI.L(ns.CC_GetBindingName(selectedBinding)))
@@ -4168,7 +4329,9 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
             self:SetVerticalScroll(max(0, min(mx, s - delta * 30)))
         end)
 
-        local spells = ns.CC_GetClassSpells()
+        -- Icons only here: a WoW Forever spell shows its top rank alone (the
+        -- lower ranks are picked from the Add and Quickbind grids, which label them).
+        local spells = ns.CC_GetClassSpells(true)
         local stripY = 0
         for _, sp in ipairs(spells) do
             local cell = CreateFrame("Button", nil, stripChild)
@@ -4179,7 +4342,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
             iconTex:SetAllPoints()
             iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             iconTex:SetTexture(sp.icon or 134400)
-            local alreadyBound = boundSpells[sp.name]
+            local alreadyBound = ns.CC_IsSpellBound(boundSpells, sp.id, sp.name)
             if alreadyBound then iconTex:SetAlpha(0.3) end
 
             local iconBdr = CreateFrame("Frame", nil, cell)
@@ -4191,7 +4354,7 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
             cell:SetScript("OnEnter", function()
                 iconBdr:Show()
                 StripEnter()
-                EllesmereUI.ShowWidgetTooltip(cell, sp.name)
+                if not ns.CC_RankTip(cell, sp) then EllesmereUI.ShowWidgetTooltip(cell, sp.name) end
             end)
             cell:SetScript("OnLeave", function()
                 iconBdr:Hide()

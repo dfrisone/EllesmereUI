@@ -6,8 +6,9 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  context menu and static popup reskinning below.
 -------------------------------------------------------------------------------
 local ADDON_NAME = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS[ADDON_NAME] = select(2, ...)  -- LOD options files read this module ns via the registry
+EllesmereUI._ModuleNS[ADDON_NAME].CombatQueue = EllesmereUI.NewCombatQueue(CreateFrame("Frame"))
 
 -- External weak-keyed lookup table for frame state (prevents tainting Blizzard frames)
 local FFD = setmetatable({}, { __mode = "k" })
@@ -1355,8 +1356,9 @@ end
         for _, btn in ipairs(popupBtns) do
             if btn and not GetFFD(btn).skinned then
                 GetFFD(btn).skinned = true
-                for j = 1, select("#", btn:GetRegions()) do
-                    local r = select(j, btn:GetRegions())
+                local regions = { btn:GetRegions() }
+                for j = 1, #regions do
+                    local r = regions[j]
                     if r and r:IsObjectType("Texture") and r ~= btn:GetFontString() then
                         r:SetTexture(nil)
                         if r.SetAtlas then r:SetAtlas("") end
@@ -1426,8 +1428,9 @@ end
         local eb = popup.editBox or (popup.GetName and _G[popup:GetName() .. "EditBox"])
         if eb and not GetFFD(eb).skinned then
             GetFFD(eb).skinned = true
-            for j = 1, select("#", eb:GetRegions()) do
-                local r = select(j, eb:GetRegions())
+            local regions = { eb:GetRegions() }
+            for j = 1, #regions do
+                local r = regions[j]
                 if r and r:IsObjectType("Texture") then
                     r:SetTexture(nil)
                     if r.SetAtlas then r:SetAtlas("") end
@@ -1735,8 +1738,9 @@ end
                     local btn = dialog[btnName]
                     if btn then
                         -- Named Left/Middle/Right textures are swapped by C++ on mouse down, so SetTexture alone does not stick.
-                        for j = 1, select("#", btn:GetRegions()) do
-                            local r = select(j, btn:GetRegions())
+                        local regions = { btn:GetRegions() }
+                        for j = 1, #regions do
+                            local r = regions[j]
                             if r and r:IsObjectType("Texture") and not GetFFD(r).owned and r ~= btn:GetFontString() then
                                 r:SetAlpha(0)
                             end
@@ -1956,8 +1960,9 @@ end
         -- touched, same treatment as SkinQueuePopup's enterButton/leaveButton.
         local function SkinRoleCheckButton(btn)
             if not btn then return end
-            for j = 1, select("#", btn:GetRegions()) do
-                local r = select(j, btn:GetRegions())
+            local regions = { btn:GetRegions() }
+            for j = 1, #regions do
+                local r = regions[j]
                 if r and r:IsObjectType("Texture") and not GetFFD(r).owned and r ~= btn:GetFontString() then
                     r:SetAlpha(0)
                 end
@@ -2096,8 +2101,9 @@ do
         if qkb.BG then qkb.BG:SetAlpha(0) end
         if qkb.Border then qkb.Border:SetAlpha(0) end
         if qkb.Bg then qkb.Bg:SetAlpha(0) end
-        for i = 1, select("#", qkb:GetRegions()) do
-            local r = select(i, qkb:GetRegions())
+        local regions = { qkb:GetRegions() }
+        for i = 1, #regions do
+            local r = regions[i]
             if r and r:IsObjectType("Texture") and not GetFFD(r).owned then
                 r:SetAlpha(0)
             end
@@ -2140,8 +2146,9 @@ do
             local btn = qkb[name]
             if btn and not GetFFD(btn).skinned then
                 GetFFD(btn).skinned = true
-                for j = 1, select("#", btn:GetRegions()) do
-                    local r = select(j, btn:GetRegions())
+                local regions2 = { btn:GetRegions() }
+                for j = 1, #regions2 do
+                    local r = regions2[j]
                     if r and r:IsObjectType("Texture") and not GetFFD(r).owned and r ~= btn:GetFontString() then
                         r:SetAlpha(0)
                     end
@@ -2249,8 +2256,9 @@ do
             local btn = dialog[btnName]
             if btn then
                 -- Re-stripped every show; Blizzard re-applies the art.
-                for j = 1, select("#", btn:GetRegions()) do
-                    local r = select(j, btn:GetRegions())
+                local regions = { btn:GetRegions() }
+                for j = 1, #regions do
+                    local r = regions[j]
                     if r and r:IsObjectType("Texture") and not GetFFD(r).owned and r ~= btn:GetFontString() then
                         r:SetAlpha(0)
                     end
@@ -2333,8 +2341,9 @@ do
 
         local desc = _G.LFGListApplicationDialogDescription
         if desc then
-            for i = 1, select("#", desc:GetRegions()) do
-                local r = select(i, desc:GetRegions())
+            local regions = { desc:GetRegions() }
+            for i = 1, #regions do
+                local r = regions[i]
                 if r and r:IsObjectType("Texture") and not GetFFD(r).owned then
                     r:SetAlpha(0)
                 end
@@ -2357,8 +2366,9 @@ do
             local btn = dialog[btnName]
             if btn and not GetFFD(btn).skinned then
                 GetFFD(btn).skinned = true
-                for j = 1, select("#", btn:GetRegions()) do
-                    local r = select(j, btn:GetRegions())
+                local regions = { btn:GetRegions() }
+                for j = 1, #regions do
+                    local r = regions[j]
                     if r and r:IsObjectType("Texture") and not GetFFD(r).owned and r ~= btn:GetFontString() then
                         r:SetAlpha(0)
                     end
@@ -2421,8 +2431,9 @@ do
 
         local RS = EllesmereUI.RESKIN
 
-        for i = 1, select("#", GameMenuFrame:GetRegions()) do
-            local r = select(i, GameMenuFrame:GetRegions())
+        local regions = { GameMenuFrame:GetRegions() }
+        for i = 1, #regions do
+            local r = regions[i]
             if r and r:IsObjectType("Texture") then r:SetAlpha(0) end
         end
         if GameMenuFrame.NineSlice then GameMenuFrame.NineSlice:SetAlpha(0) end
@@ -2430,8 +2441,9 @@ do
         -- Header: strip art, accent the title, nudge down.
         local header = GameMenuFrame.Header
         if header then
-            for i = 1, select("#", header:GetRegions()) do
-                local r = select(i, header:GetRegions())
+            local regions2 = { header:GetRegions() }
+            for i = 1, #regions2 do
+                local r = regions2[i]
                 if r and r:IsObjectType("Texture") then r:SetAlpha(0) end
             end
             local headerText = header.Text or (header.GetRegions and select(1, header:GetRegions()))
@@ -2483,8 +2495,9 @@ do
             for menuBtn in menu.buttonPool:EnumerateActive() do
                 if not GetFFD(menuBtn).skinned then
                     GetFFD(menuBtn).skinned = true
-                    for j = 1, select("#", menuBtn:GetRegions()) do
-                        local r = select(j, menuBtn:GetRegions())
+                    local regions2 = { menuBtn:GetRegions() }
+                    for j = 1, #regions2 do
+                        local r = regions2[j]
                         if r and r:IsObjectType("Texture") and r ~= menuBtn:GetFontString() then
                             r:SetAlpha(0)
                         end

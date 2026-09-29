@@ -1198,6 +1198,7 @@ local friendlyFrameCache = CreateFramePool("Frame", UIParent, nil, nil, false, f
     plate.leftArrow = plate:CreateTexture(nil, "OVERLAY")
     plate.leftArrow:SetTexture(ns.TARGET_ARROW_DIR .. _aSt.l .. ".png")
     plate.leftArrow:SetWidth(_aSt.w)
+    plate._arrowW = _aSt.w
     plate.leftArrow:SetPoint("TOP", plate.name, "LEFT", -(2 + _aSt.w / 2), 8)
     plate.leftArrow:SetPoint("BOTTOM", plate.name, "LEFT", -(2 + _aSt.w / 2), -8)
     plate.leftArrow:Hide()
@@ -1424,6 +1425,7 @@ function FriendlyFrame:ApplyTarget()
         self.rightArrow:SetVertexColor(acr, acg, acb)
         self.leftArrow:SetSize(st.w, 16)
         self.rightArrow:SetSize(st.w, 16)
+        self._arrowW = st.w
     end
     self.leftArrow:SetShown(showArrows or false)
     self.rightArrow:SetShown(showArrows or false)
@@ -1702,12 +1704,11 @@ end
 --  click hit-test rectangle to nothing via a large positive inset on every
 --  edge. An inset of 0 restores the natural (fully clickable) hit rect.
 --  The hit-test API is protected in combat, so we gate on InCombatLockdown and
---  retry once on combat end. The retry listener is only registered while a
---  change is actually pending, so this costs nothing when idle.
+--  retry once on combat end through the module combat queue, which costs
+--  nothing while no change is pending.
 -------------------------------------------------------------------------------
 local CLICK_THROUGH_INSET = 10000
 local clickThroughApplied = false
-local clickThroughRetry = CreateFrame("Frame")
 
 local function ApplyFriendlyClickThrough()
     if not (C_NamePlateManager and C_NamePlateManager.SetNamePlateHitTestInsets
@@ -1719,17 +1720,14 @@ local function ApplyFriendlyClickThrough()
     -- Never applied and feature is off: leave Blizzard's hit rect untouched.
     if not on and not clickThroughApplied then return end
     if InCombatLockdown() then
-        clickThroughRetry:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("FriendlyClickThrough", ApplyFriendlyClickThrough)
         return
     end
-    clickThroughRetry:UnregisterEvent("PLAYER_REGEN_ENABLED")
     local inset = on and CLICK_THROUGH_INSET or 0
     C_NamePlateManager.SetNamePlateHitTestInsets(Enum.NamePlateType.Friendly, inset, inset, inset, inset)
     clickThroughApplied = on
 end
 ns.UpdateFriendlyClickThrough = ApplyFriendlyClickThrough
-
-clickThroughRetry:SetScript("OnEvent", function() ApplyFriendlyClickThrough() end)
 
 -------------------------------------------------------------------------------
 --  Friendly player visibility CVars
@@ -1807,16 +1805,6 @@ local function RestoreFriendlyVis()
     end
 end
 
--- SetCVar on nameplate CVars is skipped in combat to avoid taint, so a zone
--- transition that lands mid-combat drops the whole visibility pass. Without a
--- retry that silently strands a follower-dungeon capture unclaimed and leaves
--- friendly plates hidden until the next transition, so re-run once combat ends.
-local visCVarRetry = CreateFrame("Frame")
-visCVarRetry:SetScript("OnEvent", function(self)
-    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-    ns.UpdateFriendlyNameplateSystem()
-end)
-
 -------------------------------------------------------------------------------
 --  System enable / disable  (called from toggle setValue and on login)
 -------------------------------------------------------------------------------
@@ -1838,7 +1826,6 @@ function ns.UpdateFriendlyNameplateSystem()
     -- Nameplate settings own them. Friendly NPC CVars are always managed because they
     -- have their own EUI toggle.
     if not InCombatLockdown() and SetCVar then
-        visCVarRetry:UnregisterEvent("PLAYER_REGEN_ENABLED")
         local fp = FP()
         local euiManagesPlayers = fp and (fp.showFriendlyPlayers ~= false)
         local _, iType = GetInstanceInfo()
@@ -1887,8 +1874,11 @@ function ns.UpdateFriendlyNameplateSystem()
             end
         end
     elseif SetCVar then
-        -- Skipped for combat: run the visibility pass again once it drops.
-        visCVarRetry:RegisterEvent("PLAYER_REGEN_ENABLED")
+        -- A zone transition that lands mid-combat drops the whole visibility
+        -- pass. Without a retry that silently strands a follower-dungeon
+        -- capture unclaimed and leaves friendly plates hidden until the next
+        -- transition, so re-run it once combat ends.
+        ns.CombatQueue.Defer("FriendlyVisibility", ns.UpdateFriendlyNameplateSystem)
     end
 
     if shouldEnable and not friendlyEnabled then

@@ -4,8 +4,10 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  Custom minimap skin and layout for EllesmereUI.
 -------------------------------------------------------------------------------
 local ADDON_NAME = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
-EllesmereUI._ModuleNS[ADDON_NAME] = select(2, ...)  -- LOD options files read this module ns via the registry
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+local ns = select(2, ...)
+EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
+ns.CombatQueue = EllesmereUI.NewCombatQueue(CreateFrame("Frame"))
 
 local EBS = EllesmereUI.Lite.NewAddon("EllesmereUIMinimap")
 
@@ -99,6 +101,7 @@ local defaults = {
             hideRaidDifficulty   = false,
             hideCraftingOrder    = false,
             friendsMaxRows       = 0,   -- 0 = no cap; else cap per section, show "...and N more"
+            friendsShowNotes     = false,  -- guild/friend note on a second line under each row
             hideExtraBtns        = { greatVault = false, portals = false, friendsOnline = false, groupButton = false },
             mouseoverExtraBtns   = false,  -- extra buttons only show on minimap mouseover
             greatVaultExtraInfo  = true,
@@ -187,22 +190,12 @@ end
 -------------------------------------------------------------------------------
 --  Combat safety
 -------------------------------------------------------------------------------
-local pendingApply = false
 local ApplyAll  -- forward declaration
 
+-- Keyed queue entry: repeat requests before regen collapse into one apply.
 local function QueueApplyAll()
-    if pendingApply then return end
-    pendingApply = true
+    ns.CombatQueue.Defer("ApplyAll", ApplyAll)
 end
-
-local combatFrame = CreateFrame("Frame")
-combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-combatFrame:SetScript("OnEvent", function()
-    if pendingApply then
-        pendingApply = false
-        ApplyAll()
-    end
-end)
 
 -------------------------------------------------------------------------------
 --  Minimap Skin
@@ -411,6 +404,33 @@ local function GetAddonBtnSize()
     return mp and mp.addonBtnSize or FLYOUT_BTN_SIZE
 end
 
+-- Raise popups an addon parents to its button after layout above the grid.
+function EBS._RaiseLateFlyoutChildren(btn)
+    if not flyoutPanel or btn:GetParent() ~= flyoutPanel then return end
+    local combat = InCombatLockdown()
+    local function raise(frame, level)
+        for _, child in ipairs({ frame:GetChildren() }) do
+            if not (combat and child:IsProtected()) then
+                child:SetFrameStrata("DIALOG")
+                child:SetFrameLevel(level)
+                raise(child, level + 1)
+            end
+        end
+    end
+    raise(btn, flyoutPanel:GetFrameLevel() + 6)
+end
+
+-- Keep the grid open for a press on anything parented under it (forbidden frames never).
+function EBS._MouseOverFlyoutChild(panel)
+    local focus = GetMouseFoci()[1]
+    while focus do
+        if focus:IsForbidden() then return false end
+        if focus == panel then return true end
+        focus = focus:GetParent()
+    end
+    return false
+end
+
 local function LayoutFlyoutButtons()
     if not flyoutPanel then return end
     local buttons = CollectFlyoutButtons()
@@ -489,6 +509,10 @@ local function LayoutFlyoutButtons()
         for _, child in ipairs({ btn:GetChildren() }) do
             child:SetFrameStrata("DIALOG")
             child:SetFrameLevel(flyoutPanel:GetFrameLevel() + 6)
+        end
+        if not GetFFD(btn).lateChildHook then
+            GetFFD(btn).lateChildHook = true
+            if btn:HasScript("OnClick") then btn:HookScript("OnClick", EBS._RaiseLateFlyoutChildren) end
         end
         local icon = btn.icon or btn.Icon
         if not icon then
@@ -589,7 +613,8 @@ local function EnsureFlyoutPanel()
             self:SetScript("OnUpdate", function(m)
                 if IsMouseButtonDown("LeftButton")
                    and not m:IsMouseOver()
-                   and not (flyoutToggle and flyoutToggle:IsMouseOver()) then
+                   and not (flyoutToggle and flyoutToggle:IsMouseOver())
+                   and not EBS._MouseOverFlyoutChild(m) then
                     m:Hide()
                 end
             end)
@@ -1637,15 +1662,6 @@ local function HideVaultTooltip()
     _vaultTT._fadeOutAG:Play()
 end
 
-local function ToggleGreatVault()
-    if not C_AddOns.IsAddOnLoaded("Blizzard_WeeklyRewards") then
-        C_AddOns.LoadAddOn("Blizzard_WeeklyRewards")
-    end
-    if WeeklyRewardsFrame then
-        WeeklyRewardsFrame:SetShown(not WeeklyRewardsFrame:IsShown())
-    end
-end
-
 local function SizeGreatVaultBtn(btn, showBg)
     local btnSz = GetInteractableBtnSize()
     btn:SetSize(btnSz, btnSz)
@@ -1698,7 +1714,7 @@ local function CreateGreatVaultBtn(parent)
     end)
     btn:SetScript("OnClick", function(self)
         if GetFFD(self).freeMoveJustDragged then return end
-        ToggleGreatVault()
+        EllesmereUI.ToggleGreatVault()
     end)
 
     -- Resting tint matches OnLeave state
@@ -1830,16 +1846,17 @@ local function GatherOnlineFriends()
     local guild, favorites, friends = {}, {}, {}
     local seenBNet = {}
     local myName = UnitName("player")
+    -- Notes are stored raw: the tooltip cleans only the rows it shows, and only with Show Notes on.
 
     if IsInGuild and IsInGuild() then
         local total = GetNumGuildMembers() or 0
         for i = 1, total do
-            local name, _, _, level, _, zone, _, _, online, _, classFile = GetGuildRosterInfo(i)
+            local name, _, _, level, _, zone, publicNote, _, online, _, classFile = GetGuildRosterInfo(i)
             if online and name then
                 local short = name:match("^([^%-]+)") or name
                 if short ~= myName then
                     -- Fix "Name-Realm-Realm" to "Name-Realm"
-                    guild[#guild + 1] = { name = short, full = EllesmereUI.BuildFullName(name) or name, class = classFile, zone = zone or "", level = level, kind = "guild" }
+                    guild[#guild + 1] = { name = short, full = EllesmereUI.BuildFullName(name) or name, class = classFile, zone = zone or "", level = level, note = publicNote, kind = "guild" }
                 end
             end
         end
@@ -1952,6 +1969,9 @@ local FTT_ROW_H   = 14
 local FTT_HDR_H   = 16
 local FTT_GAP     = 2
 local FTT_DIV_PAD = 5   -- padding above and below the divider line
+local FTT_NOTE_H  = 12  -- height of the optional note line under a row
+local FTT_NOTE_INDENT = 8
+local FTT_NOTE_MAX_W  = 260  -- longer notes truncate instead of widening the tooltip
 
 -- Hover-stable hide: small grace period so cursor can travel from button to tooltip
 local _fttHideToken = 0
@@ -2136,15 +2156,28 @@ local function EnsureFTTRow(idx)
             if _friendsTT then _friendsTT:Hide() end
         end
     end)
+    -- Name/zone are centred on the first line (not the button), so a note row can grow
+    -- the button downward without moving them.
     local nameFS = btn:CreateFontString(nil, "OVERLAY")
     nameFS:SetFont(FTT_FONT(), 10, "")
     nameFS:SetJustifyH("LEFT")
-    nameFS:SetPoint("LEFT", btn, "LEFT", 0, 0)
+    nameFS:SetPoint("LEFT", btn, "TOPLEFT", 0, -FTT_ROW_H / 2)
     local zoneFS = btn:CreateFontString(nil, "OVERLAY")
     zoneFS:SetFont(FTT_FONT(), 10, "")
     zoneFS:SetJustifyH("RIGHT")
-    zoneFS:SetPoint("RIGHT", btn, "RIGHT", 0, 0)
-    _friendsTTRows[idx] = { button = btn, name = nameFS, zone = zoneFS }
+    zoneFS:SetPoint("RIGHT", btn, "TOPRIGHT", 0, -FTT_ROW_H / 2)
+    -- Optional second line: guild/friend note, indented, truncated to the row width.
+    -- One line only: a line break inside a note would overlap the rows around it.
+    local noteFS = btn:CreateFontString(nil, "OVERLAY")
+    noteFS:SetFont(FTT_FONT(), 9, "")
+    noteFS:SetJustifyH("LEFT")
+    noteFS:SetWordWrap(false)
+    noteFS:SetMaxLines(1)
+    noteFS:SetTextColor(0.75, 0.75, 0.75, 0.9)
+    noteFS:SetPoint("LEFT", btn, "TOPLEFT", FTT_NOTE_INDENT, -FTT_ROW_H - FTT_NOTE_H / 2)
+    noteFS:SetPoint("RIGHT", btn, "TOPRIGHT", 0, -FTT_ROW_H - FTT_NOTE_H / 2)
+    noteFS:Hide()
+    _friendsTTRows[idx] = { button = btn, name = nameFS, zone = zoneFS, note = noteFS }
     return _friendsTTRows[idx]
 end
 
@@ -2193,6 +2226,7 @@ function ShowFriendsTooltip(anchor)
     if maxRows and maxRows < 0 then maxRows = 0 end
     -- Hard cap 30 rows per section, even at 0 ("no cap") or stale over-max values -- big guilds otherwise build enormous tooltips. Overflow gets "...and N more".
     if maxRows == 0 or maxRows > 30 then maxRows = 30 end
+    local showNotes = mp and mp.friendsShowNotes
 
     local font = FTT_FONT()
     for i = 1, #_friendsTTRows do
@@ -2208,8 +2242,10 @@ function ShowFriendsTooltip(anchor)
         local r = _friendsTTRows[i]
         r.name:Hide()
         r.zone:Hide()
+        r.note:Hide()
         if r.button then
             r.button:Hide()
+            r.button:SetHeight(FTT_ROW_H)
             r.button._entry = nil
             FTTSetRowTarget(r.button, nil)
             if r.button._hl then r.button._hl:Hide() end
@@ -2246,7 +2282,7 @@ function ShowFriendsTooltip(anchor)
     local rowIdx = 0
     local hdrIdx = 0
     local divIdx = 0
-    local maxNameW, maxZoneW = 0, 0
+    local maxNameW, maxZoneW, maxNoteW = 0, 0, 0
     local curY = -FTT_PAD
 
     for si, sec in ipairs(sections) do
@@ -2318,7 +2354,20 @@ function ShowFriendsTooltip(anchor)
             if nw > maxNameW then maxNameW = nw end
             if zw > maxZoneW then maxZoneW = zw end
 
-            curY = curY - (FTT_ROW_H + FTT_GAP)
+            local rowH = FTT_ROW_H
+            local note = showNotes and EllesmereUI.StripFriendNoteTag(e.note)
+            if note then
+                row.note:SetFont(font, 9, "")
+                row.note:SetText(note)
+                row.note:Show()
+                local ntw = row.note:GetUnboundedStringWidth() or 0
+                if ntw > FTT_NOTE_MAX_W then ntw = FTT_NOTE_MAX_W end
+                if ntw > maxNoteW then maxNoteW = ntw end
+                rowH = FTT_ROW_H + FTT_NOTE_H
+            end
+            row.button:SetHeight(rowH)
+
+            curY = curY - (rowH + FTT_GAP)
         end
 
         if maxRows > 0 and #sec.list > maxRows then
@@ -2339,7 +2388,8 @@ function ShowFriendsTooltip(anchor)
     end
 
     local contentW = FTT_PAD + maxNameW + 16 + maxZoneW + FTT_PAD
-    local ttW = math.max(contentW, 160)
+    local noteW = FTT_PAD + FTT_NOTE_INDENT + maxNoteW + FTT_PAD
+    local ttW = math.max(contentW, noteW, 160)
     local ttH = -curY + FTT_PAD
 
     tt:SetSize(ttW, ttH)
@@ -2794,7 +2844,7 @@ local function SyncIndicatorVisibility()
         local hasMail = false
         if HasNewMail then
             local raw = HasNewMail()
-            if not issecretvalue or not issecretvalue(raw) then
+            if not issecretvalue(raw) then
                 hasMail = raw or false
             end
         end
@@ -4617,8 +4667,9 @@ local function ApplyMinimap()
         if backdrop then
             local function CheckHousing()
                 local housingAtlas
-                for ri = 1, backdrop:GetNumRegions() do
-                    local rgn = select(ri, backdrop:GetRegions())
+                local regions = { backdrop:GetRegions() }
+                for ri = 1, #regions do
+                    local rgn = regions[ri]
                     if rgn and rgn.GetAtlas then
                         local atlas = rgn:GetAtlas()
                         if atlas and atlas:find("housing") then
@@ -4861,7 +4912,7 @@ local function ApplyMinimap()
                 -- WoW Forever has no Great Vault: a saved "vault" reads as none there.
                 local mp = EBS.db and EBS.db.profile.minimap
                 if mp and mp.clockHoverTooltip == "vault" and not EllesmereUI.IS_FOREVER then
-                    ToggleGreatVault()
+                    EllesmereUI.ToggleGreatVault()
                     return
                 end
                 if ToggleTimeManager then ToggleTimeManager() end
@@ -5187,7 +5238,7 @@ local function ApplyMinimap()
                 if button ~= "LeftButton" then return end
                 local mp = EBS.db and EBS.db.profile.minimap
                 if mp and mp.fpsHoverTooltip == "vault" and not EllesmereUI.IS_FOREVER then
-                    ToggleGreatVault()
+                    EllesmereUI.ToggleGreatVault()
                 end
             end)
         end
@@ -5394,7 +5445,7 @@ end
 function EBS._WriteMapAlpha(mm, p)
     local a = EBS._MapAlpha(p)
     local cur = mm:GetAlpha()
-    if (issecretvalue and issecretvalue(cur)) or math.abs(cur - a) > 0.001 then
+    if issecretvalue(cur) or math.abs(cur - a) > 0.001 then
         mm:SetAlpha(a)
     end
 end

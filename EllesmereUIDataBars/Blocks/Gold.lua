@@ -4,7 +4,6 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local MEDIA = ns.MEDIA
 local K = ns.BlockKit
 
 -- Upvalues
@@ -131,7 +130,7 @@ ns.BlockFactories.gold = function(blockCfg, slot, content, barCtx)
     local inst = { cfg = blockCfg, slot = slot, content = content, ctx = barCtx }
     inst.key = InstKey(barCtx, blockCfg)
 
-    local GOLD_TEX = MEDIA .. "lootbag.png"
+    local GOLD_TEX = ns.MICROMENU_MEDIA .. "menu-bags.png"
     local _goldFitBuf = { "", "" }
     local mouseOver = false
 

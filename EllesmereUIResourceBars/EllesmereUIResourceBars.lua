@@ -6,7 +6,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  animations, combat fade, low-resource alerts, class-colored bars
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
 local ERB = EllesmereUI.Lite.NewAddon(ADDON_NAME)
 ns.ERB = ERB
@@ -1253,7 +1253,7 @@ local DEFAULTS = {
             -- power (e.g. BM/MM Hunter, Focus shows as class resource). "None"/"Up"/
             -- "Down", visual-only.
             shiftElementsIfNoPower = "None",
-            manaRegenSpark = false,  -- WoW Forever: mana regen spark (5s rule) while the bar shows mana
+            manaRegenSpark = false,  -- WoW Forever: mana regen spark while the bar shows mana; manaRegenSparkMode "ticks" = Regen Ticks, nil = 5-Second Rule
             -- WoW Forever: Spell Cost Prediction (powerCostPrediction, opt-in;
             -- powerCostColor, nil = Blizzard's mana prediction color). No
             -- defaults: nil is off, so retail profiles stay unchanged.
@@ -1366,7 +1366,7 @@ local DEFAULTS = {
             enabled       = true,
             -- Global Settings > Gamepad: stand this bar down while a controller
             -- is connected (ns.RB_ApplyGamepadCastbar).
-            gamepadHide   = true,
+            gamepadHide   = false,
             -- Blizzard Style (Global Settings > Style): the stock cast bar art
             -- (background, frame, text box, cast/channel fills, pip) on this
             -- bar with every feature intact. Default OFF; reload-gated.
@@ -1572,11 +1572,12 @@ local _erbEventFrame = CreateFrame("Frame")   -- event entry; events registered 
 -- use plain SetValue.
 ns.EASE = Enum and Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.ExponentialEaseOut
 
--- Shell pool for runtime handler hosts (mouse-follow anchor): born HERE so their
--- per-frame work bills ResourceBars (attribution rule above).
+-- Shell pool for runtime handler hosts (the combat queue below, and up to three
+-- mouse-follow anchors): born HERE so their work bills ResourceBars (attribution
+-- rule above). One spare.
 do
-    local pool = { CreateFrame("Frame"), CreateFrame("Frame"), CreateFrame("Frame"), CreateFrame("Frame") }
-    local n = 4
+    local pool = { CreateFrame("Frame"), CreateFrame("Frame"), CreateFrame("Frame"), CreateFrame("Frame"), CreateFrame("Frame") }
+    local n = 5
     ns.TakeShell = function()
         if n > 0 then
             local f = pool[n]
@@ -1587,6 +1588,7 @@ do
         return CreateFrame("Frame")
     end
 end
+ns.CombatQueue = EllesmereUI.NewCombatQueue(ns.TakeShell())
 local isInCombat = false
 local currentAlpha = 1
 local targetAlpha = 1
@@ -2328,7 +2330,7 @@ local function IsPowerBarHidden()
     if IsSpecDisabled(pp) then return true end
     if _G._ERB_BarHiddenByForm(pp) then return true end  -- druid per-form bar disable
     if not GetPrimaryPowerType() then return true end
-    if p.secondary and p.secondary.hidePowerIfResource and GetSecondaryResource() then return true end
+    if p.secondary and p.secondary.hidePowerIfResource and p.secondary.enabled ~= false and GetSecondaryResource() then return true end
     return false
 end
 
@@ -3637,7 +3639,7 @@ local function BuildBars()
             primaryBar._text:SetTextColor(pp.textFillR or 1, pp.textFillG or 1, pp.textFillB or 1, pp.textFillA or 1)
         end
         primaryBar:Show()
-        local hidePower = p.secondary and p.secondary.hidePowerIfResource and cachedSecondary
+        local hidePower = p.secondary and p.secondary.hidePowerIfResource and p.secondary.enabled ~= false and cachedSecondary
         if hidePower then
             EllesmereUI.SetElementVisibility(primaryBar, false)
         else
@@ -4624,10 +4626,10 @@ local function UpdatePrimaryBar()
     local pct01 = (not pctTainted) and (pctRaw / 100) or 1
 
     -- Both allocating stages below (the curve color read returns a color object,
-    -- the formatters build strings) are stamped on the value pair, since
-    -- UNIT_POWER_UPDATE and UNIT_POWER_FREQUENT both fire for one change and the
-    -- repeat re-derives the same result. A secret value cannot be compared, so it
-    -- always rebuilds and drops the stamps (the next clean event rebuilds too).
+    -- the formatters build strings) are stamped on the value pair, so a repaint
+    -- that finds the same value re-derives nothing. A secret value cannot be
+    -- compared, so it always rebuilds and drops the stamps (the next clean event
+    -- rebuilds too).
     local vmClean = not (issecretvalue and (issecretvalue(cur) or issecretvalue(mx)))
     if not vmClean then primaryBar._colCur = nil; primaryBar._txtCur = nil end
 
@@ -5398,8 +5400,8 @@ local function UpdateSecondaryResource()
     end
 
     -- Value early-out for plain point resources (Holy Power, combo points, soul shards,
-    -- chi, ...). Everything below is a pure function of value/max/config, and FIVE
-    -- triggers reach this per cast (UNIT_POWER_UPDATE/_FREQUENT, UNIT_AURA,
+    -- chi, ...). Everything below is a pure function of value/max/config, and four
+    -- triggers reach this per cast (UNIT_POWER_FREQUENT, UNIT_AURA,
     -- UNIT_SPELLCAST_SUCCEEDED, the 10fps safety poll), most firing with the resource
     -- unchanged (~300 hits/9 misses over 15s casting, profiled 12.2%->2.9%). The
     -- active tracked buff and the winning spender change while the value stands
@@ -6766,13 +6768,12 @@ ns.ShouldShowBar = ShouldShowBar
 -- WoW Forever Spell Cost Prediction host (EllesmereUI_SpellCostPrediction.lua,
 -- nil off Forever): the power type the Power Bar shows, the segment's color at
 -- the bar's Fill Opacity, and the Blizzard Style bar-shape mask for the
--- segment's fill. inBar keeps the segment at the inner bar's own level, under
--- the hash lines, shading, text and border strips however ApplyAll's strata
--- pass levels them. Read on a cast start and by a repeat attach during one,
--- never per power event.
+-- segment's fill. The segment sits one level above the inner bar, where the
+-- druid mana strip's Inside mode draws: a frame at the inner bar's own level
+-- is covered by its fill (see the hash tick overlay). Read on a cast start and
+-- by a repeat attach during one, never per power event.
 if EllesmereUI.SpellCostPrediction then
     ns.ERB_COST_HOST = {
-        inBar = true,
         PowerType = function() return cachedPrimary end,
         Color = function()
             local pp = _G._ERB_ResolvePowerCfg()
@@ -6829,8 +6830,10 @@ local function UpdateVisibility()
         local pp = _G._ERB_ResolvePowerCfg()
         local sp = ERB.db.profile.secondary
         -- cachedPrimary is also checked: specs with no primary power (BM/MM Hunter)
-        -- hide the power bar even when it is enabled in settings.
-        local hidePower = sp and sp.hidePowerIfResource and cachedSecondary
+        -- hide the power bar even when it is enabled in settings. "Hide Power Bar if
+        -- Resource" applies only while the Class Resource is on: its toggle is greyed
+        -- out otherwise, and a WoW Forever druid has combo points in Cat Form alone.
+        local hidePower = sp and sp.hidePowerIfResource and sp.enabled ~= false and cachedSecondary
         local vis = not hidePower and pp and pp.enabled ~= false and not IsSpecDisabled(pp) and not _G._ERB_BarHiddenByForm(pp) and cachedPrimary and not inVehicle and ShouldShowBar(pp)
         ERB._moEligible.primary = (vis == "mouseover")
         if grp then ns._erbGrpP = (vis == true) and not primaryBar._erbMouseTrack end
@@ -6847,7 +6850,7 @@ local function UpdateVisibility()
         -- also lays the spark out from the orientation BuildBars applied.
         if EllesmereUI.ManaRegenSpark then
             if (vis == true or vis == "mouseover") and pp.manaRegenSpark then
-                EllesmereUI.ManaRegenSpark.Attach("erb", primaryBar._sb)
+                EllesmereUI.ManaRegenSpark.Attach("erb", primaryBar._sb, pp.manaRegenSparkMode == "ticks")
             else
                 EllesmereUI.ManaRegenSpark.Detach("erb")
             end
@@ -8031,7 +8034,7 @@ function ns.ERB_GroupCheck(p)
             l = (hp and hp.width) or 214
         elseif i == 2 then
             inBar = pp and pp.enabled ~= false and GetPrimaryPowerType() ~= nil
-                and not (sp and sp.hidePowerIfResource and hasRes)
+                and not (sp and sp.hidePowerIfResource and sp.enabled ~= false and hasRes)
                 and not (primaryBar and primaryBar._erbMouseTrack
                     or (not primaryBar and NormalizeAnchorKey(pp.anchorTo) == "mouse"))
                 and pp.visibility ~= "never" and ShouldShowBar(pp) ~= "mouseover"
@@ -10198,7 +10201,7 @@ end
 -- read live. On ns: the file is at the 200-local cap.
 function ns.RB_ApplyGamepadCastbar(padOn)
     local cb = ERB.db and ERB.db.profile and ERB.db.profile.castBar
-    local want = (cb and cb.enabled and cb.gamepadHide ~= false) and true or false
+    local want = (cb and cb.enabled and cb.gamepadHide == true) and true or false
     if want ~= (ns._erbCastPadWatched == true) then
         ns._erbCastPadWatched = want
         if want then
@@ -11455,13 +11458,7 @@ function ERB:ApplyAll()
             RegisterStateDriver(ERB._vehicleProxy, "erbvehicle", "[vehicleui][petbattle] hide; show")
         end
         if InCombatLockdown() then
-            local waiter = CreateFrame("Frame")
-            waiter:RegisterEvent("PLAYER_REGEN_ENABLED")
-            waiter:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                self:SetScript("OnEvent", nil)
-                InitVehicleProxy()
-            end)
+            ns.CombatQueue.Defer("VehicleProxyInit", InitVehicleProxy)
         else
             InitVehicleProxy()
         end
@@ -11553,10 +11550,19 @@ local function OnEvent(self, event, ...)
         if cachedSecondary and cachedSecondary.power == "BREWMASTER_STAGGER" then
             UpdateSecondaryResource()
         end
-    elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" then
+    elseif event == "UNIT_POWER_FREQUENT" then
+        -- Fires on every power change, so both bars paint on this event alone,
+        -- as Blizzard's own resource display and class resource bars do: the
+        -- throttled UNIT_POWER_UPDATE only re-reports changes this event has
+        -- already delivered, and is not registered. The Power Bar paints only
+        -- for a change of the type it shows (payload token; an unmapped type
+        -- or a secret token paints).
         local unit, powerToken = ...
         if unit == "player" then
-            UpdatePrimaryBar()
+            local tok = POWER_ENUM_TO_KEY[cachedPrimary]
+            if not tok or issecretvalue(powerToken) or powerToken == tok then
+                UpdatePrimaryBar()
+            end
             UpdateSecondaryResource()
         end
     elseif event == "UNIT_MAXHEALTH" or event == "UNIT_MAX_HEALTH_MODIFIERS_CHANGED" then
@@ -11927,7 +11933,6 @@ function ERB:OnEnable()
     eventFrame:RegisterUnitEvent("UNIT_HEALTH", "player")
     eventFrame:RegisterUnitEvent("UNIT_MAXHEALTH", "player")
     eventFrame:RegisterUnitEvent("UNIT_MAX_HEALTH_MODIFIERS_CHANGED", "player")
-    eventFrame:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
     eventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
     eventFrame:RegisterUnitEvent("UNIT_MAXPOWER", "player")
     eventFrame:RegisterEvent("RUNE_POWER_UPDATE")

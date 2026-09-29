@@ -8,7 +8,7 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  + _childupdate-eab-page with explicit action attrs.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-if not (EllesmereUI and EllesmereUI._ModuleNS) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
+if not (EllesmereUI and EllesmereUI._ModuleNS and EllesmereUI.NewCombatQueue) then EUI_CLIENT_BLOCKED = true; return end -- stale-parent guard: a partially updated install (old parent, new child) goes dormant via the line-1 failsafe instead of erroring
 EllesmereUI._ModuleNS[ADDON_NAME] = ns  -- LOD options files read this module ns via the registry
 local EAB = EllesmereUI.Lite.NewAddon(ADDON_NAME)
 ns.EAB = EAB
@@ -36,6 +36,11 @@ do
         return CreateFrame("Frame")
     end
 end
+
+-- "Run once after combat" for every combat-gated deferral in this file. The shell is
+-- taken in the main chunk, so drained work bills ActionBars. Keys are per purpose, and
+-- sites that defer the same work share a key (e.g. "UpdateKeybinds").
+ns.CombatQueue = EllesmereUI.NewCombatQueue(ns.TakeShell())
 
 -- "Hide Count at 0" (Icon Effects): hide a zero charge/stack count via the
 -- count fontstring's ALPHA, never its text -- text is co-owned: Blizzard's
@@ -199,10 +204,17 @@ function ns.AB_Forever()
     return ns.AB_Style() == "blizzard"
 end
 
--- WoW Forever's frame and dividers behind Action Bar 1 (Show Bar Background):
--- drawn under the variant unless the player hides them (foreverHideBarBg).
-function ns.AB_ForeverBg()
-    return ns.AB_Forever() and EAB.db.profile.foreverHideBarBg ~= true
+-- WoW Forever's frame and dividers behind a bar (Show Bar Background), under
+-- the variant only: the bar's own foreverBarBg. nil reads the bar's default:
+-- Action Bar 1 follows the profile-wide foreverHideBarBg (shown unless it is
+-- set), every other bar is off.
+function ns.AB_ForeverBg(key)
+    if not ns.AB_Forever() then return false end
+    local p = EAB.db.profile
+    local s = p.bars and p.bars[key]
+    local v = s and s.foreverBarBg
+    if v == nil then v = key == "MainBar" and p.foreverHideBarBg ~= true end
+    return v and true or false
 end
 
 -- SetAtlas for a stock-look texture: EllesmereUI.StockAtlas (retail art
@@ -552,9 +564,9 @@ for _, info in ipairs(BAR_CONFIG) do
         housingHideEnabled = false,
         barVisibility = "always",
         dragShow = false,
-        -- Hide Bar When Using Gamepad: on for every bar, inert until a
+        -- Hide Bar When Using Gamepad: off by default; inert until a
         -- controller is connected with gamepad support enabled.
-        gamepadHideBar = true,
+        gamepadHideBar = false,
         visHideHousing = false,
         visOnlyInstances = false,
         visHideMounted = false,
@@ -627,6 +639,17 @@ for _, info in ipairs(BAR_CONFIG) do
         numRows = 1,
         targetWidth = 0,
         targetHeight = 0,
+        -- End caps (the End Caps checklist and its cog) and WoW Forever's bar
+        -- background, per bar. nil reads the bar's default (ns.AB_CapsSides,
+        -- ns.AB_CapsVal, ns.AB_ForeverBg): Action Bar 1 falls back to the
+        -- profile-wide keys, every other bar starts without them.
+        endCapLeft = nil,
+        endCapRight = nil,
+        endCapArt = nil,
+        endCapScale = nil,
+        endCapOffsetX = nil,
+        endCapOffsetY = nil,
+        foreverBarBg = nil,
     }
 end
 
@@ -1183,6 +1206,8 @@ do
         killOne(pager.UpButton)
         killOne(pager.DownButton)
         -- Cover anything else Blizzard parents in here later (ResizeLayoutFrame).
+        -- Runs on every MainActionBar Show (form, stance and page flips), so
+        -- it reads the live list instead of building a table.
         if type(pager.GetChildren) == "function" then
             for i = 1, pager:GetNumChildren() do
                 killOne((select(i, pager:GetChildren())))
@@ -1236,7 +1261,17 @@ do
                 -- the pager's invisible arrows would still eat clicks.
                 KillPagerMouse(frame)
                 if frame.Selection then frame.Selection:Hide(); frame.Selection:SetAlpha(0) end -- Edit Mode selection/mover
-                if frame.EndCaps then frame.EndCaps:Hide() end -- artwork (gryphons/endcaps/border)
+                local caps = frame.EndCaps
+                if caps then
+                    caps:Hide() -- artwork (gryphons/endcaps/border)
+                    -- WoW Forever: each end cap is an Edit Mode system of its own that
+                    -- shows itself and its selection overlay whenever Edit Mode opens
+                    -- (the overlay ignores the bar's alpha). Silence both overlays like
+                    -- the bar's own; Edit Mode's Show never resets alpha or mouse.
+                    local l, r = caps.LeftEndCap, caps.RightEndCap
+                    if l and l.Selection then l.Selection:SetAlpha(0); l.Selection:EnableMouse(false) end
+                    if r and r.Selection then r.Selection:SetAlpha(0); r.Selection:EnableMouse(false) end
+                end
                 if frame.BorderArt then frame.BorderArt:Hide() end
                 frame:SetAlpha(0)
             else
@@ -2586,7 +2621,7 @@ LayoutPagingFrame = function()
     end
     -- Five levels over the bar, and one over its end caps while they can show
     -- (retail's page arrows sit over its caps).
-    local caps = s.orientation ~= "vertical" and ns.AB_CAPS[ns.AB_CapsLook() or "-"]
+    local caps = s.orientation ~= "vertical" and ns.AB_CAPS[ns.AB_CapsLook("MainBar") or "-"]
     local lvl = (mainFrame:GetFrameLevel() or 1) + 1 + (caps and caps.lvl or 4)
     if f:GetFrameLevel() ~= lvl then f:SetFrameLevel(lvl) end
 
@@ -3156,9 +3191,28 @@ ns.BuildBarButtons = function(info, frame, skipProtected)
     return buttons
 end
 
+-- Keeps every bar frame on screen, the way Blizzard's own bars are: bar
+-- positions are offsets from the screen centre, so a higher UI Scale, an
+-- import made at another scale or a narrower screen would otherwise push a bar
+-- near an edge past it. Display only: the saved position is never rewritten,
+-- so the bar goes back to it once the screen has room. Protected on our secure
+-- bar frames in combat, so the combat /reload build runs this at combat end.
+-- On ns: file at the 200-local cap.
+ns._eabClampAllBars = function()
+    for _, f in pairs(barFrames) do
+        f:SetClampedToScreen(true)
+    end
+end
+
 local function SetupBar(info, skipProtected)
     local key = info.key
     local frame = CreateBarFrame(info)
+    if skipProtected or InCombatLockdown() then
+        -- One key: every bar of the combat build shares the single pass.
+        ns.CombatQueue.Defer("EABClampBars", ns._eabClampAllBars)
+    else
+        frame:SetClampedToScreen(true)
+    end
     -- A bar that can never become visible AND has no key bound gets no buttons
     -- at load: the button loop is 95 % of such a bar's setup cost, and most of
     -- that is Blizzard's CreateFrame on the action button template, which only
@@ -3768,17 +3822,6 @@ do
         if _G._EAB_UpdateKeybinds then _G._EAB_UpdateKeybinds() end
     end
 
-    -- Deferral shell for that reroute. ACTIONBAR_SLOT_CHANGED fires freely IN
-    -- combat (a page swap fires 12+), but the reroute can't run there:
-    -- UpdateKeybinds needs SetOverrideBinding and the re-trigger needs SetAttribute on
-    -- a secure header, both combat-protected. Never drop the update: SLOT_CHANGED won't
-    -- refire and other UpdateKeybinds callers are load-time/rare, so a dropped rebuild
-    -- leaves routing and attr state stale until something unrelated rebuilds.
-    -- (Historical note: this comment once blamed native routing for press-and-tap
-    -- empower behaviour; superseded 2026-08-09 -- empower keys are native by design
-    -- now.) Defer to PLAYER_REGEN_ENABLED,
-    -- matching sibling paths (UPDATE_BINDINGS handler, ApplyKeyDownCVar).
-    local _empowerDeferFrame
     function EAB:SetupEventDispatcher()
         if _dispatcherSetup then return end
         _dispatcherSetup = true
@@ -5413,15 +5456,11 @@ do
                 C_Timer_After(0, function()
                     _empowerReroutePending = false
                     if InCombatLockdown() then
-                        -- Re-arm for leaving combat instead of dropping it.
-                        if not _empowerDeferFrame then
-                            _empowerDeferFrame = ns.TakeShell()
-                            _empowerDeferFrame:SetScript("OnEvent", function(self)
-                                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                                _EmpowerReroute()
-                            end)
-                        end
-                        _empowerDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+                        -- SLOT_CHANGED fires freely in combat, but the rebuild needs
+                        -- SetOverrideBinding and a secure SetAttribute. Never drop it:
+                        -- SLOT_CHANGED won't refire, so defer under the shared
+                        -- "UpdateKeybinds" key (the reroute is UpdateKeybinds itself).
+                        ns.CombatQueue.Defer("UpdateKeybinds", _EmpowerReroute)
                         return
                     end
                     _EmpowerReroute()
@@ -5810,16 +5849,17 @@ local function HideSlotArt(btn)
 end
 
 -------------------------------------------------------------------------------
---  Action Bar 1's chrome and the 20-segment data bars. WoW Forever: the metal
---  frame round the bar and the dividers between its buttons (Show Bar
---  Background, on by default), the faction end caps (Show End Caps, on by
---  default) and the data bar segments, from Blizzard's own atlases (they draw the
---  Forever art on that client). Blizzard Style and Classic WoW UI: that
---  look's end caps, opt-in (showEndCaps); the EllesmereUI style: either
---  look's caps, opt-in (euiEndCaps). Built the first time a piece is on
---  (LayoutBar's tail, out of combat, stamp-gated; ApplyDataBarLayout); off,
---  nothing is built and a built piece hides. All on ns: the main chunk is at
---  the 200-local cap.
+--  The action bars' chrome and the 20-segment data bars. Every action bar can
+--  carry end caps, left, right or both (the End Caps checklist), in the
+--  current look's art (the EllesmereUI style: the art the player picks), with
+--  its own size and offsets. WoW Forever: the metal frame round a bar and the
+--  dividers between its buttons (Show Bar Background, on by default on Action
+--  Bar 1 only), the faction end caps (both sides on by default on Action Bar
+--  1 only) and the data bar segments, from Blizzard's own atlases (they draw
+--  the Forever art on that client). Built per bar the first time a piece is
+--  on (LayoutBar's tail, out of combat, stamp-gated; ApplyDataBarLayout);
+--  off, nothing is built and a built piece hides. All on ns: the main chunk
+--  is at the 200-local cap.
 -------------------------------------------------------------------------------
 ns.AB_FV_ART = {
     frame = "UI-HUD-ActionBar-Frame",
@@ -5882,50 +5922,114 @@ function ns.AB_AtlasOK(name)
     return v
 end
 
--- The look whose end caps Action Bar 1 draws, or nil: WoW Forever's unless
--- the player hides them (foreverHideEndCaps), Blizzard Style's and Classic
--- WoW UI's only once the player turns them on (showEndCaps; nil = off), and
--- under the EllesmereUI style only the art the player picks (euiEndCaps:
+-- True when `art` (an EllesmereUI style End Caps art) draws on this client:
 -- "blizzard", "classic", or "forever" -- the Forever client's own art, which
--- retail does not ship, so it reads as None there; nil = None).
-function ns.AB_CapsLook()
+-- retail does not ship.
+function ns.AB_CapsArtOK(art)
+    return art == "blizzard" or art == "classic" or (art == "forever" and EllesmereUI.IS_FOREVER == true)
+end
+
+-- One of a bar's end cap settings (endCapArt, endCapScale, endCapOffsetX,
+-- endCapOffsetY), nil = unset: the bar's own key, and on Action Bar 1 an
+-- unset key reads the profile-wide key (euiEndCaps for the art, the same
+-- name for the rest), which nothing writes.
+function ns.AB_CapsVal(key, k)
     local p = EAB.db and EAB.db.profile
     if not p then return nil end
-    if ns.AB_Forever() then
-        return (p.foreverHideEndCaps ~= true) and "forever" or nil
+    local s = p.bars and p.bars[key]
+    local v = s and s[k]
+    if v == nil and key == "MainBar" then
+        v = p[(k == "endCapArt") and "euiEndCaps" or k]
     end
-    local style = ns.AB_Style()
-    if style == "eui" then
-        local art = p.euiEndCaps
-        if art == "forever" then return EllesmereUI.IS_FOREVER and "forever" or nil end
-        return (art == "blizzard" or art == "classic") and art or nil
-    end
-    if p.showEndCaps ~= true then return nil end
-    return style
+    return v
 end
 
--- The player's end cap tweaks (the Show End Caps cog): the size as a
--- fraction of the look's own, and the X/Y offsets (X mirrored: a positive
--- value moves both caps away from the bar). Y defaults to 5 (the caps sit a
--- little higher than the look's own spot).
-function ns.AB_CapsTweak()
+-- Which ends of a bar show caps (the End Caps checklist): the bar's own
+-- endCapLeft / endCapRight. An unset side reads the bar's default: Action Bar
+-- 1 follows the current look's profile-wide key, both sides alike (WoW
+-- Forever: shown unless foreverHideEndCaps; Blizzard Style and Classic WoW
+-- UI: while showEndCaps; the EllesmereUI style: while euiEndCaps names art
+-- this client draws); every other bar shows none.
+function ns.AB_CapsSides(key)
     local p = EAB.db and EAB.db.profile
-    if not p then return 1, 0, 5 end
-    return (p.endCapScale or 100) / 100, p.endCapOffsetX or 0, p.endCapOffsetY or 5
+    local s = p and p.bars and p.bars[key]
+    if not s then return false, false end
+    local l, r = s.endCapLeft, s.endCapRight
+    if l == nil or r == nil then
+        local legacy = false
+        if key == "MainBar" then
+            if ns.AB_Forever() then
+                legacy = p.foreverHideEndCaps ~= true
+            elseif ns.AB_Style() == "eui" then
+                legacy = ns.AB_CapsArtOK(p.euiEndCaps)
+            else
+                legacy = p.showEndCaps == true
+            end
+        end
+        if l == nil then l = legacy end
+        if r == nil then r = legacy end
+    end
+    return l and true or false, r and true or false
 end
 
--- How far Action Bar 1's chrome reaches past a button grid gridH tall (top,
+-- The art the EllesmereUI style draws on a bar's caps: its End Caps cog
+-- pick; none, or art this client lacks, reads Modern.
+function ns.AB_CapsArt(key)
+    local art = ns.AB_CapsVal(key, "endCapArt")
+    if ns.AB_CapsArtOK(art) then return art end
+    return "blizzard"
+end
+
+-- The look whose end caps a bar draws, then its left and right sides, or nil
+-- while the bar shows neither side: WoW Forever's under that variant,
+-- Blizzard Style's and Classic WoW UI's own, and under the EllesmereUI style
+-- the art the player picks.
+function ns.AB_CapsLook(key)
+    local l, r = ns.AB_CapsSides(key)
+    if not (l or r) then return nil end
+    local look
+    if ns.AB_Forever() then
+        look = "forever"
+    else
+        look = ns.AB_Style()
+        if look == "eui" then look = ns.AB_CapsArt(key) end
+    end
+    return look, l, r
+end
+
+-- A bar's end cap tweaks (the End Caps cog): the size as a fraction of the
+-- look's own, the X/Y offsets (X mirrored: a positive value moves both caps
+-- away from the bar; Y defaults to 5, the caps a little higher than the
+-- look's own spot), and last the size in percent as stored.
+function ns.AB_CapsTweak(key)
+    local sc = ns.AB_CapsVal(key, "endCapScale") or 100
+    return sc / 100, ns.AB_CapsVal(key, "endCapOffsetX") or 0, ns.AB_CapsVal(key, "endCapOffsetY") or 5, sc
+end
+
+-- Every chrome input of a bar in one string, for LayoutBar's stamp (the
+-- tweaks only while a cap shows; "-" for a bar with no chrome).
+function ns.AB_ChromeStamp(key)
+    local look, l, r = ns.AB_CapsLook(key)
+    local fv = ns.AB_ForeverBg(key)
+    if not look then return fv and "fv" or "-" end
+    local _, dx, dy, sc = ns.AB_CapsTweak(key)
+    return look .. (l and "L" or "") .. (r and "R" or "") .. (fv and ",fv," or ",")
+        .. sc .. "," .. dx .. "," .. dy
+end
+
+-- How far a bar's chrome reaches past a button grid gridH tall (top,
 -- bottom), for a preview that must make room: WoW Forever's frame (6/5 at
--- button size / 45) and `look`'s caps (nil = none; multi = several rows).
--- pxK scales the cap offsets (the preview's scale; nil = 1).
-function ns.AB_ChromeReach(btnW, gridH, forever, look, multi, pxK)
+-- button size / 45) and `look`'s caps (nil = none; multi = several rows)
+-- with bar `key`'s tweaks. pxK scales the cap offsets (the preview's scale;
+-- nil = 1).
+function ns.AB_ChromeReach(btnW, gridH, forever, look, multi, pxK, key)
     local top, bottom = 0, 0
     if forever then
         top, bottom = 6 * btnW / 45, 5 * btnW / 45
     end
     local c = look and ns.AB_CAPS[look]
     if c then
-        local sc, _, dy = ns.AB_CapsTweak()
+        local sc, _, dy = ns.AB_CapsTweak(key)
         dy = dy * (pxK or 1)
         local kc = min(btnW / c.unit, 1) * sc
         local y = ((multi and c.far) or c.near)[4]
@@ -5958,8 +6062,9 @@ function ns.AB_SetCapArt(tex, c, name, right)
 end
 
 -- Paints the caps' art for the player's faction onto a chrome state (the
--- same art for every faction on a look with `any`). True once the art no
--- longer waits on the faction.
+-- same art for every faction on a look with `any`), each side shown only
+-- while the bar asks for it. True once the art no longer waits on the
+-- faction (kept as st.capKnown).
 function ns.AB_CapsFaction(st)
     local capL, capR = st.capL, st.capR
     if not capL then return true end
@@ -5971,20 +6076,23 @@ function ns.AB_CapsFaction(st)
         ns.AB_SetCapArt(capR, c, set[2], true)
         st.capSet = set
     end
-    capL:SetShown(set ~= nil)
-    capR:SetShown(set ~= nil)
-    return not (c and c.art) or fac ~= nil
+    capL:SetShown(set ~= nil and st.capSideL == true)
+    capR:SetShown(set ~= nil and st.capSideR == true)
+    st.capKnown = not (c and c.art) or fac ~= nil
+    return st.capKnown
 end
 
 -- Paints `look`'s end caps (nil = none) onto st (a state table the caller
 -- keeps) round a button grid w x h whose TOPLEFT sits at (ox, oy) off
--- owner's TOPLEFT; btnW = the button size, multi = several rows. The caps
--- sit the look's lvl over owner (under the paging arrows), scale with the
--- icon size (down only) times the player's size, and move by the player's
--- offsets (times pxK, the preview's scale; nil = 1).
-function ns.AB_PaintCaps(st, owner, ox, oy, w, h, btnW, look, multi, pxK)
+-- owner's TOPLEFT; btnW = the button size, multi = several rows, sideL /
+-- sideR = the ends that show a cap. The caps sit the look's lvl over owner
+-- (under Action Bar 1's paging arrows), scale with the icon size (down only)
+-- times bar `key`'s size, and move by its offsets (times pxK, the preview's
+-- scale; nil = 1).
+function ns.AB_PaintCaps(st, owner, ox, oy, w, h, btnW, look, multi, pxK, key, sideL, sideR)
     local c = look and ns.AB_CAPS[look]
-    st.capsOn = (c and (c.any or ns.AB_AtlasOK(c.art.Alliance[1]))) and true or false
+    st.capsOn = (c and (sideL or sideR) and (c.any or ns.AB_AtlasOK(c.art.Alliance[1]))) and true or false
+    st.capSideL, st.capSideR = sideL and true or false, sideR and true or false
     local host = st.capHost
     if not st.capsOn then
         if host then host:Hide() end
@@ -5996,7 +6104,7 @@ function ns.AB_PaintCaps(st, owner, ox, oy, w, h, btnW, look, multi, pxK)
         st.capR = host:CreateTexture(nil, "OVERLAY", nil, 5)
         st.capHost = host
     end
-    local sc, dx, dy = ns.AB_CapsTweak()
+    local sc, dx, dy = ns.AB_CapsTweak(key)
     local kc = btnW / c.unit
     if kc > 1 then kc = 1 end
     kc = kc * sc
@@ -6109,60 +6217,83 @@ function ns.AB_PaintForeverChrome(st, owner, ox, oy, w, h, k, vertical, n, step,
     end
 end
 
--- Action Bar 1's chrome onto st, for the live bar and the options preview:
--- WoW Forever's frame and dividers when `forever`, then `look`'s end caps
--- (nil = none). Arguments as AB_PaintForeverChrome and AB_PaintCaps. True
--- once the caps' art no longer waits on the faction.
-function ns.AB_PaintBarChrome(st, owner, ox, oy, w, h, btnW, forever, look, multi, vertical, n, step, extra, onePx, pxK)
+-- A bar's chrome onto st, for the live bar and the options preview: WoW
+-- Forever's frame and dividers when `forever`, then `look`'s end caps (nil =
+-- none) on the sideL / sideR ends. Arguments as AB_PaintForeverChrome and
+-- AB_PaintCaps. True once the caps' art no longer waits on the faction.
+function ns.AB_PaintBarChrome(st, owner, ox, oy, w, h, btnW, forever, look, multi, vertical, n, step, extra, onePx, pxK, key, sideL, sideR)
     if forever then
         ns.AB_PaintForeverChrome(st, owner, ox, oy, w, h, btnW / 45, vertical, n, step, extra, onePx)
     elseif st.under then
         st.under:Hide()
     end
-    ns.AB_PaintCaps(st, owner, ox, oy, w, h, btnW, look, multi, pxK)
+    ns.AB_PaintCaps(st, owner, ox, oy, w, h, btnW, look, multi, pxK, key, sideL, sideR)
     return ns.AB_CapsFaction(st)
 end
 
--- Action Bar 1's chrome, from LayoutBar's tail (MainBar only): WoW
--- Forever's frame and dividers (unless Show Bar Background is off), and the
--- look's end caps on a horizontal bar. The faction listener runs only while
--- faction caps show: the pick a neutral character makes, and one loading
--- screen if the faction was not known yet.
-function ns.AB_ApplyBarChrome(frame, w, h, btnW, vertical, multi, n, step, extra, onePx)
-    local st = ns._abChrome
-    local fv = ns.AB_ForeverBg()
-    local look = not vertical and ns.AB_CapsLook() or nil
-    if not (fv or look) then
-        if st then
-            ns.AB_HideBarChrome(st)
-            if st.ev then st.ev:UnregisterAllEvents() end
+-- The faction listener every bar's caps share: registered only while some
+-- bar shows faction caps -- for the pick a neutral character makes, and for
+-- one loading screen while a bar's faction art still waits. Runs after a
+-- bar's chrome changes (LayoutBar's tail), never per event otherwise.
+function ns.AB_CapsEvSync()
+    local need, waiting = false, false
+    local all = ns._abChrome
+    if all then
+        for _, st in pairs(all) do
+            local c = st.capsOn and ns.AB_CAPS[st.capLook]
+            if c and c.art then
+                need = true
+                if not st.capKnown then waiting = true end
+            end
         end
-        return
     end
-    if not st then st = {}; ns._abChrome = st end
-    local known = ns.AB_PaintBarChrome(st, frame, 0, 0, w, h, btnW, fv, look, multi, vertical, n, step, extra, onePx)
-    local ev = st.ev
-    local c = st.capsOn and ns.AB_CAPS[look]
-    if not (c and c.art) then
+    local ev = ns._abCapsEv
+    if not need then
         if ev then ev:UnregisterAllEvents() end
         return
     end
     if not ev then
         ev = ns.TakeShell()
         ev:SetScript("OnEvent", function(self, event)
-            local cs = ns._abChrome
-            if cs and ns.AB_CapsFaction(cs) and event == "PLAYER_ENTERING_WORLD" then
+            local known = true
+            for _, cs in pairs(ns._abChrome) do
+                if not ns.AB_CapsFaction(cs) then known = false end
+            end
+            if known and event == "PLAYER_ENTERING_WORLD" then
                 self:UnregisterEvent(event)
             end
         end)
-        st.ev = ev
+        ns._abCapsEv = ev
     end
     ev:RegisterEvent("NEUTRAL_FACTION_SELECT_RESULT")
-    if known then
-        ev:UnregisterEvent("PLAYER_ENTERING_WORLD")
-    else
+    if waiting then
         ev:RegisterEvent("PLAYER_ENTERING_WORLD")
+    else
+        ev:UnregisterEvent("PLAYER_ENTERING_WORLD")
     end
+end
+
+-- A bar's chrome, from LayoutBar's tail: WoW Forever's frame and dividers
+-- (Show Bar Background), and the bar's end caps on a horizontal bar. Each
+-- bar keeps its own state (ns._abChrome[key]), built the first time it shows
+-- either piece.
+function ns.AB_ApplyBarChrome(key, frame, w, h, btnW, vertical, multi, n, step, extra, onePx)
+    local all = ns._abChrome
+    local st = all and all[key]
+    local fv = ns.AB_ForeverBg(key)
+    local look, sideL, sideR
+    if not vertical then look, sideL, sideR = ns.AB_CapsLook(key) end
+    if not (fv or look) then
+        if st then
+            ns.AB_HideBarChrome(st)
+            ns.AB_CapsEvSync()
+        end
+        return
+    end
+    if not all then all = {}; ns._abChrome = all end
+    if not st then st = {}; all[key] = st end
+    ns.AB_PaintBarChrome(st, frame, 0, 0, w, h, btnW, fv, look, multi, vertical, n, step, extra, onePx, nil, key, sideL, sideR)
+    ns.AB_CapsEvSync()
 end
 
 -- The 20 segments of Blizzard's experience bar on our XP / reputation / favor
@@ -6309,11 +6440,7 @@ local function LayoutBar(key)
             tostring(s._matchExtraPixels), tostring(s._matchExtraPixelsH),
             tostring(showES), tostring(s.mouseoverEnabled),
             ns.AB_Forever() and "forever" or ns.AB_Style(),
-            key == "MainBar" and ns.AB_CapsLook() or "-",
-            key == "MainBar" and tostring(ns.AB_ForeverBg()) or "-",
-            key == "MainBar" and tostring(p.endCapScale) or "-",
-            key == "MainBar" and tostring(p.endCapOffsetX) or "-",
-            key == "MainBar" and tostring(p.endCapOffsetY) or "-",
+            ns.AB_ChromeStamp(key),
             tostring(p.procGlowEnabled),
             pos and tostring(pos.point) or "-", pos and tostring(pos.relPoint) or "-",
             pos and tostring(pos.x) or "-", pos and tostring(pos.y) or "-",
@@ -6803,12 +6930,12 @@ local function LayoutBar(key)
         end
     end
 
-    -- Action Bar 1's chrome: WoW Forever's frame and dividers unless hidden
-    -- (dividers only on a one-line bar at spacing 2 or less, as Blizzard
-    -- draws them) and the look's end caps.
-    if key == "MainBar" and (ns._abChrome or ns.AB_ForeverBg() or ns.AB_CapsLook()) then
+    -- The bar's chrome: WoW Forever's frame and dividers when shown (dividers
+    -- only on a one-line bar at spacing 2 or less, as Blizzard draws them)
+    -- and the bar's end caps. A bar that never showed either builds nothing.
+    if (ns._abChrome and ns._abChrome[key]) or ns.AB_ForeverBg(key) or ns.AB_CapsLook(key) then
         local oneLine = (isVertical and totalCols or totalRows) == 1 and (s.buttonPadding or 2) <= 2
-        ns.AB_ApplyBarChrome(frame, max(frameW, 1), max(frameH, 1), btnW, isVertical, totalRows > 1,
+        ns.AB_ApplyBarChrome(key, frame, max(frameW, 1), max(frameH, 1), btnW, isVertical, totalRows > 1,
             oneLine and (isVertical and totalRows or totalCols) or 0,
             isVertical and stepH or stepW, isVertical and extraH or extraW, onePx)
     end
@@ -8252,8 +8379,9 @@ function EAB_VTABLE.CooldownFonts.ApplyToFrame(cdFrame, fontPath, cdSize, cdOX, 
         return true
     end
 
-    for ri = 1, cdFrame:GetNumRegions() do
-        local region = select(ri, cdFrame:GetRegions())
+    local regions = { cdFrame:GetRegions() }
+    for ri = 1, #regions do
+        local region = regions[ri]
         if region and region.GetObjectType and region:GetObjectType() == "FontString" then
             EllesmereUI.ApplyIconTextFont(region, fontPath, eff, "actionBars")
             region:SetTextColor(cr, cg, cb)
@@ -9840,33 +9968,29 @@ end
 -- "visibility", a different key pair -- without this the micro menu/bag bar stays
 -- hidden after every wild pet battle until a /reload.
 --
--- One shared shell frame; pending frames retry once combat drops. If a new
+-- One combat-queue entry; pending frames retry once combat drops. If a new
 -- battle began before regen the pending set is dropped: suppression flags
 -- are still set (re-suppressing keeps the ORIGINAL pre-battle shown state,
 -- see `if not ffd[suppressKey]` below), so that battle's own close
 -- transition completes or re-defers as usual.
 -- do-block with block locals; helper exported on the vtable (200-local cap).
 do
-    local pending, shell
+    local pending
+    local function DrainPending()
+        local p = pending
+        pending = nil
+        if not p then return end
+        if C_PetBattles and C_PetBattles.IsInBattle and C_PetBattles.IsInBattle() then
+            return -- back in a battle; its close transition owns the rest
+        end
+        for f in pairs(p) do
+            EAB_VTABLE.ExtraBars.SetManagedBlizzOwnedSuppressed(f, "petbattle", false)
+        end
+    end
     EAB_VTABLE.ExtraBars.QueuePetBattleUnsuppress = function(frame)
         pending = pending or {}
         pending[frame] = true
-        if not shell then
-            shell = ns.TakeShell()
-            shell:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                local p = pending
-                pending = nil
-                if not p then return end
-                if C_PetBattles and C_PetBattles.IsInBattle and C_PetBattles.IsInBattle() then
-                    return -- back in a battle; its close transition owns the rest
-                end
-                for f in pairs(p) do
-                    EAB_VTABLE.ExtraBars.SetManagedBlizzOwnedSuppressed(f, "petbattle", false)
-                end
-            end)
-        end
-        shell:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("PetBattleUnsuppress", DrainPending)
     end
 end
 
@@ -10224,7 +10348,7 @@ ns._eabBuildSkippedBars = function()
 end
 
 -------------------------------------------------------------------------------
---  Hide Bar When Using Gamepad (per bar, s.gamepadHideBar, default on; set
+--  Hide Bar When Using Gamepad (per bar, s.gamepadHideBar, default off; set
 --  on the Global Settings Gamepad page).
 --  "Using" means CONNECTED (EllesmereUI.PadConnected: gamepad support is on
 --  and a controller is present), never the last-input device, so a touch of
@@ -10636,15 +10760,9 @@ end
 -- APIs are combat-protected, so defer to PLAYER_REGEN_ENABLED in combat.
 function EAB:RebuildVisToggleBindings()
     if InCombatLockdown() then
-        if not self._visToggleCombatFrame then
-            local f = ns.TakeShell()
-            f:SetScript("OnEvent", function(self2)
-                self2:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                EAB:RebuildVisToggleBindings()
-            end)
-            self._visToggleCombatFrame = f
-        end
-        self._visToggleCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("RebuildVisToggleBindings", function()
+            EAB:RebuildVisToggleBindings()
+        end)
         return
     end
     -- Unique keys that have at least one participating (always/never) bar.
@@ -12718,19 +12836,10 @@ local function UpdateKeybinds()
     -- version of this comment blamed native bindings for press-and-tap
     -- empower behaviour; superseded 2026-08-09 -- empowers route native BY
     -- DESIGN now, with hold-and-release engine-owned.)
-    -- Re-arming here covers every caller at once; sibling paths that already defer just
-    -- arm it twice (idempotent, RegisterEvent twice is one registration).
+    -- Re-arming here covers every caller at once; sibling paths that already defer share
+    -- the "UpdateKeybinds" queue key, so the rebuild runs once after combat.
     if InCombatLockdown() then
-        local df = _bindState.deferFrame
-        if not df then
-            df = ns.TakeShell()
-            df:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                UpdateKeybinds()
-            end)
-            _bindState.deferFrame = df
-        end
-        df:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("UpdateKeybinds", UpdateKeybinds)
         return false
     end
     -- With the house editor active our overrides are cleared so Blizzard's
@@ -12997,18 +13106,9 @@ local function ApplyClickRegistration()
 end
 
 -- Called when ActionButtonUseKeyDown CVar changes. Defers to out-of-combat.
-local _keyDownDeferFrame
 local function ApplyKeyDownCVar()
     if InCombatLockdown() then
-        if not _keyDownDeferFrame then
-            _keyDownDeferFrame = ns.TakeShell()
-            _keyDownDeferFrame:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                ApplyClickRegistration()
-                UpdateKeybinds()
-            end)
-        end
-        _keyDownDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("ApplyKeyDownCVar", ApplyKeyDownCVar)
         return
     end
     ApplyClickRegistration()
@@ -13139,23 +13239,14 @@ end
 -- PLAYER_REGEN_ENABLED, same pattern as QueuePetBattleUnsuppress uses for
 -- the sibling suppression bug this branch was originally about.
 do
-    -- One shared shell, taken once and kept (shells are never returned to a
-    -- pool): the QueuePetBattleUnsuppress shape above. Taking a fresh shell
-    -- per lockdown-closed battle would leak a frame each time.
-    local pending, shell
+    -- One keyed combat-queue entry (idempotent), the QueuePetBattleUnsuppress
+    -- shape above.
+    local function ReclaimMicroMenu()
+        EAB:ReclaimMicroMenu()
+    end
     local function TryReclaimAfterPetBattle()
         if InCombatLockdown() then
-            if pending then return end
-            pending = true
-            if not shell then
-                shell = ns.TakeShell()
-                shell:SetScript("OnEvent", function(self)
-                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                    pending = nil
-                    EAB:ReclaimMicroMenu()
-                end)
-            end
-            shell:RegisterEvent("PLAYER_REGEN_ENABLED")
+            ns.CombatQueue.Defer("ReclaimMicroMenu", ReclaimMicroMenu)
             return
         end
         EAB:ReclaimMicroMenu()
@@ -14574,13 +14665,8 @@ end
 
 function EAB:SyncEditModeIcons()
     if InCombatLockdown() then
-        local f = ns.TakeShell()
-        f:RegisterEvent("PLAYER_REGEN_ENABLED")
-        f:SetScript("OnEvent", function(self)
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            self:SetScript("OnEvent", nil)
-            SyncEditModeIconCounts()
-        end)
+        -- Keyed: repeated calls in one combat collapse into one idempotent sync.
+        ns.CombatQueue.Defer("SyncEditModeIcons", SyncEditModeIconCounts)
         return
     end
     SyncEditModeIconCounts()
@@ -14759,10 +14845,7 @@ function EAB:FinishSetup()
         end
 
         if InCombatLockdown() then
-            local f = ns.TakeShell()
-            f:RegisterEvent("PLAYER_REGEN_ENABLED")
-            f:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+            ns.CombatQueue.Defer("FinishSetupVisuals", function()
                 C_Timer_After(0.1, DoVisuals)
             end)
         else
@@ -15043,44 +15126,63 @@ function EAB:FinishSetup()
         end
     end
 
-    -- When UIParent's scale changes, the coordinate space shifts. Re-save
-    -- all bar positions from their current frame anchors (which WoW has
-    -- already adjusted) so the DB stays in sync with the new scale.
+    -- When the screen's coordinate space changes (UI Scale, resolution, window
+    -- size), put every bar back on its SAVED position. The bars are clamped to
+    -- the screen (SetupBar), and the engine can rewrite a clamped frame's
+    -- anchor to the spot it clamped it to; re-applying the saved record returns
+    -- a bar to its real spot once the screen has room again. Display only:
+    -- nothing here reads a live anchor or writes a saved position (the saved
+    -- record changes only when the player moves the bar). Gated on UIParent's
+    -- size, so a scale event that changes nothing costs one compare. Skipped
+    -- while an unlock session is open or suspended for combat: its movers own
+    -- the bars until Save & Exit or Cancel.
     do
-        local _scaleFrame = ns.TakeShell()
-        _scaleFrame:RegisterEvent("UI_SCALE_CHANGED")
-        _scaleFrame:SetScript("OnEvent", function()
-            if InCombatLockdown() then return end
-            local positions = EAB.db.profile.barPositions
-            if not positions then return end
-            for _, info in ipairs(BAR_CONFIG) do
-                local key = info.key
-                local frame = barFrames[key]
-                if frame and positions[key] then
-                    local pt, _, rpt, px, py = frame:GetPoint(1)
-                    if pt then
-                        positions[key].point    = pt
-                        positions[key].relPoint = rpt
-                        positions[key].x        = px
-                        positions[key].y        = py
+        local scaleFrame = ns.TakeShell()
+        scaleFrame._eabW, scaleFrame._eabH = UIParent:GetSize()
+        local function ReapplySavedBarPositions()
+            if EllesmereUI._unlockActive or EllesmereUI._unlockModeSessionActive then return end
+            RestoreBarPositions()
+            -- Anchored bars take their spot from the anchor, not the record.
+            -- The helper lives in the unlock core, built at PLAYER_LOGIN.
+            local reapply = EllesmereUI.ReapplyUnlockAnchor
+            local adb = EllesmereUIDB and EllesmereUIDB.unlockAnchors
+            if reapply and adb then
+                local bars = EAB.db.profile.bars
+                for _, info in ipairs(BAR_CONFIG) do
+                    local key = info.key
+                    local ai = adb[key]
+                    if ai and ai.target then
+                        -- A growth bar with no captured pin keeps its LIVE
+                        -- edge on a re-apply (the settle pass skips it for the
+                        -- same reason), which would fix a clamped spot in place.
+                        local s = bars[key]
+                        local gd = (s and s.growDirection or "up"):upper()
+                        if key == "StanceBar" or gd == "CENTER" or ai.refFor == gd then
+                            reapply(key)
+                        end
                     end
                 end
+            end
+        end
+        scaleFrame:RegisterEvent("UI_SCALE_CHANGED")
+        scaleFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+        scaleFrame:SetScript("OnEvent", function(sf)
+            local w, h = UIParent:GetSize()
+            if w == sf._eabW and h == sf._eabH then return end
+            if EllesmereUI._unlockActive or EllesmereUI._unlockModeSessionActive then return end
+            sf._eabW, sf._eabH = w, h
+            if InCombatLockdown() then
+                ns.CombatQueue.Defer("EABReapplyBarPositions", ReapplySavedBarPositions)
+            else
+                ReapplySavedBarPositions()
             end
         end)
     end
 
     -- Register events
-    local _bindDeferFrame
     self:RegisterEvent("UPDATE_BINDINGS", function()
         if InCombatLockdown() then
-            if not _bindDeferFrame then
-                _bindDeferFrame = ns.TakeShell()
-                _bindDeferFrame:SetScript("OnEvent", function(self)
-                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                    UpdateKeybinds()
-                end)
-            end
-            _bindDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            ns.CombatQueue.Defer("UpdateKeybinds", UpdateKeybinds)
         else
             UpdateKeybinds()
         end
@@ -18229,8 +18331,6 @@ local function EAB_UpdateQuickKeybindVisibility(show)
     end
 end
 
-local _qkbHookFrame
-
 _quickKeybindState.FinishClose = function()
     _quickKeybindState.closePending = false
     -- Restore action type on buttons that were suppressed during QKB mode. This handles
@@ -18431,7 +18531,14 @@ local function EAB_QuickKeybindClose()
         -- so restore that presentation immediately even though secure
         -- visibility drivers still have to wait until combat ends.
         EAB:RefreshMouseover()
-        _qkbHookFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("QuickKeybindClose", function()
+            if _quickKeybindState.closePending then
+                _quickKeybindState.FinishClose()
+            elseif _quickKeybindState.open
+                and not (QuickKeybindFrame and QuickKeybindFrame:IsShown()) then
+                EAB_QuickKeybindClose()
+            end
+        end)
         return
     end
     _quickKeybindState.open = false
@@ -18441,7 +18548,7 @@ local function EAB_QuickKeybindClose()
 end
 
 -- Defer hook until QuickKeybindFrame exists (it loads after PLAYER_LOGIN).
-_qkbHookFrame = CreateFrame("Frame")
+local _qkbHookFrame = CreateFrame("Frame")
 _qkbHookFrame:RegisterEvent("PLAYER_LOGIN")
 _qkbHookFrame:RegisterEvent("ADDON_LOADED")
 _qkbHookFrame:SetScript("OnEvent", function(self, event, addonName)
@@ -18486,14 +18593,6 @@ _qkbHookFrame:SetScript("OnEvent", function(self, event, addonName)
         _quickKeybindState.InitMacroFrame()
         if _quickKeybindState.macroFrameHooked then
             self:UnregisterEvent("ADDON_LOADED")
-        end
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-        if _quickKeybindState.closePending then
-            _quickKeybindState.FinishClose()
-        elseif _quickKeybindState.open
-            and not (QuickKeybindFrame and QuickKeybindFrame:IsShown()) then
-            EAB_QuickKeybindClose()
         end
     end
 end)

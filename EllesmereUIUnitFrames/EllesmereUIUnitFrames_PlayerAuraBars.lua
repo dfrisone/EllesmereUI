@@ -2435,22 +2435,9 @@ end
 -- own SetSize/ClearAllPoints/SetPoint ADDON_ACTION_BLOCKED in combat (a protected
 -- anchor-dependent poisons its anchor ancestor's geometry) -- while the cinematic/
 -- faction/vehicle recovery lane legitimately re-drives config mid-combat. Keyed and
--- coalesced; the event is registered only while something is queued, so idle cost is
--- zero.
-local pabRegenApplies = {}
-local pabRegenFrame
+-- coalesced through the addon's shared ns.CombatQueue.
 local function QueuePABRegenApply(key, fn)
-    pabRegenApplies[key] = fn
-    if not pabRegenFrame then
-        pabRegenFrame = CreateFrame("Frame")
-        pabRegenFrame:SetScript("OnEvent", function(self)
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            local pending = pabRegenApplies
-            pabRegenApplies = {}
-            for _, apply in pairs(pending) do apply() end
-        end)
-    end
-    pabRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    ns.CombatQueue.Defer("PAB:" .. key, fn)
 end
 
 -- Combat-safe Show/Hide for a bar PARENT. The engine aura container is a
@@ -2880,7 +2867,10 @@ do
     function BuffAuraMax(grid)
         local slots = grid.enchSlots or 0
         if slots <= 0 then return grid.effectiveMax end
-        return math.max(0, grid.effectiveMax - ActiveEnchantCount(slots))
+        local n = ActiveEnchantCount(slots)
+        -- WoW Forever: its imbue cells come off the budget too (nil elsewhere).
+        if ns.PAB_FvImbueCount then n = n + ns.PAB_FvImbueCount() end
+        return math.max(0, grid.effectiveMax - n)
     end
 
     -- The budget moves with the enchants, so an applied or expired oil re-applies
@@ -2906,6 +2896,8 @@ do
             enchEventFrame:UnregisterAllEvents()
             lastEnchCount = nil
         end
+        -- WoW Forever: its imbue cells follow the row on and off (nil elsewhere).
+        if ns.PAB_FvImbueSync then ns.PAB_FvImbueSync(want) end
     end
 end
 
@@ -2916,6 +2908,12 @@ local function ApplyEnchants(container, cfg, pad, grid)
     if (grid.enchSlots or 0) <= 0 then return end
     AK.AddItemEnchantmentsToContainer(container,
         BuildEnchantSpec(cfg, pad, grid.rowGap, grid.enchSlots))
+    -- WoW Forever: imbues are an enchant type the engine cells never see there,
+    -- drawn by EUI_UnitFrames_ForeverImbues.lua (nil on every other client).
+    if ns.PAB_FvImbueLayout then
+        ns.PAB_FvImbueLayout(container, buffsParent, cfg, grid,
+            BuildGroupLayout(cfg, pad, grid.rowGap), (BuildContainerSpec(buffsParent, cfg, grid)))
+    end
 end
 
 -- Buffs content signature: the resolved spell set PLUS the number of declared

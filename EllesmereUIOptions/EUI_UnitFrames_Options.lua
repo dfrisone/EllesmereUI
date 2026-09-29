@@ -130,37 +130,8 @@ function ns.UF_Ask3DPortraits(onConfirm)
     return true
 end
 
--- A cog whose own rows depend on one of its settings: that setter calls
--- ns.UF_RebuildCog(key), which closes the cog, rebuilds the page and reopens
--- the cog on its rebuilt button (the builder passes BuildInlineCog's returns
--- to ns.UF_TrackCog under the same key). On ns: the page builders sit at
--- their upvalue caps.
-ns._ufCogShows = {}
-function ns.UF_TrackCog(key, btn, show)
-    if not btn then return end
-    ns._ufCogShows[key] = show
-    if ns._ufCogReopen == key then
-        ns._ufCogReopen = nil
-        show(btn)
-    end
-end
-function ns.UF_RebuildCog(key)
-    local show = ns._ufCogShows[key]
-    local pf = show and show._popupFrame
-    if pf then
-        -- Spec Overrides: file the write under the cog's slot while the popup
-        -- still knows its owner (closing it clears the owner).
-        EllesmereUI._NotifySettingWrite(pf._owner)
-        pf:Hide()
-    end
-    ns._ufCogReopen = key
-    EllesmereUI:RefreshPage(true)
-    ns._ufCogReopen = nil
-end
-
--- Wingless Dragon Strata dropdown (player Shape Border cog, target Elite/Rare
--- Indicator cog): Match Frame keeps the frame's own strata, then the base
--- stratas.
+-- Dragon Strata dropdown (the PORTRAIT section's dragon cog): Match Frame
+-- keeps the frame's own strata, then the base stratas.
 do
     local values, order = { inherit = "Match Frame" }, { "inherit" }
     for _, k in ipairs(EllesmereUI.FRAME_STRATA_ORDER_BASE) do
@@ -1294,6 +1265,13 @@ initFrame:SetScript("OnEvent", function(self)
         local useClassColor = s.detachedPortraitClassColor or false
         local rawBorderSize = s.detachedPortraitBorderSize or 7
         local bExp = 7 - rawBorderSize  -- scale border UP; mask clips inner portion
+        -- Use the resolved art mode so NPC fallbacks keep their own zoom.
+        local classInset
+        if pFrame._previewMode == "class" then
+            local bh = pFrame:GetHeight()
+            if bh < 1 then bh = 46 end
+            classInset = math.floor(bh * 0.08)
+        end
 
         local bR, bG, bB = borderColor.r, borderColor.g, borderColor.b
         if useClassColor then
@@ -1320,9 +1298,14 @@ initFrame:SetScript("OnEvent", function(self)
             end
             -- Reset texture positions to default (detached mode expands them for mask fill)
             if pFrame._previewTex then
-                pFrame._previewTex:ClearAllPoints()
-                pFrame._previewTex:SetPoint("TOPLEFT", pFrame, "TOPLEFT", 0, 0)
-                pFrame._previewTex:SetPoint("BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", 0, 0)
+                if classInset then
+                    ns.UF_SetClassPortraitPoints(pFrame._previewTex, pFrame,
+                        s.portraitClassZoom, classInset, classInset)
+                else
+                    pFrame._previewTex:ClearAllPoints()
+                    pFrame._previewTex:SetPoint("TOPLEFT", pFrame, "TOPLEFT", 0, 0)
+                    pFrame._previewTex:SetPoint("BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", 0, 0)
+                end
             end
             if pFrame._previewModel then
                 pFrame._previewModel:ClearAllPoints()
@@ -1346,9 +1329,14 @@ initFrame:SetScript("OnEvent", function(self)
                 for _, t in ipairs(pFrame._sqBorderTexs) do t:Hide() end
             end
             if pFrame._previewTex then
-                pFrame._previewTex:ClearAllPoints()
-                pFrame._previewTex:SetPoint("TOPLEFT", pFrame, "TOPLEFT", 0, 0)
-                pFrame._previewTex:SetPoint("BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", 0, 0)
+                if classInset then
+                    ns.UF_SetClassPortraitPoints(pFrame._previewTex, pFrame,
+                        s.portraitClassZoom, classInset, classInset)
+                else
+                    pFrame._previewTex:ClearAllPoints()
+                    pFrame._previewTex:SetPoint("TOPLEFT", pFrame, "TOPLEFT", 0, 0)
+                    pFrame._previewTex:SetPoint("BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", 0, 0)
+                end
             end
             if pFrame._previewModel then
                 pFrame._previewModel:ClearAllPoints()
@@ -1423,9 +1411,14 @@ initFrame:SetScript("OnEvent", function(self)
         local oT =  (expand * bh2)
         local oB = -(expand * bh2)
         if pFrame._previewTex then
-            pFrame._previewTex:ClearAllPoints()
-            PP.Point(pFrame._previewTex, "TOPLEFT", pFrame, "TOPLEFT", oL, oT)
-            PP.Point(pFrame._previewTex, "BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", oR, oB)
+            if classInset then
+                ns.UF_SetClassPortraitPoints(pFrame._previewTex, pFrame,
+                    s.portraitClassZoom, classInset + oL, classInset - oT)
+            else
+                pFrame._previewTex:ClearAllPoints()
+                PP.Point(pFrame._previewTex, "TOPLEFT", pFrame, "TOPLEFT", oL, oT)
+                PP.Point(pFrame._previewTex, "BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", oR, oB)
+            end
         end
         if pFrame._previewModel then
             -- 3D models ignore SetClipsChildren, so pin them to the frame bounds.
@@ -1434,14 +1427,13 @@ initFrame:SetScript("OnEvent", function(self)
             PP.Point(pFrame._previewModel, "BOTTOMRIGHT", pFrame, "BOTTOMRIGHT", 0, 0)
         end
 
-        -- Outer Ring / Inner Shadow / Wingless Dragon: the live portrait's own
-        -- helper. A shown Outer Ring, an unmasked ring below Size 7 and the
-        -- Wingless Dragon's holder reach past the frame, so the detached
-        -- preview stops clipping (every layout branch of Update sets its clip
-        -- again first).
+        -- Outer Ring / Inner Shadow: the live portrait's own helper. A shown
+        -- Outer Ring and an unmasked ring below Size 7 reach past the frame,
+        -- so the detached preview stops clipping (every layout branch of
+        -- Update sets its clip again first; the Portrait Dragon lifts it on
+        -- its own after this).
         ns.UF_PortraitExtras(pFrame, s, shape)
-        if ringInset or (pFrame._outerRing and pFrame._outerRing:IsShown())
-            or (pFrame._winglessHolder and pFrame._winglessHolder:IsShown()) then
+        if ringInset or (pFrame._outerRing and pFrame._outerRing:IsShown()) then
             pFrame:SetClipsChildren(false)
         end
     end
@@ -1882,6 +1874,13 @@ initFrame:SetScript("OnEvent", function(self)
                 _lastAppliedStyle = style
                 _lastAppliedZoom = zoom
                 _lastAppliedMirror = mirror
+                portraitFrame._previewMode = mode
+                -- The preview reuses one texture for class art and 2D portraits.
+                if mode ~= "class" and portraitTex._classZoomMasked then
+                    portraitTex:RemoveMaskTexture(portraitTex._classZoomMask)
+                    portraitTex._classZoomMask:Hide()
+                    portraitTex._classZoomMasked = nil
+                end
                 if mode == "3d" then
                     portraitFrame:Show()
                     portraitTex:Hide()
@@ -1903,7 +1902,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- Use current portrait frame height for inset (not captured barH)
                     local curBH = portraitFrame:GetHeight()
                     if curBH < 1 then curBH = barH end
-                    local inset = math.floor(curBH * 0.10)
+                    local inset = math.floor(curBH * 0.08)
                     portraitTex:ClearAllPoints()
                     PP.Point(portraitTex, "TOPLEFT", portraitFrame, "TOPLEFT", inset, -inset)
                     PP.Point(portraitTex, "BOTTOMRIGHT", portraitFrame, "BOTTOMRIGHT", -inset, inset)
@@ -3482,6 +3481,7 @@ initFrame:SetScript("OnEvent", function(self)
                     for _, t in ipairs(portraitFrame._sqBorderTexs) do t:Hide() end
                 end
                 ns.UF_PortraitExtras(portraitFrame, nil)
+                ns.UF_PortraitDragon(portraitFrame, nil)
                 local tex = portraitFrame._previewTex
                 if portraitFrame._shapeMask then
                     if tex then pcall(tex.RemoveMaskTexture, tex, portraitFrame._shapeMask) end
@@ -4272,6 +4272,23 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                     if portraitFrame._applyMode then portraitFrame._applyMode() end
                     ApplyPreviewPortraitShape(portraitFrame, s)
+                    -- Portrait Dragon (player, target, focus; any shape, attached
+                    -- or detached, never a stock style): the live helper at the
+                    -- preview's strata, the enemy frames showing the gold sample.
+                    -- It reaches past the frame, so the preview stops clipping.
+                    local pvDragon = not blizzG
+                        and (unitKey == "player" or unitKey == "target" or unitKey == "focus")
+                        and ns.UF_DragonSettings(unitKey, s)
+                    if pvDragon and pvDragon.on then
+                        local dt = ns.UF_PortraitDragon(portraitFrame, pvDragon,
+                            (unitKey == "player") ~= pvDragon.flip)
+                        if dt then
+                            dt:Show()
+                            portraitFrame:SetClipsChildren(false)
+                        end
+                    else
+                        ns.UF_PortraitDragon(portraitFrame, nil)
+                    end
                 else
                     if portraitFrame:IsShown() then
                         portraitFrame:Hide()
@@ -5225,9 +5242,6 @@ initFrame:SetScript("OnEvent", function(self)
                     PP.Point(castFill, "TOPLEFT", castbar, "TOPLEFT", 1, 0)
                     PP.Point(castFill, "BOTTOMLEFT", castbar, "BOTTOMLEFT", 1, 1)
                 end
-                -- Custom Border Style: the live cast bar's own helper, after the
-                -- scale change (nothing while the opt-in is off).
-                ns.UF_ApplyCastBorder(castbar, s, EllesmereUI.BlizzStyle.Get("unitframes"))
             end
             if castIconFrame then
                 PP.SetBorderSize(castIconFrame, 1)
@@ -5240,6 +5254,12 @@ initFrame:SetScript("OnEvent", function(self)
                 -- through the live helper (nil hands it back to the bar).
                 ns.UF_CastIconPortraitLayout(castIconFrame, castIconFrame._iconTex,
                     (portraitFrame and ns.UF_CastIconOnPortrait(unitKey, s)) and portraitFrame or nil, s)
+            end
+            -- Share border geometry, icon decoration and seam cleanup with live
+            -- frames, after the scale and portrait placement have been applied
+            -- (preview: its divider stays off the UI-scale re-layout list).
+            if castbar then
+                ns.UF_ApplyCastBorder(castbar, s, EllesmereUI.BlizzStyle.Get("unitframes"), unitKey, castIconFrame, true)
             end
 
             -- Re-apply PixelUtil sizing to every element so it stays pixel-perfect at
@@ -5300,6 +5320,10 @@ initFrame:SetScript("OnEvent", function(self)
             -- this panel repaints itself on a scale change).
             if power then
                 ns.UpdatePowerSeam(power, s, EllesmereUI.BlizzStyle.Get("unitframes"), true)
+            end
+            if s.portraitSeparator or pf._portraitSeparator then
+                ns.UpdatePortraitSeparator(pf, portraitFrame, s, effectiveSide,
+                    sp and isAttached, EllesmereUI.BlizzStyle.Get("unitframes"), true)
             end
 
             -- Re-snap BTB
@@ -5572,15 +5596,10 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 local et = pf._pvElite
                 if et then
-                    if unitKey == "target" and eyes.elite and s.eliteIndicatorEnabled == true then
-                        et:SetDesaturated(false)
-                        et:SetVertexColor(1, 1, 1)
-                        if s.eliteIndicatorStyle == "wingless" and portraitFrame and sp and not blizzG then
-                            ns.UF_PlaceWinglessDragon(et, portraitFrame, ns.UF_WINGLESS_GOLD,
-                                s.eliteIndicatorWinglessFlip == true,
-                                s.eliteIndicatorWinglessClassColor, s.eliteIndicatorWinglessScale,
-                                s.eliteIndicatorX, s.eliteIndicatorY)
-                        elseif s.eliteIndicatorStyle == "pixelsDragon" and portraitFrame and sp and not blizzG then
+                    -- A "wingless" style reads as off: the Portrait Dragon draws that one.
+                    if unitKey == "target" and eyes.elite and s.eliteIndicatorEnabled == true
+                        and not ns.UF_DragonLegacy(s) then
+                        if s.eliteIndicatorStyle == "pixelsDragon" and portraitFrame and sp and not blizzG then
                             -- Pixels Dragon (Elite sample) around the portrait, as live
                             -- (the stock styles draw the Badge).
                             local d = portraitFrame:GetHeight() * ns.UF_ELITE_DRAGON_SCALE
@@ -5968,6 +5987,11 @@ initFrame:SetScript("OnEvent", function(self)
         end
         local src = UNIT_DB_MAP[srcUnit]()
         local dst = UNIT_DB_MAP[dstUnit]()
+        -- A target on the old "wingless" Elite/Rare style shows its dragon
+        -- through a view (ns.UF_DragonLegacy) over target-only keys this copy
+        -- never moves: pin both tables onto the dragon's own keys first.
+        ns.UF_PinLegacyDragon(src)
+        ns.UF_PinLegacyDragon(dst)
         local keys = {}
         for k in pairs(src) do keys[k] = true end
         for k in pairs(dst) do keys[k] = true end
@@ -6913,8 +6937,9 @@ initFrame:SetScript("OnEvent", function(self)
             suffix:SetTextColor(1, 1, 1, 0.35)
             suffix:SetText(EllesmereUI.L("(Applies to All Units)"))
             local lbl
-            for i = 1, decRow._leftRegion:GetNumRegions() do
-                local reg = select(i, decRow._leftRegion:GetRegions())
+            local regions = { decRow._leftRegion:GetRegions() }
+            for i = 1, #regions do
+                local reg = regions[i]
                 if reg and reg.GetText and EllesmereUI.EnKey(reg:GetText()) == "Show Decimal on Health Text" then
                     lbl = reg; break
                 end
@@ -7166,8 +7191,9 @@ initFrame:SetScript("OnEvent", function(self)
                   return SVal("portraitStyle", "attached")
               end,
               setValue=function(v)
-                  -- Any mode change flips row visibility below (Size/Position hidden
-                  -- at None, Shape detached-only), so a real change forces a rebuild.
+                  -- Any mode change flips row visibility below (Size/Position and the
+                  -- dragon row hidden at None, Shape detached-only), so a real
+                  -- change forces a rebuild.
                   local prevStyle = SVal("portraitStyle", "attached")
                   SSet("portraitStyle", v)
                   -- Auto-set shape to "none" when entering detached + 3D
@@ -7276,11 +7302,32 @@ initFrame:SetScript("OnEvent", function(self)
                 },
             })
         end
-        -- Cog on Portrait Mode: the Non-Player Portrait opt-in (its toggle
-        -- rebuilds the page to show or drop that row below).
+        -- Portrait settings; the separator is offered only for attached portraits.
         if not EllesmereUI._prebuilding then
+            local rows = {
+                { type="toggle", label="Custom Non-Player Portrait",
+                  tooltip="Pick what NPCs show in Class art instead of their 2D portrait.",
+                  get=function() return SVal("portraitNonPlayerOn", false) end,
+                  set=function(v)
+                      SSet("portraitNonPlayerOn", v or nil)
+                      EllesmereUI:RefreshPage(true)
+                  end },
+            }
+            if SVal("portraitStyle", "attached") == "attached" then
+                rows[#rows + 1] = { type="toggle", label="Vertical Border Separator",
+                    tooltip="Draws the selected border style between the attached portrait and the bars.",
+                    disabled=function()
+                        return SVal("borderSize", 1) <= 0
+                            or not EllesmereUI.GetBorderCompanion(SGet("borderTexture") or "solid", "sepV")
+                    end,
+                    disabledTooltip="This option requires a border style with divider art and a Border Size above 0.",
+                    rawTooltip=true,
+                    get=function() return SVal("portraitSeparator", false) end,
+                    set=function(v) SSet("portraitSeparator", v or nil) end,
+                }
+            end
             EllesmereUI.BuildInlineCog(sharedPortraitModeRow._leftRegion, {
-                title = "Non-Player Portrait",
+                title = "Portrait Settings",
                 disabled = function()
                     return EllesmereUI.BlizzStyle.Get("unitframes") or SVal("portraitStyle", "attached") == "none"
                 end,
@@ -7290,15 +7337,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end,
                 rawTooltip = function() return not EllesmereUI.BlizzStyle.Get("unitframes") end,
                 requireState = "disabled",
-                rows = {
-                    { type="toggle", label="Custom Non-Player Portrait",
-                      tooltip="Pick what NPCs show in Class art instead of their 2D portrait.",
-                      get=function() return SVal("portraitNonPlayerOn", false) end,
-                      set=function(v)
-                          SSet("portraitNonPlayerOn", v or nil)
-                          EllesmereUI:RefreshPage(true)
-                      end },
-                },
+                rows = rows,
             })
         end
         -- Sync icon: Portrait Mode (Art Style)
@@ -7480,6 +7519,19 @@ initFrame:SetScript("OnEvent", function(self)
                     { type="slider", label="3D Zoom", min=100, max=300, step=1,
                       get=function() return SVal("portrait3dZoom", 100) end,
                       set=function(v) SSet("portrait3dZoom", v); UpdatePreview() end },
+                    { type="slider", label="Class Zoom", min=50, max=200, step=1,
+                      disabled=function()
+                          return EllesmereUI.BlizzStyle.Get("unitframes") or SVal("portraitMode", "2d") ~= "class"
+                      end,
+                      disabledTooltip=function()
+                          if EllesmereUI.BlizzStyle.Get("unitframes") then
+                              return EllesmereUI.BlizzStyle.Label("unitframes")
+                          end
+                          return "This option requires the Class Art Style."
+                      end,
+                      requireState="disabled",
+                      get=function() return SVal("portraitClassZoom", 100) end,
+                      set=function(v) SSet("portraitClassZoom", v); UpdatePreview() end },
                     -- 2D and class art only; the stock styles keep their full art.
                     { type="toggle", label="Mirror Portrait",
                       tooltip="Flips the portrait horizontally so it faces the other way.",
@@ -7683,59 +7735,7 @@ initFrame:SetScript("OnEvent", function(self)
                       set=function(v) SSet("detachedPortraitInnerShadow", v); UpdatePreview() end },
                 },
             }
-            -- The target frame's dragon is an Elite/Rare Indicator style instead.
-            -- Its tuning rows are built only while it is on: the toggle rebuilds
-            -- the page and reopens this cog.
-            if selectedUnit == "player" then
-                local shapeTip = "This option requires a Circle, Pixels Circle, Square or Rounded Square Shape."
-                local function badShape() return not ns.UF_DRAGON_SHAPES[SVal("detachedPortraitShape", "portrait")] end
-                local rows = borderCog.rows
-                rows[#rows + 1] = { type="toggle", label="Wingless Dragon",
-                  tooltip="Curls a gold dragon around the portrait.",
-                  disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                  get=function() return SVal("detachedPortraitWinglessDragon", false) end,
-                  set=function(v)
-                      SSet("detachedPortraitWinglessDragon", v); UpdatePreview()
-                      ns.UF_RebuildCog("shapeBorder")
-                  end }
-                if SVal("detachedPortraitWinglessDragon", false) then
-                    rows[#rows + 1] = { type="slider", label="Dragon X Offset", min=-100, max=100, step=1,
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonX", 0) end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonX", v); UpdatePreview() end }
-                    rows[#rows + 1] = { type="slider", label="Dragon Y Offset", min=-100, max=100, step=1,
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonY", 0) end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonY", v); UpdatePreview() end }
-                    rows[#rows + 1] = { type="slider", label="Dragon Size", min=50, max=200, step=1,
-                      tooltip="Size of the Wingless Dragon, as a percent of its fit around the portrait.",
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonScale", 100) end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonScale", v); UpdatePreview() end }
-                    rows[#rows + 1] = { type="toggle", label="Flip Dragon",
-                      tooltip="Turns the Wingless Dragon to face the other way around the portrait.",
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonFlip", false) end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonFlip", v); UpdatePreview() end }
-                    rows[#rows + 1] = { type="toggle", label="Use Class Color",
-                      tooltip="Tints the Wingless Dragon with your class color instead of gold.",
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonClassColor", false) end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonClassColor", v); UpdatePreview() end }
-                    rows[#rows + 1] = { type="dropdown", label="Dragon Strata",
-                      values=ns._ufDragonStrataValues, order=ns._ufDragonStrataOrder,
-                      tooltip="Match Frame draws the dragon with the portrait. A higher strata draws it over the rest of the frame, border included.",
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonStrata", "inherit") end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonStrata", v); UpdatePreview() end }
-                    rows[#rows + 1] = { type="slider", label="Dragon Frame Level", min=1, max=30, step=1,
-                      tooltip="Raises the dragon within its strata. Higher values draw it over more of the frame.",
-                      disabled=badShape, disabledTooltip=shapeTip, rawTooltip=true,
-                      get=function() return SVal("detachedPortraitWinglessDragonLevel", 1) end,
-                      set=function(v) SSet("detachedPortraitWinglessDragonLevel", v); UpdatePreview() end }
-                end
-            end
-            ns.UF_TrackCog("shapeBorder", EllesmereUI.BuildInlineCog(borderRgn, borderCog))
+            EllesmereUI.BuildInlineCog(borderRgn, borderCog)
         end
         -- Sync icons: Shape (left) and Shape Border (right)
         if not EllesmereUI._prebuilding then
@@ -7845,6 +7845,82 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
         end   -- close Shape/Shape Border detached-only gate
+
+        -- Row 4: Portrait Dragon toggle | Dragon Size (+ cog with the rest).
+        -- Any shape, attached or detached, on player, target and focus alike:
+        -- the Player Frame Dragon always shows, the Elite Enemy Dragon marks
+        -- elite and boss (gold) and rare (silver) enemies. HIDDEN while Portrait
+        -- Mode is None, as Size/Position above (the mode dropdown rebuilds the
+        -- page on any change); a stock style gates both slots, which drops the
+        -- row. Values read through ns.UF_DragonSettings (a target on the
+        -- "wingless" Elite/Rare Indicator style shows that style's values), and
+        -- every setter pins that view first (ns.UF_PinLegacyDragon).
+        if SVal("portraitStyle", "attached") ~= "none" then
+            local playerDragon = selectedUnit == "player"
+            local dragonName = playerDragon and "Player Frame Dragon" or "Elite Enemy Dragon"
+            local function DVal(k) return ns.UF_DragonSettings(selectedUnit, SDB())[k] end
+            local function DSet(key, v)
+                ns.UF_PinLegacyDragon(SDB())
+                SSet(key, v)
+            end
+            local function dragonOff() return not DVal("on") end
+            local dragonRow
+            dragonRow, h = W:DualRow(parent, y,
+                EllesmereUI.BlizzStyle.Gate("unitframes", { type="toggle",
+                  text=playerDragon and "Enable Player Frame Dragon" or "Enable Elite Enemy Dragon",
+                  tooltip=playerDragon and "Curls Blizzard's gold dragon around the portrait."
+                      or "Curls a gold dragon around the portrait of elite and boss enemies, and a silver one around rares.",
+                  getValue=function() return DVal("on") end,
+                  setValue=function(v)
+                      DSet("detachedPortraitWinglessDragon", v)
+                      EllesmereUI:RefreshPage()
+                  end }),
+                EllesmereUI.BlizzStyle.Gate("unitframes", { type="slider", text="Dragon Size", min=50, max=200, step=1,
+                  tooltip="Size of the dragon, as a percent of its fit around the portrait.",
+                  disabled=dragonOff, disabledTooltip=dragonName,
+                  getValue=function() return DVal("scale") end,
+                  setValue=function(v) DSet("detachedPortraitWinglessDragonScale", v) end }));  y = y - h
+            if not EllesmereUI._prebuilding then
+                local rows = {
+                    { type="slider", label="X Offset", min=-100, max=100, step=1,
+                      get=function() return DVal("x") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonX", v) end },
+                    { type="slider", label="Y Offset", min=-100, max=100, step=1,
+                      get=function() return DVal("y") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonY", v) end },
+                    { type="toggle", label="Flip Dragon",
+                      tooltip="Turns the dragon to face the other way around the portrait.",
+                      get=function() return DVal("flip") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonFlip", v) end },
+                    { type="toggle", label="Use Class Color",
+                      tooltip=playerDragon and "Tints the dragon with your class color instead of gold."
+                          or "Tints the dragon with your class color instead of gold or silver.",
+                      get=function() return DVal("classColor") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonClassColor", v) end },
+                    { type="dropdown", label="Dragon Strata",
+                      values=ns._ufDragonStrataValues, order=ns._ufDragonStrataOrder,
+                      tooltip="Match Frame draws the dragon with the portrait. A higher strata draws it over the rest of the frame, border included.",
+                      get=function() return DVal("strata") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonStrata", v) end },
+                    { type="slider", label="Dragon Frame Level", min=1, max=30, step=1,
+                      tooltip="Raises the dragon within its strata. Higher values draw it over more of the frame.",
+                      get=function() return DVal("level") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonLevel", v) end },
+                }
+                -- The enemy dragon keeps the Elite/Rare Indicator's instance rule.
+                if not playerDragon then
+                    rows[#rows + 1] = { type="toggle", label="Show in Instances",
+                      tooltip="Also show the dragon in dungeons and raids, where most enemies are elite.",
+                      get=function() return DVal("instances") end,
+                      set=function(v) DSet("detachedPortraitWinglessDragonInstances", v) end }
+                end
+                EllesmereUI.BuildInlineCog(dragonRow._rightRegion, {
+                    title = dragonName,
+                    disabled = dragonOff, disabledTooltip = dragonName,
+                    rows = rows,
+                })
+            end
+        end   -- close dragon row hidden-at-None gate
 
         _, h = W:Spacer(parent, y, 20); y = y - h
 
@@ -9707,22 +9783,43 @@ initFrame:SetScript("OnEvent", function(self)
         -- Cogwheel on Text Position for size + x/y offsets (left of row 4)
         if not EllesmereUI._prebuilding then
             local ppRgn = sharedPowerRow4._leftRegion
+            local ppRows = {
+                { type="slider", label="Size", min=6, max=100, step=1,
+                  get=function() return SVal("powerPercentSize", 9) end,
+                  set=function(v) SSet("powerPercentSize", v); UpdatePreview() end },
+                { type="slider", label="X Offset", min=-50, max=50, step=1,
+                  get=function() return SVal("powerPercentX", 0) end,
+                  set=function(v) SSet("powerPercentX", v); UpdatePreview() end },
+                { type="slider", label="Y Offset", min=-50, max=50, step=1,
+                  get=function() return SVal("powerPercentY", 0) end,
+                  set=function(v) SSet("powerPercentY", v); UpdatePreview() end },
+            }
+            -- WoW Forever druids: the Mana + Form Power bar's text has its own
+            -- offsets (EUI_UnitFrames_ForeverFormBar.lua); unset, they follow
+            -- the power text's.
+            local _, cpClass = UnitClass("player")
+            if EllesmereUI.IS_FOREVER == true and selectedUnit == "player" and cpClass == "DRUID" then
+                local function NoFormBar() return not SVal("foreverFormBar", false) end
+                local function FormOffset(key, base)
+                    local v = SVal(key, nil)
+                    if v == nil then v = SVal(base, 0) end
+                    return v
+                end
+                ppRows[#ppRows + 1] = { type="slider", label="Form Text X Offset", min=-50, max=50, step=1,
+                    disabled = NoFormBar, disabledTooltip = "Requires Power Type: Mana + Form Power.", rawTooltip = true,
+                    get=function() return FormOffset("foreverFormTextX", "powerPercentX") end,
+                    set=function(v) SSet("foreverFormTextX", v) end }
+                ppRows[#ppRows + 1] = { type="slider", label="Form Text Y Offset", min=-50, max=50, step=1,
+                    disabled = NoFormBar, disabledTooltip = "Requires Power Type: Mana + Form Power.", rawTooltip = true,
+                    get=function() return FormOffset("foreverFormTextY", "powerPercentY") end,
+                    set=function(v) SSet("foreverFormTextY", v) end }
+            end
             EllesmereUI.BuildInlineCog(ppRgn, {
                 icon = EllesmereUI.RESIZE_ICON,
                 disabled = function() return SVal("powerPercentText", "none") == "none" end,
                 disabledTooltip = "This option requires a text position other than none.",
                 title = "Text Position",
-                rows = {
-                    { type="slider", label="Size", min=6, max=100, step=1,
-                      get=function() return SVal("powerPercentSize", 9) end,
-                      set=function(v) SSet("powerPercentSize", v); UpdatePreview() end },
-                    { type="slider", label="X Offset", min=-50, max=50, step=1,
-                      get=function() return SVal("powerPercentX", 0) end,
-                      set=function(v) SSet("powerPercentX", v); UpdatePreview() end },
-                    { type="slider", label="Y Offset", min=-50, max=50, step=1,
-                      get=function() return SVal("powerPercentY", 0) end,
-                      set=function(v) SSet("powerPercentY", v); UpdatePreview() end },
-                },
+                rows = ppRows,
             })
         end
         -- Text Position sync (left of row 4)
@@ -10012,29 +10109,44 @@ initFrame:SetScript("OnEvent", function(self)
             -- druid's Power Type shares it: one choice for every form, stored
             -- under a string key so it can never meet a retail spec ID in the
             -- table.
-            local sparkCfg = { type="toggle", text="Mana Regen Spark",
-                  tooltip="Sweeps a spark across the bar for 5 seconds after you spend mana, until mana regen resumes.",
-                  getValue=function() return SVal("manaRegenSpark", false) == true end,
-                  setValue=function(v) SSet("manaRegenSpark", v) end }
+            -- Off or one of two modes: a view over manaRegenSpark (on/off) and
+            -- manaRegenSparkMode (nil = 5-Second Rule), so saved choices read as before.
+            local sparkCfg = { type="dropdown", text="Mana Regen Spark",
+                  tooltip="5-Second Rule sweeps a spark across the bar for 5 seconds after you spend mana, until mana regen resumes. Regen Ticks then keeps sweeping every 2 seconds while mana regenerates.",
+                  values = { off = "Off", fsr = "5-Second Rule", ticks = "Regen Ticks" },
+                  order = { "off", "fsr", "ticks" },
+                  getValue=function()
+                      if SVal("manaRegenSpark", false) ~= true then return "off" end
+                      return SVal("manaRegenSparkMode", "fsr") == "ticks" and "ticks" or "fsr"
+                  end,
+                  setValue=function(v)
+                      if v ~= "off" then SSet("manaRegenSparkMode", v == "ticks" and "ticks" or nil) end
+                      SSet("manaRegenSpark", v ~= "off")
+                  end }
             local _, playerClass = UnitClass("player")
             if playerClass == "DRUID" then
                 _, h = W:DualRow(parent, y,
+                    -- Mana + Form Power: Mana plus foreverFormBar (a second bar
+                    -- with the form's power, EUI_UnitFrames_ForeverFormBar.lua).
                     { type="dropdown", text="Power Type",
-                      tooltip="Mana keeps the bar on Mana in Bear and Cat Form.",
-                      values = { ["default"] = "Match Form", ["alt"] = "Mana" },
-                      order = { "default", "alt" },
+                      tooltip="Mana keeps the bar on Mana in Bear and Cat Form. Mana + Form Power also shows your Energy or Rage in a second bar.",
+                      values = { ["default"] = "Match Form", ["alt"] = "Mana", ["both"] = "Mana + Form Power" },
+                      order = { "default", "alt", "both" },
                       getValue = function()
-                          local ov = UNIT_DB_MAP["player"]().powerTypeOverride
-                          return (ov and ov.foreverDruid) and "alt" or "default"
+                          local pdb = UNIT_DB_MAP["player"]()
+                          local ov = pdb.powerTypeOverride
+                          if not (ov and ov.foreverDruid) then return "default" end
+                          return pdb.foreverFormBar and "both" or "alt"
                       end,
                       setValue = function(v)
                           local pdb = UNIT_DB_MAP["player"]()
-                          if v == "alt" then
+                          if v ~= "default" then
                               if not pdb.powerTypeOverride then pdb.powerTypeOverride = {} end
                               pdb.powerTypeOverride.foreverDruid = true
                           elseif pdb.powerTypeOverride then
                               pdb.powerTypeOverride.foreverDruid = nil
                           end
+                          pdb.foreverFormBar = (v == "both") or nil
                           ReloadAndUpdate()
                       end },
                     sparkCfg);  y = y - h
@@ -10547,7 +10659,8 @@ initFrame:SetScript("OnEvent", function(self)
                 },
             })
         end
-        -- Inline cog on Show Icon: "Make Icon Part of the Bar", "Show Icon on Right",
+        -- Inline cog on Show Icon: "Icon Border", "Make Icon Part of the Bar",
+        -- "Border Wraps Icon", "Vertical Separator", "Show Icon on Right",
         -- "Show Icon on Portrait", additive Offset X/Y nudges. Operates on the
         -- selected unit. An icon on the portrait greys the bar-side placement rows.
         if not EllesmereUI._prebuilding then
@@ -10558,6 +10671,15 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.BuildInlineCog(rgn, {
                 title = "Cast Icon",
                 rows = {
+                    { type = "toggle", label = "Icon Border",
+                      tooltip = "Use the cast bar's border style, size and color around the icon.",
+                      disabled = function() return EllesmereUI.BlizzStyle.Get("unitframes") or not GetShowIcon() or IconOnPortrait() end,
+                      disabledTooltip = "This option requires Show Icon beside the cast bar and the EllesmereUI style.",
+                      get = function() return UNIT_DB_MAP[selectedUnit]().castIconBorder == true end,
+                      set = function(v)
+                          UNIT_DB_MAP[selectedUnit]().castIconBorder = v
+                          ReloadAndUpdate(); UpdatePreview()
+                      end },
                     { type = "toggle", label = "Make Icon Part of the Bar",
                       tooltip = "This makes it so the width of the cast bar includes the icon, rather than placing it to the left of the cast bars width.",
                       -- The stock styles count a shown icon as part of the bar
@@ -10581,6 +10703,44 @@ initFrame:SetScript("OnEvent", function(self)
                           else
                               UNIT_DB_MAP[selectedUnit]().castbarIconInWidth = v
                           end
+                          ReloadAndUpdate(); UpdatePreview()
+                      end },
+                    -- Off: the custom border wraps the bar alone. The wrap
+                    -- also drops while the icon has an offset.
+                    { type = "toggle", label = "Border Wraps Icon",
+                      tooltip = "Draw the custom cast bar border around the icon and the bar together. An icon with an offset keeps its own border.",
+                      disabled = function()
+                          local s = UNIT_DB_MAP[selectedUnit]()
+                          return EllesmereUI.BlizzStyle.Get("unitframes") or s.castBorderCustom ~= true
+                              or not ns.UF_CastIconInWidth(selectedUnit, s)
+                      end,
+                      disabledTooltip = "This option requires Custom Border Style, Show Icon and Make Icon Part of the Bar, with the EllesmereUI style.",
+                      get = function() return UNIT_DB_MAP[selectedUnit]().castBorderWrapIcon == true end,
+                      set = function(v)
+                          UNIT_DB_MAP[selectedUnit]().castBorderWrapIcon = v
+                          ReloadAndUpdate(); UpdatePreview()
+                          EllesmereUI.ReapplyMatchPads(selectedUnit .. "Castbar")
+                      end },
+                    -- Solid draws a flat line; a textured style needs its own
+                    -- divider art (ns.UF_CastIconSeamOK, the runtime's gate).
+                    { type = "toggle", label = "Vertical Separator",
+                      tooltip = "Draw a divider between the integrated icon and the bar, using the cast bar's border appearance.",
+                      disabled = function()
+                          local s = UNIT_DB_MAP[selectedUnit]()
+                          return EllesmereUI.BlizzStyle.Get("unitframes")
+                              or not ns.UF_CastIconInWidth(selectedUnit, s)
+                              or not ns.UF_CastIconSeamOK(s)
+                      end,
+                      disabledTooltip = function()
+                          local s = UNIT_DB_MAP[selectedUnit]()
+                          if EllesmereUI.BlizzStyle.Get("unitframes") or not ns.UF_CastIconInWidth(selectedUnit, s) then
+                              return "This option requires Show Icon and Make Icon Part of the Bar, with the EllesmereUI style."
+                          end
+                          return "This option requires Solid or a border style with divider art, and a Border Size above 0."
+                      end,
+                      get = function() return UNIT_DB_MAP[selectedUnit]().castIconSeparator == true end,
+                      set = function(v)
+                          UNIT_DB_MAP[selectedUnit]().castIconSeparator = v
                           ReloadAndUpdate(); UpdatePreview()
                       end },
                     { type = "toggle", label = "Show Icon on Right",
@@ -14648,27 +14808,31 @@ initFrame:SetScript("OnEvent", function(self)
         -- cog). Target only (classification is a property of the unit being looked at);
         -- same controls as Leader Indicator above, badge atlases match nameplates.
         if selectedUnit == "target" then
+            -- A table on the "wingless" style belongs to the Portrait Dragon
+            -- (ns.UF_DragonLegacy): the indicator reads as off and as Badge, and
+            -- every setter pins that view over first.
+            local function eliteLegacy() return ns.UF_DragonLegacy(SDB()) end
+            local function eliteSet(key, v)
+                ns.UF_PinLegacyDragon(SDB())
+                SSetSupported(key, v)
+            end
             local function eliteIndOff()
-                return SValSupported("eliteIndicatorEnabled", false) ~= true
+                return SValSupported("eliteIndicatorEnabled", false) ~= true or eliteLegacy()
             end
-            -- The dragon styles sit on the portrait: Size and Position apply to
-            -- the Badge style only, the X/Y offsets to the Badge and the Wingless
-            -- Dragon. The stock styles always draw the Badge.
+            -- The Pixels Dragon style sits on the portrait: Size, Position and the
+            -- X/Y offsets apply to the Badge style only. The stock styles always
+            -- draw the Badge.
             local function eliteDragon()
-                return SValSupported("eliteIndicatorStyle", "badge") ~= "badge"
-                    and not EllesmereUI.BlizzStyle.Get("unitframes")
-            end
-            local function pixelsDragon()
-                return SValSupported("eliteIndicatorStyle", "badge") == "pixelsDragon"
+                return not eliteLegacy() and SValSupported("eliteIndicatorStyle", "badge") ~= "badge"
                     and not EllesmereUI.BlizzStyle.Get("unitframes")
             end
             local eliteRow
             eliteRow, h = W:DualRow(parent, y,
                 { type="toggle", text="Elite/Rare Indicator",
                   tooltip="Marks elite, rare elite and rare targets; the Pixels Dragon style also marks players.",
-                  getValue=function() return SValSupported("eliteIndicatorEnabled", false) == true end,
+                  getValue=function() return not eliteIndOff() end,
                   setValue=function(v)
-                      SSetSupported("eliteIndicatorEnabled", v)
+                      eliteSet("eliteIndicatorEnabled", v)
                       EllesmereUI:RefreshPage()
                   end },
                 { type="slider", text="Elite Icon Size", min=8, max=48, step=1,
@@ -14678,7 +14842,7 @@ initFrame:SetScript("OnEvent", function(self)
                       return "This option only applies to the Badge style."
                   end,
                   getValue=function() return SValSupported("eliteIndicatorSize", 16) end,
-                  setValue=function(v) SSetSupported("eliteIndicatorSize", v) end });  y = y - h
+                  setValue=function(v) eliteSet("eliteIndicatorSize", v) end });  y = y - h
             SApplySupport(eliteRow._leftRegion, "eliteIndicatorEnabled")
             SApplySupport(eliteRow._rightRegion, "eliteIndicatorSize")
             if not EllesmereUI._prebuilding then
@@ -14688,7 +14852,7 @@ initFrame:SetScript("OnEvent", function(self)
                         { type="toggle", label="Show in Instances",
                           tooltip="Also show the badge in dungeons and raids, where most enemies are elite.",
                           get=function() return SValSupported("eliteIndicatorShowInInstances", false) == true end,
-                          set=function(v) SSetSupported("eliteIndicatorShowInInstances", v) end },
+                          set=function(v) eliteSet("eliteIndicatorShowInInstances", v) end },
                     },
                 })
             end
@@ -14697,66 +14861,38 @@ initFrame:SetScript("OnEvent", function(self)
                 local elitePosOrder = { "topleft", "topright", "bottomleft", "bottomright", "portrait" }
                 local function stockStyle() return EllesmereUI.BlizzStyle.Get("unitframes") end
                 local function stockStyleTip() return EllesmereUI.BlizzStyle.Label("unitframes") end
-                local rows = {
-                    { type="dropdown", label="Style",
-                      tooltip="Badge shows a small icon; Pixels Dragon wraps the portrait in classification art; Wingless Dragon curls the gold or silver dragon around it.",
-                      values={ badge = "Badge", pixelsDragon = "Pixels Dragon", wingless = "Wingless Dragon" },
-                      order={ "badge", "pixelsDragon", "wingless" },
-                      disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
-                      get=function() return SValSupported("eliteIndicatorStyle", "badge") end,
-                      -- The Wingless Dragon's rows are built only for that style: a
-                      -- change into or out of it rebuilds the page and reopens this
-                      -- cog; any other change only dims the Elite Icon Size slider.
-                      set=function(v)
-                          local rebuild = (v == "wingless") ~= (SValSupported("eliteIndicatorStyle", "badge") == "wingless")
-                          SSetSupported("eliteIndicatorStyle", v)
-                          if rebuild then ns.UF_RebuildCog("elite") else EllesmereUI:RefreshPage() end
-                      end },
-                    { type="dropdown", label="Position", values=elitePosValues, order=elitePosOrder,
-                      disabled=eliteDragon, disabledTooltip="This option only applies to the Badge style.",
-                      get=function() return SValSupported("eliteIndicatorPosition", "topleft") end,
-                      set=function(v) SSetSupported("eliteIndicatorPosition", v) end },
-                    { type="slider", label="X Offset", min=-200, max=200, step=1,
-                      disabled=pixelsDragon, disabledTooltip="This option does not apply to the Pixels Dragon style.",
-                      get=function() return SValSupported("eliteIndicatorX", 0) end,
-                      set=function(v) SSetSupported("eliteIndicatorX", v) end },
-                    { type="slider", label="Y Offset", min=-200, max=200, step=1,
-                      disabled=pixelsDragon, disabledTooltip="This option does not apply to the Pixels Dragon style.",
-                      get=function() return SValSupported("eliteIndicatorY", 0) end,
-                      set=function(v) SSetSupported("eliteIndicatorY", v) end },
-                }
-                if SValSupported("eliteIndicatorStyle", "badge") == "wingless" then
-                    rows[#rows + 1] = { type="slider", label="Dragon Size", min=50, max=200, step=1,
-                      tooltip="Size of the Wingless Dragon, as a percent of its fit around the portrait.",
-                      disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
-                      get=function() return SValSupported("eliteIndicatorWinglessScale", 100) end,
-                      set=function(v) SSetSupported("eliteIndicatorWinglessScale", v) end }
-                    rows[#rows + 1] = { type="toggle", label="Flip Dragon",
-                      tooltip="Turns the Wingless Dragon to face the other way around the portrait.",
-                      disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
-                      get=function() return SValSupported("eliteIndicatorWinglessFlip", false) == true end,
-                      set=function(v) SSetSupported("eliteIndicatorWinglessFlip", v) end }
-                    rows[#rows + 1] = { type="toggle", label="Use Class Color",
-                      tooltip="Tints the Wingless Dragon with your class color instead of gold or silver.",
-                      disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
-                      get=function() return SValSupported("eliteIndicatorWinglessClassColor", false) == true end,
-                      set=function(v) SSetSupported("eliteIndicatorWinglessClassColor", v) end }
-                    rows[#rows + 1] = { type="dropdown", label="Dragon Strata",
-                      values=ns._ufDragonStrataValues, order=ns._ufDragonStrataOrder,
-                      tooltip="Match Frame draws the dragon with the portrait. A higher strata draws it over the rest of the frame, border included.",
-                      disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
-                      get=function() return SValSupported("eliteIndicatorWinglessStrata", "inherit") end,
-                      set=function(v) SSetSupported("eliteIndicatorWinglessStrata", v) end }
-                    rows[#rows + 1] = { type="slider", label="Dragon Frame Level", min=1, max=30, step=1,
-                      tooltip="Raises the dragon within its strata. Higher values draw it over more of the frame.",
-                      disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
-                      get=function() return SValSupported("eliteIndicatorWinglessLevel", 1) end,
-                      set=function(v) SSetSupported("eliteIndicatorWinglessLevel", v) end }
-                end
-                ns.UF_TrackCog("elite", EllesmereUI.BuildInlineCog(eliteRow._rightRegion, { disabled = eliteIndOff, disabledTooltip = "Elite/Rare Indicator",
+                local badgeOnly = "This option only applies to the Badge style."
+                EllesmereUI.BuildInlineCog(eliteRow._rightRegion, { disabled = eliteIndOff, disabledTooltip = "Elite/Rare Indicator",
                     title = "Elite/Rare Indicator Settings",
-                    rows = rows,
-                }))
+                    rows = {
+                        { type="dropdown", label="Style",
+                          tooltip="Badge shows a small icon; Pixels Dragon wraps the portrait in classification art.",
+                          values={ badge = "Badge", pixelsDragon = "Pixels Dragon" },
+                          order={ "badge", "pixelsDragon" },
+                          disabled=stockStyle, disabledTooltip=stockStyleTip, requireState="disabled",
+                          get=function()
+                              if eliteLegacy() then return "badge" end
+                              return SValSupported("eliteIndicatorStyle", "badge")
+                          end,
+                          -- Only dims or lifts the Badge-only controls.
+                          set=function(v)
+                              eliteSet("eliteIndicatorStyle", v)
+                              EllesmereUI:RefreshPage()
+                          end },
+                        { type="dropdown", label="Position", values=elitePosValues, order=elitePosOrder,
+                          disabled=eliteDragon, disabledTooltip=badgeOnly, rawTooltip=true,
+                          get=function() return SValSupported("eliteIndicatorPosition", "topleft") end,
+                          set=function(v) eliteSet("eliteIndicatorPosition", v) end },
+                        { type="slider", label="X Offset", min=-200, max=200, step=1,
+                          disabled=eliteDragon, disabledTooltip=badgeOnly, rawTooltip=true,
+                          get=function() return SValSupported("eliteIndicatorX", 0) end,
+                          set=function(v) eliteSet("eliteIndicatorX", v) end },
+                        { type="slider", label="Y Offset", min=-200, max=200, step=1,
+                          disabled=eliteDragon, disabledTooltip=badgeOnly, rawTooltip=true,
+                          get=function() return SValSupported("eliteIndicatorY", 0) end,
+                          set=function(v) eliteSet("eliteIndicatorY", v) end },
+                    },
+                })
             end
             ns._ufAddPvEye(eliteRow._leftRegion, "elite", "elite/rare indicator")
             parent._ufEliteRow = eliteRow
@@ -16794,8 +16930,9 @@ initFrame:SetScript("OnEvent", function(self)
         do
             activateBtn = select(1, activateBtnFrame:GetChildren())
             if activateBtn then
-                for i = 1, activateBtn:GetNumRegions() do
-                    local rgn = select(i, activateBtn:GetRegions())
+                local regions = { activateBtn:GetRegions() }
+                for i = 1, #regions do
+                    local rgn = regions[i]
                     if rgn and rgn.GetText and rgn:GetText() then
                         activateBtnLbl = rgn; break
                     end
@@ -17959,11 +18096,18 @@ initFrame:SetScript("OnEvent", function(self)
                   -- Custom widths floor at 30 (matches the unlock-mode resize
                   -- minimum): below the cast icon size the bar layout inverts.
                   setValue=function(v) if v > 0 and v < 30 then v = 30 end; B.castbarWidth = v; ReloadAndUpdate(); if ns.RefreshBossPreviewDebuffs then ns.RefreshBossPreviewDebuffs() end end });  yy = yy - hh
-            -- Icon cog (left): "Make Icon Part of the Bar" / "Show Icon on Right".
+            -- Icon cog (left): "Icon Border" / "Make Icon Part of the Bar" /
+            -- "Border Wraps Icon" / "Vertical Separator" / "Show Icon on Right".
             if not EllesmereUI._prebuilding then
                 EllesmereUI.BuildInlineCog(growthRow._leftRegion, {
                     title = "Cast Icon",
                     rows = {
+                        { type = "toggle", label = "Icon Border",
+                          tooltip = "Use the cast bar's border style, size and color around the icon.",
+                          disabled = function() return EllesmereUI.BlizzStyle.Get("unitframes") or B.showCastIcon == false end,
+                          disabledTooltip = "This option requires Show Icon and the EllesmereUI style.",
+                          get = function() return B.castIconBorder == true end,
+                          set = function(v) B.castIconBorder = v; ReloadAndUpdate() end },
                         { type = "toggle", label = "Make Icon Part of the Bar",
                           tooltip = "This makes it so the width of the cast bar includes the icon, rather than placing it to the left of the cast bars width.",
                           -- The stock styles count a shown icon as part of the bar
@@ -17976,6 +18120,29 @@ initFrame:SetScript("OnEvent", function(self)
                               return B.castbarIconInWidth ~= false
                           end,
                           set = function(v) B.castbarIconInWidth = v; ReloadAndUpdate() end },
+                        { type = "toggle", label = "Border Wraps Icon",
+                          tooltip = "Draw the custom cast bar border around the icon and the bar together. An icon with an offset keeps its own border.",
+                          disabled = function()
+                              return EllesmereUI.BlizzStyle.Get("unitframes") or B.castBorderCustom ~= true
+                                  or not ns.UF_CastIconInWidth("boss", B)
+                          end,
+                          disabledTooltip = "This option requires Custom Border Style, Show Icon and Make Icon Part of the Bar, with the EllesmereUI style.",
+                          get = function() return B.castBorderWrapIcon == true end,
+                          set = function(v) B.castBorderWrapIcon = v; ReloadAndUpdate() end },
+                        { type = "toggle", label = "Vertical Separator",
+                          tooltip = "Draw a divider between the integrated icon and the bar, using the cast bar's border appearance.",
+                          disabled = function()
+                              return EllesmereUI.BlizzStyle.Get("unitframes") or not ns.UF_CastIconInWidth("boss", B)
+                                  or not ns.UF_CastIconSeamOK(B)
+                          end,
+                          disabledTooltip = function()
+                              if EllesmereUI.BlizzStyle.Get("unitframes") or not ns.UF_CastIconInWidth("boss", B) then
+                                  return "This option requires Show Icon and Make Icon Part of the Bar, with the EllesmereUI style."
+                              end
+                              return "This option requires Solid or a border style with divider art, and a Border Size above 0."
+                          end,
+                          get = function() return B.castIconSeparator == true end,
+                          set = function(v) B.castIconSeparator = v; ReloadAndUpdate() end },
                         { type = "toggle", label = "Show Icon on Right",
                           tooltip = "Place the cast icon on the right side of the bar instead of the left.",
                           get = function() return B.castbarIconRight == true end,

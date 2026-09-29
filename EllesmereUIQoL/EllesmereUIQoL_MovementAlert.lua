@@ -23,6 +23,8 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  toggle is on.
 -------------------------------------------------------------------------------
 
+local ns = select(2, ...)
+
 local function IsSecret(value)
     return issecretvalue and issecretvalue(value) or false
 end
@@ -1119,7 +1121,7 @@ end
 
 -- buffActive engine-lane handles (declared here so HideMovementDisplay -- the
 -- universal off-path -- can park the host; defined in the lane block below).
-local buffAlertHost, buffAlertBuilt, buffAlertRegenArm, buffAlertLastCount
+local buffAlertHost, buffAlertBuilt, buffAlertRegenFn, buffAlertLastCount
 local buffAlertContainer, buffAlertAssist, buffAlertVehicle
 
 -- keepBuffLane: the cooldown display is going away but the buffActive lane is
@@ -1545,14 +1547,12 @@ local function RepositionBuffAlertHost(count)
     if not buffAlertHost then return end
     buffAlertLastCount = count
     if InCombatLockdown() then
-        if not buffAlertRegenArm then
-            buffAlertRegenArm = CreateFrame("Frame")
-            buffAlertRegenArm:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+        if not buffAlertRegenFn then
+            buffAlertRegenFn = function()
                 RepositionBuffAlertHost(buffAlertLastCount or 0)
-            end)
+            end
         end
-        buffAlertRegenArm:RegisterEvent("PLAYER_REGEN_ENABLED")
+        ns.CombatQueue.Defer("BuffAlertHostPos", buffAlertRegenFn)
         return
     end
     local fw, fh = movementFrame:GetWidth(), movementFrame:GetHeight()

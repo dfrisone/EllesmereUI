@@ -2900,7 +2900,6 @@ local unitWatcher = CreateFrame("Frame")
 unitWatcher:RegisterEvent("PLAYER_TARGET_CHANGED")
 unitWatcher:RegisterEvent("PLAYER_FOCUS_CHANGED")
 unitWatcher:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT")
-unitWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
 unitWatcher:SetScript("OnEvent", function(_, event)
     -- The Tracked Auras gate first (a friendly/hostile flip re-configures the
     -- debuff groups), then the one re-parse.
@@ -2912,14 +2911,6 @@ unitWatcher:SetScript("OnEvent", function(_, event)
         IncGate.Apply("focus", true)
         PurgeGlow.Check("focus", true)
         RefreshUnit("focus")
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Filter-set swaps requested during combat run now.
-        for unitKey, entry in pairs(registry) do
-            if entry.pendingSwap then
-                entry.pendingSwap = nil
-                ns.UF_ReloadAuraContainers(entry.frame, unitKey)
-            end
-        end
     else
         for i = 1, 5 do RefreshUnit("boss" .. i) end
     end
