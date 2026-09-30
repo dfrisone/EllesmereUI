@@ -102,8 +102,9 @@ end
 local CHARACTER_BANK_BAGS = {}
 local WARBAND_BANK_BAGS = {}
 if Enum and Enum.BagIndex then
-    -- Midnight character bank: CharacterBankTab_1 through CharacterBankTab_6
-    for i = 1, 6 do
+    -- Character bank: CharacterBankTab_1 through _6 (WoW Forever has up to _9:
+    -- the base bank plus its bank bag slots). Missing enum keys are skipped.
+    for i = 1, 9 do
         local key = "CharacterBankTab_" .. i
         if Enum.BagIndex[key] then
             CHARACTER_BANK_BAGS[#CHARACTER_BANK_BAGS + 1] = Enum.BagIndex[key]
@@ -1110,6 +1111,60 @@ EUI_Bank._scrollThumb = thumb
 EUI_Bank._updateThumb = UpdateThumb
 
 -------------------------------------------------------------------------------
+--  Base bank slots (WoW Forever)
+--  Forever's base bank slots are the first character bank tab, which costs
+--  nothing and which Blizzard's own bank buys the first time it opens. Ours
+--  replaces that frame and PurchaseBankTab is protected, so while the next
+--  character tab is free and no tab shows, the empty bank offers it through
+--  Blizzard's own purchase button (its confirmation does the buying).
+-------------------------------------------------------------------------------
+local UpdateBaseTabPrompt
+if EUI.IS_FOREVER then
+    local prompt
+
+    local function BaseTabFree()
+        if _warbandOnly or not C_Bank.CanPurchaseBankTab(Enum.BankType.Character) then return false end
+        local data = C_Bank.FetchNextPurchasableBankTabData(Enum.BankType.Character)
+        return data ~= nil and data.tabCost == 0
+    end
+
+    local function BuildPrompt()
+        prompt = CreateFrame("Frame", nil, EUI_Bank)
+        prompt:SetPoint("TOPLEFT", sf, "TOPLEFT", 0, 0)
+        prompt:SetPoint("BOTTOMRIGHT", sf, "BOTTOMRIGHT", 0, 0)
+        prompt:SetFrameLevel(sf:GetFrameLevel() + 10)
+        local msg = prompt:CreateFontString(nil, "OVERLAY")
+        msg:SetFont(GetFont(), 13, "")
+        msg:SetTextColor(1, 1, 1, 0.75)
+        msg:SetWidth(300)
+        msg:SetJustifyH("CENTER")
+        msg:SetPoint("BOTTOM", prompt, "CENTER", 0, 14)
+        msg:SetText(EllesmereUI.L("Your base bank slots come with a free bank tab. Open it once to start using your bank."))
+        local g = EUI.ELLESMERE_GREEN
+        local visual = EUI.MakeActionButton(prompt, GetFont(), EllesmereUI.L("Open Bank Slots"), g.r, g.g, g.b, { w = 200 })
+        visual:SetPoint("TOP", prompt, "CENTER", 0, -6)
+        visual:EnableMouse(false)
+        -- The click goes to Blizzard's purchase button laid over the visual one.
+        local buy = CreateFrame("Button", nil, prompt, "BankPanelPurchaseButtonScriptTemplate")
+        buy:SetAttribute("overrideBankType", Enum.BankType.Character)
+        buy:SetAllPoints(visual)
+        buy:SetFrameLevel(visual:GetFrameLevel() + 5)
+        buy:SetScript("OnEnter", function() visual:GetScript("OnEnter")(visual) end)
+        buy:SetScript("OnLeave", function() visual:GetScript("OnLeave")(visual) end)
+    end
+
+    -- show: true while the bank has no tab to show.
+    UpdateBaseTabPrompt = function(show)
+        if show and BaseTabFree() then
+            if not prompt then BuildPrompt() end
+            prompt:Show()
+        elseif prompt then
+            prompt:Hide()
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Button Pool
 -------------------------------------------------------------------------------
 local _bankSlots = {}
@@ -1794,9 +1849,11 @@ function EUI_Bank:RefreshBank()
         if #_allTabs == 0 then
             -- Still build sidebar so purchase buttons are visible
             BuildBankSidebar()
+            if UpdateBaseTabPrompt then UpdateBaseTabPrompt(true) end
             return
         end
     end
+    if UpdateBaseTabPrompt then UpdateBaseTabPrompt(false) end
 
 
     -- Search filter

@@ -2457,6 +2457,12 @@ function EllesmereUI.ImportFullAccountData(payload)
     -- (EllesmereUI_Migration.lua). FvBW is nil on retail.
     local fvSweep = EllesmereUI.FvBW and type(EllesmereUIDB._migrations) == "table"
         and EllesmereUIDB._migrations.forever_buff_wipe_sweep_v1
+    -- Likewise the snapshot switch's one-time legacy check: its mark stays, so
+    -- the recipient's own profiles are never re-read as the old layout's. Only
+    -- WoW Forever ever writes it.
+    local fvSnapKey = EllesmereUI._FvSnapFlag
+    local fvSnap = fvSnapKey and type(EllesmereUIDB._migrations) == "table"
+        and EllesmereUIDB._migrations[fvSnapKey]
     for k, v in pairs(data) do
         if k ~= "profiles" and k ~= "profileOrder" and k ~= "activeProfile"
            and not FULL_EXPORT_EXCLUDED[k]
@@ -2467,6 +2473,10 @@ function EllesmereUI.ImportFullAccountData(payload)
     if fvSweep then
         if type(EllesmereUIDB._migrations) ~= "table" then EllesmereUIDB._migrations = {} end
         EllesmereUIDB._migrations.forever_buff_wipe_sweep_v1 = fvSweep
+    end
+    if fvSnap then
+        if type(EllesmereUIDB._migrations) ~= "table" then EllesmereUIDB._migrations = {} end
+        EllesmereUIDB._migrations[fvSnapKey] = fvSnap
     end
     if otherClient then EllesmereUIDB._tbbLinkOwner = nil end
     -- Match extras ride with their links: a string that carries links but no

@@ -425,15 +425,37 @@ local function UpdateOverlayVisuals()
                         cg = entry.glowColor.g or 0.788
                         cb = entry.glowColor.b or 0.137
                     end
+                    -- Blackout must sit BELOW the button's cooldown swipe/countdown
+                    -- (same fix as the per-icon Cooldown State glow); every other
+                    -- style stays above it at the normal level. On a CDM icon it
+                    -- takes the per-icon Blackout's level (+12), under the border
+                    -- (+13) as well as the cooldown widget (+14); one below the
+                    -- cooldown would share the border's level and could cover it.
+                    local styleEntry = ns.GLOW_STYLES and ns.GLOW_STYLES[style]
+                    local isFill = styleEntry and styleEntry.solidFill
+                    if isFill then
+                        if gpfc then
+                            overlay:SetFrameLevel(glowParent:GetFrameLevel() + 12)
+                        else
+                            local cdWidget = glowParent.Cooldown or glowParent.cooldown
+                            overlay:SetFrameLevel(cdWidget and math.max(1, cdWidget:GetFrameLevel() - 1)
+                                or glowParent:GetFrameLevel() + 1)
+                        end
+                    else
+                        overlay:SetFrameLevel(glowParent:GetFrameLevel() + 15)
+                    end
+                    -- The fill opacity rides opts only for Blackout (fresh table per
+                    -- start: the combat-gate record keeps opts by reference).
                     if gateSt then
                         -- Both gate masks travel as data (mask2 is nil unless the
                         -- operator needs the upper gate): the Show Glows Only in
                         -- Combat replay restarts from the recorded opts, so a mask
                         -- bound out here would be missing on every texture that
                         -- replay creates fresh.
-                        StartNativeGlow(overlay, style, cr, cg, cb, { maskWith = gateSt.mask, maskWith2 = gateSt.mask2 })
+                        StartNativeGlow(overlay, style, cr, cg, cb, { maskWith = gateSt.mask, maskWith2 = gateSt.mask2,
+                            alpha = isFill and entry.glowAlpha or nil })
                     else
-                        StartNativeGlow(overlay, style, cr, cg, cb)
+                        StartNativeGlow(overlay, style, cr, cg, cb, isFill and { alpha = entry.glowAlpha } or nil)
                     end
                 else
                     StopNativeGlow(overlay)

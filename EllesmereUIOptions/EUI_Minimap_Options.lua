@@ -166,8 +166,9 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Row 2: Size | Interactable Button Size
-        _, h = W:DualRow(parent, y,
+        -- Row 2: Size (+ Icon Size cog) | Interactable Button Size
+        local sizeRow
+        sizeRow, h = W:DualRow(parent, y,
             { type="slider", text="Size", min=100, max=600, step=1,
               getValue=function() local m = MinimapDB(); return m and m.mapSize or 140 end,
               setValue=function(v)
@@ -214,6 +215,29 @@ initFrame:SetScript("OnEvent", function(self)
                 RefreshMinimap()
               end })
         y = y - h
+        -- Icon Size in a cog on Size: Blizzard's Edit Mode Icon Size (the scale of
+        -- the icons on the map), kept here and applied to the map itself, so the
+        -- Edit Mode layout is never written. Unset shows Edit Mode's value.
+        if not EllesmereUI._prebuilding then
+            EllesmereUI.BuildInlineCog(sizeRow._leftRegion, {
+                title = "Minimap Icons",
+                rows = {
+                    { type="slider", label="Icon Size", min=50, max=200, step=10,
+                      tooltip="Size of the icons on the map, such as group members, quest objectives and gathering nodes. The same setting as Blizzard's Edit Mode Icon Size.",
+                      get=function()
+                          local m = MinimapDB()
+                          local v = m and m.iconScale
+                          if v then return v end
+                          return (_G._EMM_EditModeIconScale and _G._EMM_EditModeIconScale()) or 100
+                      end,
+                      set=function(v)
+                          local m = MinimapDB(); if not m then return end
+                          m.iconScale = v
+                          if _G._EMM_ApplyIconScale then _G._EMM_ApplyIconScale() end
+                      end },
+                },
+            })
+        end
 
         -- Row 3: Border Style (+ options cog) | Border Size (+ class/custom swatches)
         local texValues, texOrder = EllesmereUI.GetBorderTextureDropdown()

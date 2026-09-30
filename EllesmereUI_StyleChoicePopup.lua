@@ -18,7 +18,8 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  its reload is confirmed).
 --  Once per install; an existing user never sees it, since only a first
 --  install writes the stamp (the module picker's close, and on WoW Forever
---  also the base-layout seed). Global Settings > Style keeps every choice
+--  also the first-install loader at ADDON_LOADED in EllesmereUI_FirstInstall.lua).
+--  Global Settings > Style keeps every choice
 --  reversible per module.
 -------------------------------------------------------------------------------
 local EllesmereUI = _G.EllesmereUI
@@ -58,8 +59,6 @@ local function ApplyLook(styleKey)
     local BS = EllesmereUI.BlizzStyle
     if not (BS and BS.ApplyAll) then return false end
     BS.ApplyAll(styleKey)
-    -- WoW Forever base layout: the stance bar follows the look's player frame.
-    if EllesmereUI.ForeverLayoutForLook then EllesmereUI.ForeverLayoutForLook(styleKey) end
     return true
 end
 EllesmereUI.ApplyFirstInstallLook = ApplyLook

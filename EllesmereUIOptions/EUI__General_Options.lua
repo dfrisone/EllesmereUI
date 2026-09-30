@@ -1212,6 +1212,106 @@ end
 -------------------------------------------------------------------------------
 EllesmereUI._WHATSNEW_PATCHES = {
     {
+        version = "9.3.4",
+        heroes = {
+            {
+                module = "Nameplates",
+                title  = "Target of Target and Bottom Text",
+                desc   = "Any Core Text Position can now show the name of whoever the enemy is targeting, class colored for players. New Bottom Left and Bottom Right text slots sit under the health bar and drop below the cast bar while the enemy casts.",
+                nav    = { module = "EllesmereUINameplates", page = "Display",
+                           section = "CORE TEXT POSITIONS", highlight = "Bottom Left Text" },
+            },
+            {
+                -- Static card: it happens at first install, nothing to open.
+                forever = true,
+                module = "General",
+                title  = "First Install Keeps Your Layout",
+                desc   = "A fresh install now starts from where your Blizzard frames already are, including the experience bar, micro menu and bags, with the gryphons at the outer ends of that row, instead of a fixed EllesmereUI layout. If you already use EllesmereUI, your current layout stays exactly as it is.",
+            },
+        },
+        features = {
+            {
+                module = "Action Bars",
+                title  = "Micro Menu and Bag Bar End Caps",
+                desc   = "The micro menu and bag bar can show end caps like the action bars, and a fresh install moves Action Bar 1's end caps to the outer ends of any bars placed directly beside it",
+                nav    = { module = "EllesmereUIActionBars", page = "Menu, Bags & XP Bars",
+                           section = "MICRO MENU & BAGS", highlight = "Micro Menu End Caps" },
+            },
+            {
+                -- Static card: picked from a window's meter type menu, no options row.
+                forever = true,
+                module = "Damage Meters",
+                title  = "Threat Meter Type",
+                desc   = "Windows can show Forever Essentials' threat list as a Threat meter type, in the window's own style and with the Threat page's list settings",
+            },
+            {
+                -- Icon Size sits in the Size slider's cog.
+                module = "Minimap",
+                title  = "Icon Size",
+                desc   = "The Size setting's cog can scale the icons on the map, like Edit Mode's Icon Size",
+                nav    = { module = "EllesmereUIMinimap", page = "Minimap",
+                           section = "DISPLAY", highlight = "Size" },
+            },
+            {
+                module = "Raid Frames",
+                title  = "Level Text",
+                desc   = "Level Position can show each member's level in front of their name or on its own spot (WoW Forever shows it by default)",
+                nav    = { module = "EllesmereUIRaidFrames", page = "Frames",
+                           section = "TEXT DISPLAY", highlight = "Level Position" },
+            },
+            {
+                -- The Missing Buffs row exists only on WoW Forever.
+                forever = true,
+                module = "Raid Frames",
+                title  = "Missing Buffs Choices",
+                desc   = "Missing Buffs now covers only the buffs you can cast, and its cog picks which ones, Thorns and Paladin Blessings included (all on by default)",
+                nav    = EllesmereUI.IS_FOREVER and { module = "EllesmereUIRaidFrames", page = "Frames",
+                           section = "INDICATORS", highlight = "Missing Buffs" } or nil,
+            },
+            {
+                -- Name Format heads the Name Size row's cog, on WoW Forever only.
+                forever = true,
+                module = "Raid Frames",
+                title  = "Name Format",
+                desc   = "Raid and party names can show only the first or last word of a name, set at the top of the Name Size cog",
+                nav    = EllesmereUI.IS_FOREVER and { module = "EllesmereUIRaidFrames", page = "Frames",
+                           section = "TEXT DISPLAY", highlight = "Name Size" } or nil,
+            },
+            {
+                -- The CALL TOTEM BAR section is built for shamans on WoW Forever only.
+                forever = true,
+                module = "Resource Bars",
+                title  = "Call Totem Bar",
+                desc   = "Shamans can show Blizzard's call totem bar in the Totem Bar look and move it with Unlock Mode (off by default)",
+                nav    = (EllesmereUI.IS_FOREVER and select(2, UnitClass("player")) == "SHAMAN")
+                    and { module = "EllesmereUIResourceBars", page = "Totem Bar",
+                          section = "CALL TOTEM BAR", highlight = "Enable Call Totem Bar" } or nil,
+            },
+            {
+                module = "Unit Frames",
+                title  = "Has Duration Filter",
+                desc   = "The player frame's Debuff Filter and the target and focus Buff Filter can hide permanent auras with Has Duration, and the target and focus Debuff Filter cog has it too",
+                nav    = { module = "EllesmereUIUnitFrames", page = "Main Frames",
+                           section = "BUFFS AND DEBUFFS", highlight = "Debuff Filter" },
+            },
+        },
+        fixes = {
+            { forever = true, module = "Bags", text = "A bank whose free base slots were never opened now offers an Open Bank Slots button instead of showing an empty window." },
+            { forever = true, module = "Bags", text = "Items in your sixth bank bag and any after it now show in the bank window." },
+            { module = "Blizz UI Enhanced", text = "The Bonus Roll window's timer bar is visible again with the window skin on, in the same style as the loot roll timers." },
+            { module = "Chat", text = "On a fresh install the chat window now starts far enough from the screen edge to fit its sidebar." },
+            { module = "Minimap", text = "Edit Mode no longer shows a selection box for Blizzard's hidden minimap." },
+            { module = "Nameplates", text = "Auras in the top slot now sit above the Level text when Level is the Top Text." },
+            { module = "Nameplates", text = "Clicking the Level or Health # text in the settings preview now scrolls to its text position, like the name and health %." },
+            { module = "Nameplates", text = "Text colors set by a spec-assigned nameplate preset now apply to the first nameplates after login, not only after the next settings change." },
+            { forever = true, module = "Nameplates", text = "Blizzard's arrow under the nameplates of units behind your camera no longer shows." },
+            { forever = true, module = "Raid Frames", text = "Missing Buffs no longer marks group members who have the buff as missing during and after fights in dungeons and raids." },
+            { forever = true, module = "Resource Bars", text = "The Totem Bar's Enabled Classes list no longer offers Death Knight, Monk, Demon Hunter or Evoker." },
+            { module = "Unit Frames", text = "The target and focus cast bars no longer go missing from Unlock Mode when it is opened with a target or focus selected under the Blizzard, Classic or WoW Forever looks." },
+            { module = "Localization", text = "Brazilian Portuguese translations updated." },
+        },
+    },
+    {
         version = "9.3.3",
         mini = true,
         features = {
@@ -2329,104 +2429,6 @@ EllesmereUI._WHATSNEW_PATCHES = {
             { module = "Unit Frames", text = "Name > Target text colours a boss's target by class again in instanced content, and updates the moment a unit's target changes." },
             { forever = true, module = "Unit Frames", text = "Combo points show on the player frame, and the classic combo point art no longer floats beside the frame." },
             { module = "Localization", text = "More Korean and Traditional Chinese translations: module style cards, Run Summary, Swing Timer, chat bubbles, Rotation Assist and the launch popup." },
-        },
-    },
-    {
-        version = "9.2.1",
-        heroes = {
-            {
-                -- Full-width banner card (banner = true, see MakeBannerCard) above
-                -- the hero cards: the Forever wordmark stands in for the title and
-                -- the Forever theme's bronze replaces the accent. Static.
-                banner  = true,
-                accent  = { r = 220 / 255, g = 167 / 255, b = 127 / 255 },
-                eyebrow = "NOW ON WOW FOREVER",
-                title   = "EllesmereUI Forever",
-                logo    = { path = "Interface\\AddOns\\EllesmereUI\\media\\icons\\eui-forever-logo.png",
-                            coords = { 12 / 384, 377 / 384, 64 / 256, 210 / 256 }, w = 250, h = 100 },
-                desc    = "Everything from retail, ported to WoW Forever and tuned for the vanilla client, with a clean base layout the moment you log in. One EllesmereUI: the same install runs on either game.",
-            },
-            {
-                module = "General",
-                title  = "Blizzard Style",
-                desc   = "Give any module the default Blizzard look while keeping EllesmereUI features and customization: Unit Frames, Auras, Nameplates, CDM, Resource Bars, Minimap and Damage Meters all join the Action Bars, each with its own switch under Global Settings > Style.",
-                nav    = { module = "_EUIGlobal", page = "Style", section = "MODULE STYLES", highlight = "" },
-            },
-            {
-                module = "Mythic+ Tools",
-                title  = "Run Summary",
-                desc   = "An end-of-key overview of your group with one row per member: spec, item level, score and score gain, loot, damage, damage taken, interrupts and deaths, sortable by column. Off by default; a per-character run history keeps your recent keys, and /ov reopens the panel.",
-                nav    = { module = "EllesmereUIMythicTimer", page = "Run Summary",
-                           section = "RUN SUMMARY", highlight = "Enable Run Summary" },
-            },
-        },
-        features = {
-            {
-                -- Static card: Unlock Mode has no options page.
-                module = "General",
-                title  = "Screen Edge Anchors",
-                desc   = "Anchor an element to a screen edge in Unlock Mode so it holds its edge distance across resolutions and UI scales",
-            },
-            {
-                module = "General",
-                title  = "EllesmereUI Forever Theme",
-                desc   = "A new options panel theme in soft bronze, the default on WoW Forever and available on retail from the EUI Options Theme dropdown",
-                nav    = { module = "_EUIGlobal", page = "General",
-                           section = "DISPLAY", highlight = "EUI Options Theme" },
-            },
-            {
-                module = "Damage Meters",
-                title  = "Unsafe Refresh Rate",
-                desc   = "A cog beside Refresh Rate unlocks refresh rates down to 0.2 seconds",
-                nav    = { module = "EllesmereUIDamageMeters", page = "Damage Meters",
-                           section = "DISPLAY", highlight = "Refresh Rate" },
-            },
-            {
-                module = "Bags",
-                title  = "Currency Icons in Pickers",
-                desc   = "The Enabled Currencies picker now shows each currency's icon",
-                nav    = { module = "EllesmereUIBags", page = "Bags",
-                           section = "DISPLAY", highlight = "Enabled Currencies" },
-            },
-            {
-                -- Static card: the page only exists on WoW Forever.
-                module = "Quality of Life",
-                title  = "Swing Timer (WoW Forever)",
-                desc   = "Main-hand, off-hand and ranged swing bars driven by the Forever client's own swing event, with queued-attack highlighting and Unlock Mode placement; off by default",
-            },
-        },
-        fixes = {
-            { module = "Aura Buff Reminders", text = "The main-hand weapon enchant reminder no longer disappears when only the off-hand is enchanted." },
-            { module = "Aura Buff Reminders", text = "Feast of Knowledge and Hearty Feast of Knowledge are now offered by the food reminder." },
-            { module = "Bags", text = "Crafted Hero and Myth gear now shows its track colour and sorts with that track instead of falling back to the rarity colour." },
-            { module = "Blizz UI Enhanced", text = "Socket icons on the character sheet now follow the sheet's equipment slot order." },
-            { module = "Blizz UI Enhanced", text = "The character sheet's socket strip now pages instead of overflowing the sheet when many gems are equipped." },
-            { module = "Blizz UI Enhanced", text = "The role check popup's Accept and Decline buttons now match the skin." },
-            { module = "Chat", text = "The tab layout and tab border disabled tooltips now state the correct requirement." },
-            { module = "Chat", text = "The Edit Box Font Size slider now starts from the chat window's current size instead of 12." },
-            { module = "Cooldown Manager", text = "A removed custom spell's Custom Active State no longer hides or overlays the same spell when it is tracked normally." },
-            { module = "Cooldown Manager", text = "Custom Icon now applies to custom aura buffs on Buffs bars." },
-            { module = "Cooldown Manager", text = "When a spell is bound on more than one action bar, the keybind label shows the lowest-numbered bar's key." },
-            { module = "Cooldown Manager", text = "The button settings tip no longer lingers on other pages after you leave the CDM Bars page." },
-            { module = "Damage Meters", text = "Bar Height and Spell History icon and bar sizes now scale with the UI like the rest of the window, so a shared profile shows the same proportions for everyone." },
-            { module = "Damage Meters", text = "The mode picker no longer opens with collapsed cards on a window placed by a screen or element anchor, and it re-flows when the window is resized." },
-            { module = "General", text = "The Instances visibility option now applies in battlegrounds and arenas." },
-            { module = "General", text = "Escape closes the Great Vault window reliably from both the minimap and data bar shortcuts." },
-            { module = "General", text = "In Unlock Mode, an element moved by its anchor cascade no longer jumps to the screen centre after its anchor link is removed." },
-            { module = "General", text = "Reset All no longer leaves the character sheet on Blizzard's default look." },
-            { module = "Minimap", text = "A lone addon button now shows on the map by itself; the group button only appears once a second button joins it." },
-            { module = "Nameplates", text = "Friendly name-only player names now show an outline on the Classic nameplate style, matching the other styles." },
-            { module = "Player Aura Bars", text = "Weapon enchant icons now sit flush with the buff run in every grow direction, count against Max Icons, and stay in place in combat." },
-            { module = "Player Aura Bars", text = "Weapon enchants now show whenever the Buffs bar is on All Buffs or Has Duration; the separate Weapon Enchants filter row is gone." },
-            { module = "Player Aura Bars", text = "Bars keep the same place across resolutions and UI scales, and icons and gaps snap to the nearest pixel instead of rounding down." },
-            { module = "Player Aura Bars", text = "Bars now build reliably at login instead of sometimes leaving Blizzard's buff frame up until an options change." },
-            { module = "QoL", text = "Raid Tools Quick Fire hotkeys can now be bound to mouse buttons and mouse-button chords." },
-            { module = "Quest Tracker", text = "A hidden tracker (in combat, by visibility rules, or while idle in mouseover mode) no longer catches clicks meant for the world." },
-            { module = "Raid Frames", text = "Raider.IO scores no longer show twice on unit tooltips (requires a current Raider.IO)." },
-            { module = "Raid Frames", text = "The Offensive CDs preset, shared with Player Aura Bars, is updated for Midnight: new Mage, Rogue and Warlock cooldowns, with Icy Veins and Storm, Earth, and Fire retired." },
-            { module = "Unit Frames", text = "Class-coloured name text now recolours when a unit turns hostile or friendly, matching the health bar." },
-            { module = "Unit Frames", text = "Name > Target text on boss, target-of-target and focus-target frames now colours the target by class in instanced content instead of using the unit's reaction colour." },
-            { module = "Localization", text = "Korean and Brazilian Portuguese caught up on the latest strings, and choosing a Chinese, Korean or Russian display language on an English client no longer shows garbled text." },
         },
     },
 }

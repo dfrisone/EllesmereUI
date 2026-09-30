@@ -1039,11 +1039,55 @@ local function BuildBaseMacroText(binding)
     return nil
 end
 
+-- Clear Stuck Spell Targeting (HoverCast page, cc.clearTargeting, on unless
+-- switched off). A cast on a unit the spell cannot take (a priest in Spirit of
+-- Redemption) leaves the spell waiting for a target, which swallows the next
+-- press. Each cast line this file writes is led by /stopspelltarget under the
+-- same conditions, so a press that is about to cast first drops a spell still
+-- waiting -- what Blizzard's own mouseover casting does before a mouseover
+-- cast. The clear goes BEFORE the cast, never after it: a ground-targeted
+-- spell ignores @mouseover and opens its placement circle, which a clear after
+-- the cast would close at once. SpellStopTargeting is protected, so a secure
+-- macro line is the only way to reach it.
+local function ClearTargetingOn()
+    local cc = GetClickCastDB()
+    return not (cc and cc.clearTargeting == false)
+end
+
+-- Macro text -> the same text with its clears; the whole input is the key.
+-- ResolveBinding runs for every binding on every frame (registration bursts,
+-- CC_ApplyBindings), so each repeat of a binding's identical macro is one
+-- lookup. Wiped at every apply, so texts an edit retired do not pile up.
+local clearMemo = {}
+
+local function AddTargetingClears(text)
+    if not text or not ClearTargetingOn() then return text end
+    local hit = clearMemo[text]
+    if hit then return hit end
+    local out, seen = {}, {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        local cond = line:match("^/cast%s+(%b[])") or line:match("^/use%s+(%b[])")
+            or line:match("^/click%s+(%b[])")
+        -- One clear per condition set: a dispel list repeats the same
+        -- conditions on every line, and the first clear already covers them.
+        if cond and not seen[cond] then
+            seen[cond] = true
+            out[#out + 1] = "/stopspelltarget " .. cond
+        end
+        out[#out + 1] = line
+    end
+    local result = table.concat(out, "\n")
+    clearMemo[text] = result
+    return result
+end
+
 -- Wraps base macrotext with Smart Rez: when binding.smartRez is set, dynamic-rez
 -- /cast lines are prepended (they fail their [dead] condition on a living unit,
 -- so the macro falls through to the normal action).
 local function BuildMacroText(binding)
     local base = BuildBaseMacroText(binding)
+    -- A user macro body is theirs: only the lines this file writes get clears.
+    if binding.type ~= "macro" then base = AddTargetingClears(base) end
     if not binding.smartRez then return base end
     -- A pinned WoW Forever rez rank is the rez itself: the by-name rez lines
     -- would cast the top rank ahead of it on every dead target.
@@ -1055,7 +1099,7 @@ local function BuildMacroText(binding)
     local guard = binding.hovercast and MOUNT_GUARD or ""
     local rez = BuildRezLines(binding, guard)
     if not rez or #rez == 0 then return base end
-    local rezText = table.concat(rez, "\n")
+    local rezText = AddTargetingClears(table.concat(rez, "\n"))
 
     if base then
         return rezText .. "\n" .. base
@@ -1065,7 +1109,7 @@ local function BuildMacroText(binding)
     if binding.type == "spell" then
         local line = SpellCastLine(binding, "[@mouseover,exists,nodead" .. guard .. "]")
         if not line then return rezText end
-        return rezText .. "\n" .. line
+        return rezText .. "\n" .. AddTargetingClears(line)
     end
     return rezText
 end
@@ -1912,6 +1956,7 @@ function ns.CC_ApplyBindings()
     -- Self-heals non-canonical modifier-order keys before reading active set
     -- (so GetActiveBindings' de-dup also sees canonical keys).
     NormalizeSavedBindingKeys()
+    wipe(clearMemo)
 
     local bindings = GetActiveBindings()
     -- Fresh list becomes the burst list: any registration later this frame
@@ -2018,7 +2063,7 @@ function ns.CC_ApplyBindings()
             if aType == "spell" then
                 mt = BuildMacroText(hb.b)
                 if not mt then
-                    mt = SpellCastLine(hb.b, "[@mouseover" .. MOUNT_GUARD .. "]")
+                    mt = AddTargetingClears(SpellCastLine(hb.b, "[@mouseover" .. MOUNT_GUARD .. "]"))
                         or ("/cast [@mouseover" .. MOUNT_GUARD .. "] ")
                 end
             elseif aType == "macro" then
@@ -3990,6 +4035,25 @@ function ns.CC_BuildPage(pageName, parent, yOffset)
         RowToggle(row,
             function() return cc.downClick end,
             function(v) ns.CC_SetDownClick(v) end)
+        centerY = centerY - ROW_H
+    end
+
+    -- Clear Stuck Spell Targeting (AddTargetingClears): every binding's macro
+    -- changes, so a switch re-applies them all.
+    do
+        local row = MakeRow(centerY)
+        RowLabel(row, "Clear Stuck Spell Targeting")
+        RowToggle(row,
+            function() return cc.clearTargeting ~= false end,
+            function(v)
+                if v then cc.clearTargeting = nil else cc.clearTargeting = false end
+                ns.CC_ApplyBindings()
+            end)
+        row:EnableMouse(true)
+        row:SetScript("OnEnter", function(self)
+            EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.L("Before a binding casts, cancel any spell still waiting for a target (the glowing hand cursor left by a cast on a unit it can't take), so the press casts instead of being swallowed."))
+        end)
+        row:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
         centerY = centerY - ROW_H
     end
 

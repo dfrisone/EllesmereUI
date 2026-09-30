@@ -2774,20 +2774,31 @@ initFrame:SetScript("OnEvent", function(self)
                       return SVal("nameColorMode", "class") == "accent" and 1 or 0.3
                   end },
               } });  y = y - h
-        -- Name char cap + text stacking cog, on the Name Size slider.
+        -- Name char cap + text stacking cog, on the Name Size slider. WoW Forever
+        -- heads it with Name Format (the character name's first or last word; First
+        -- and Last is the default). "full" is stored, not nil: a party section's nil
+        -- would fall through to the raid value.
         do
             local rgn = row._leftRegion
+            local nameRows = {
+                { type="slider", label="Max Characters (0=off)", min=0, max=30, step=1,
+                  get=function() return SVal("nameMaxLength", 15) end,
+                  set=function(v) SSet("nameMaxLength", v) end },
+                { type="toggle", label="Show Above Icons",
+                  tooltip="Render the name and health text above buff and debuff icons.",
+                  get=function() return SVal("nameTextAboveIcons", false) end,
+                  set=function(v) SSet("nameTextAboveIcons", v) end },
+            }
+            if EllesmereUI.IS_FOREVER then
+                table.insert(nameRows, 1, { type="dropdown", label="Name Format",
+                    values={ first = "First Name", last = "Last Name", full = "First and Last" },
+                    order={ "first", "last", "full" },
+                    get=function() return SVal("nameFormat", "full") end,
+                    set=function(v) SSet("nameFormat", v) end })
+            end
             EllesmereUI.BuildInlineCog(rgn, {
                 title = "Name Text",
-                rows = {
-                    { type="slider", label="Max Characters (0=off)", min=0, max=30, step=1,
-                      get=function() return SVal("nameMaxLength", 15) end,
-                      set=function(v) SSet("nameMaxLength", v) end },
-                    { type="toggle", label="Show Above Icons",
-                      tooltip="Render the name and health text above buff and debuff icons.",
-                      get=function() return SVal("nameTextAboveIcons", false) end,
-                      set=function(v) SSet("nameTextAboveIcons", v) end },
-                },
+                rows = nameRows,
             })
         end
 
@@ -2909,6 +2920,46 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
         end   -- close Health Text dependent-row gate
+
+        -- Level Position (+ offset cog) | Level Size: the unit's level in front of the name inside
+        -- the name text ("Attach to Name", the WoW Forever default, None on retail: "60 Name"; "(Divider)": "60 | Name"; both
+        -- follow the Name Size), or in the name's colour on its own spot. None = off.
+        do
+            local levelPosValues = { name = "Attach to Name", nameDiv = "Attach to Name (Divider)" }
+            for k, v in pairs(namePositionValuesName) do levelPosValues[k] = v end
+            local levelPosOrder = { "name", "nameDiv", "topleft", "top", "topright", "left", "center",
+                "right", "bottomleft", "bottom", "bottomright", "none" }
+            local function LvlPos() return SVal("levelTextPosition", ns.RF_LEVEL_DEFAULT) end
+            local function LvlAttached() return ns.RF_LEVEL_ATTACH[LvlPos()] ~= nil end
+            local function LvlSpotOff() return LvlPos() == "none" or LvlAttached() end
+            local function LvlReq()
+                return LvlAttached() and "Attached to the name, the level uses the Name Size." or "Level Position"
+            end
+            local function LvlCogReq()
+                return LvlAttached() and "Attached to the name, the level follows the name's position." or "Level Position"
+            end
+            row, h = W:DualRow(parent, y,
+                { type="dropdown", text="Level Position", values=levelPosValues, order=levelPosOrder,
+                  getValue=LvlPos,
+                  setValue=function(v) SSet("levelTextPosition", v); EllesmereUI:RefreshPage() end },
+                { type="slider", text="Level Size", min=6, max=26, step=1,
+                  disabled=LvlSpotOff, disabledTooltip=LvlReq, rawTooltip=LvlAttached,
+                  getValue=function() return SVal("levelTextSize", 10) end,
+                  setValue=function(v) SSet("levelTextSize", v) end });  y = y - h
+            EllesmereUI.BuildInlineCog(row._leftRegion, {
+                icon = EllesmereUI.DIRECTIONS_ICON,
+                disabled = LvlSpotOff, disabledTooltip = LvlCogReq, rawTooltip = LvlAttached,
+                title = "Level Offset",
+                rows = {
+                    { type="slider", label="Offset X", min=-500, max=500, step=1,
+                      get=function() return SVal("levelTextOffsetX", 0) end,
+                      set=function(v) SSet("levelTextOffsetX", v) end },
+                    { type="slider", label="Offset Y", min=-500, max=500, step=1,
+                      get=function() return SVal("levelTextOffsetY", 0) end,
+                      set=function(v) SSet("levelTextOffsetY", v) end },
+                },
+            })
+        end
 
         -- Power Text (+ Custom/Class/Accent/Power swatches) | Power Text Size (+ position cog). Shows only on frames whose power bar shows, so everything greys while no role shows one.
         do
@@ -3218,7 +3269,7 @@ initFrame:SetScript("OnEvent", function(self)
             local mbRow
             mbRow, h = W:DualRow(parent, y,
                 { type="dropdown", text="Missing Buffs", values=mbPositionValues, order=mbPositionOrder,
-                  tooltip="Shows Fortitude, Mark of the Wild or Spirit on a member who is missing it, while someone in your group can cast it.",
+                  tooltip="Shows Fortitude, Mark of the Wild, Spirit or Thorns on a member who is missing it, for the buffs you can cast yourself (choose which in the cog).",
                   getValue=function()
                       if not SVal("showMissingBuffs", true) then return "none" end
                       return SVal("missingBuffsPosition", "top")
@@ -3240,6 +3291,20 @@ initFrame:SetScript("OnEvent", function(self)
             do
                 local rgn = mbRow._leftRegion
                 local rows = {
+                    -- One switch per buff (all on by default). The list is the
+                    -- profile's, shared across classes, so every buff is listed;
+                    -- only the ones this character can cast ever show.
+                    { type="reordercheck", label="Buffs", ddWidth=170,  -- the Glow dropdown's width
+                      hint="Only buffs you can cast show",
+                      items={
+                          { key="missingBuffsFort",   label="Fortitude",        fixed=true },
+                          { key="missingBuffsMark",   label="Mark of the Wild", fixed=true },
+                          { key="missingBuffsSpirit", label="Spirit",           fixed=true },
+                          { key="missingBuffsThorns", label="Thorns",           fixed=true },
+                          { key="missingBuffsBlessing", label="Paladin Blessings", fixed=true },
+                      },
+                      get=function(key) return SVal(key, true) end,
+                      set=function(key, on) SSet(key, on) end },
                     { type="slider", label="Offset X", min=-50, max=50, step=1,
                       get=function() return SVal("missingBuffsOffsetX", 0) end,
                       set=function(v) SSet("missingBuffsOffsetX", v) end },

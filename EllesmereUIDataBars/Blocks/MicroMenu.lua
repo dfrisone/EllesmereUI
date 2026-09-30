@@ -252,6 +252,10 @@ function ns.RefreshMicroMenuHider(force)
                 RegisterStateDriver(hider, "vis", want)
             end
         end
+        -- Action Bars' micro menu end caps follow the container's shown state
+        -- (a no-op while that bar shows none).
+        local ab = EllesmereUI._ModuleNS.EllesmereUIActionBars
+        if ab and ab.AB_ExtraCapsShown then ab.AB_ExtraCapsShown("MicroBar") end
     end)
 end
 

@@ -2616,6 +2616,9 @@ do
             bCenterY = PPa.SnapCenterForDim(bCenterY, childBar:GetHeight() or 0, cS)
         end
         local okPt, point, relTo, relPoint, curX, curY = pcall(childBar.GetPoint, childBar, 1)
+        -- A child still on a followed edge reads its anchor back secret: never compared.
+        if okPt and issecretvalue and (issecretvalue(point) or issecretvalue(relPoint)
+           or issecretvalue(curX) or issecretvalue(curY)) then okPt = false end
         if okPt and point == "CENTER" and relPoint == "CENTER" and relTo == UIParent then
             local onePx = ((PPa and PPa.perfect) or 1) / cS
             local tol = onePx * 0.5
@@ -3253,6 +3256,9 @@ do
             bCenterY = PPa.SnapCenterForDim(bCenterY, childBar:GetHeight() or 0, cS)
         end
         local okPt, point, relTo, relPoint, curX, curY = pcall(childBar.GetPoint, childBar, 1)
+        -- A child still on a followed edge reads its anchor back secret: never compared.
+        if okPt and issecretvalue and (issecretvalue(point) or issecretvalue(relPoint)
+           or issecretvalue(curX) or issecretvalue(curY)) then okPt = false end
         if okPt and point == "CENTER" and relPoint == "CENTER" and relTo == UIParent then
             local onePx = ((PPa and PPa.perfect) or 1) / cS
             local tol = onePx * 0.5
@@ -3830,8 +3836,21 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
     -- container reads back secret under aura restriction: park until regen).
     local cW0, cH0 = childBar:GetWidth(), childBar:GetHeight()
     if issecretvalue and (issecretvalue(cW0) or issecretvalue(cH0)) then
-        EllesmereUI._AnchorPark.Park(childKey)
-        return
+        -- Unlock mode: a child still hanging off a followed edge (the unit's
+        -- live aura stack when unlock opened with a target up) is placed at
+        -- its absolute resting spot below, which frees its rect, so its
+        -- stored size stands in for the unreadable one. Parking here would
+        -- wait for a regen that never comes out of combat, leaving the bar
+        -- on the stack and its mover unsized.
+        local elem = isUnlocked and registeredElements[childKey]
+        local gw, gh
+        if elem and elem.getSize then gw, gh = elem.getSize(childKey) end
+        if type(gw) ~= "number" or type(gh) ~= "number"
+           or issecretvalue(gw) or issecretvalue(gh) then
+            EllesmereUI._AnchorPark.Park(childKey)
+            return
+        end
+        cW0, cH0 = gw, gh
     end
     local cW = (cW0 or 50) * cS / uiS
     local cH = (cH0 or 50) * cS / uiS
@@ -4311,6 +4330,8 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
             bEdgeX, bEdgeY = bEdgeX + exDX, bEdgeY + exDY
             local skip = false
             local okPt, point, relTo, relPoint, curX, curY = pcall(childBar.GetPoint, childBar, 1)
+            if okPt and issecretvalue and (issecretvalue(point) or issecretvalue(relPoint)
+               or issecretvalue(curX) or issecretvalue(curY)) then okPt = false end
             if okPt and point == cdmEdgeAnchor and relPoint == "CENTER" and relTo == UIParent then
                 local onePx = ((PP and PP.perfect) or 1) / cS
                 -- Sub-pixel tolerance only: identical recomputes differ by float dust,
@@ -4360,6 +4381,8 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
             fx, fy = fx + exFX, fy + exFY
             local skip = false
             local okPt, point, relTo, relPoint, curX, curY = pcall(childBar.GetPoint, childBar, 1)
+            if okPt and issecretvalue and (issecretvalue(point) or issecretvalue(relPoint)
+               or issecretvalue(curX) or issecretvalue(curY)) then okPt = false end
             if okPt and point == "TOP" and relPoint == "BOTTOM" and relTo == follow then
                 local onePx = ((PP and PP.perfect) or 1) / cS
                 local tol = onePx * 0.5
@@ -4388,10 +4411,10 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
             -- not), so it re-SetPoint the same value every frame while sitting still.
             local PPa = EllesmereUI and EllesmereUI.PP
             if PPa and PPa.SnapCenterForDim then
-                local childW = childBar:GetWidth() or 0
-                local childH = childBar:GetHeight() or 0
-                bCenterX = PPa.SnapCenterForDim(bCenterX, childW, cS)
-                bCenterY = PPa.SnapCenterForDim(bCenterY, childH, cS)
+                -- The size read above (the stored one when the live rect was
+                -- secret: the bar is still on its followed edge until the SetPoint below).
+                bCenterX = PPa.SnapCenterForDim(bCenterX, cW0 or 0, cS)
+                bCenterY = PPa.SnapCenterForDim(bCenterY, cH0 or 0, cS)
             end
             local exCX, exCY = ExtraAnchorOffset(childKey)
             bCenterX, bCenterY = bCenterX + exCX, bCenterY + exCY
@@ -4399,6 +4422,10 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove, fromCa
             -- position (sub-physical-pixel tolerance). Kills flicker when multiple cascade passes compute the same answer (steady state).
             local skip = false
             local okPt, point, relTo, relPoint, curX, curY = pcall(childBar.GetPoint, childBar, 1)
+            -- A child still on a followed edge (unlock opened with its unit's
+            -- aura stack up) reads its anchor back secret: never compared.
+            if okPt and issecretvalue and (issecretvalue(point) or issecretvalue(relPoint)
+               or issecretvalue(curX) or issecretvalue(curY)) then okPt = false end
             if okPt and point == "CENTER" and relPoint == "CENTER" and relTo == UIParent then
                 local onePx = ((PP and PP.perfect) or 1) / cS
                 local tol = onePx * 0.5

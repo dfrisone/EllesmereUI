@@ -1738,7 +1738,15 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
     end
     local playerName = UnitName("player") or "Player"
     if Ambiguate then playerName = Ambiguate(playerName, "short") end
-    nameFS:SetText(playerName)
+    if ns.RF_FormatName then playerName = ns.RF_FormatName(playerName, s) end
+    -- Level Position "Attach to Name" (either format): the level in front of the name.
+    local lvlPos = s.levelTextPosition or ns.RF_LEVEL_DEFAULT
+    local lvlAttach = ns.RF_LEVEL_ATTACH[lvlPos]
+    if lvlAttach then
+        nameFS:SetFormattedText(lvlAttach[1], ns._RFPreviewLevel(), playerName)
+    else
+        nameFS:SetText(playerName)
+    end
     local nameMode = s.nameColorMode or "class"
     if nameMode == "accent" then
         local ar, ag, ab = EllesmereUI.ResolveActiveAccent()
@@ -1769,7 +1777,11 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
         local tnbText = tnb:CreateFontString(nil, "OVERLAY")
         tnbText:SetFont(fontPath, s.topNameBarTextSize or 11, outline)
         tnbText:SetWordWrap(false)
-        tnbText:SetText(playerName)
+        if lvlAttach then
+            tnbText:SetFormattedText(lvlAttach[1], ns._RFPreviewLevel(), playerName)
+        else
+            tnbText:SetText(playerName)
+        end
         local talign = s.topNameBarTextAlign or "center"
         local tox = s.topNameBarTextOffsetX or 0
         local toy = s.topNameBarTextOffsetY or 0
@@ -1834,6 +1846,18 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
         local pr, pg, pb = ns.RF_PreviewTextColor(s.powerTextColorMode or "custom",
             s.powerTextCustomColor, previewClass, 1, 1, 1, "MANA")
         ptFS:SetTextColor(pr, pg, pb, 0.9)
+    end
+
+    -- Level text on its own spot, in the name's colour, like the live frames.
+    if lvlPos ~= "none" and not lvlAttach then
+        local lvFS = nameCarrier:CreateFontString(nil, "OVERLAY")
+        EllesmereUI.PrimeFontShadow(lvFS, outline == "" and EllesmereUI.GetFontUseShadow("raidFrames"))
+        lvFS:SetFont(fontPath, s.levelTextSize or 10, outline)
+        lvFS:SetWordWrap(false)
+        ns.AnchorRFText(lvFS, health, lvlPos, s.levelTextOffsetX or 0, s.levelTextOffsetY or 0)
+        lvFS:SetFormattedText("%d", ns._RFPreviewLevel())
+        lvFS:SetTextColor(ns.RF_PreviewTextColor(s.nameColorMode or "class",
+            s.nameCustomColor, previewClass, 1, 1, 1))
     end
 
     pvFrame._health = health

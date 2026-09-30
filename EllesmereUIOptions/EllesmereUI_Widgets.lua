@@ -4559,8 +4559,8 @@ local function BuildCogPopup(opts)
         tmpFS:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, "")
         local COG_DD_W = 130
         local maxLblW = 0
-        -- Widest label + dropdown pair (a dropdown row may ask for a wider
-        -- control with row.ddWidth; every other row uses COG_DD_W).
+        -- Widest label + dropdown pair (a dropdown or checkbox-list row may ask
+        -- for a wider control with row.ddWidth; every other row uses COG_DD_W).
         local maxDDNeed = COG_DD_W
         for _, row in ipairs(opts.rows) do
             if row.type == "slider" or row.type == "input" then
@@ -4569,7 +4569,7 @@ local function BuildCogPopup(opts)
                 if w > maxLblW then maxLblW = w end
             elseif row.type == "dropdown" or row.type == "segmented" or row.type == "reordercheck" then
                 tmpFS:SetText(EllesmereUI.L(row.label))
-                local w = tmpFS:GetStringWidth() + ((row.type == "dropdown" and row.ddWidth) or COG_DD_W)
+                local w = tmpFS:GetStringWidth() + (((row.type == "dropdown" or row.type == "reordercheck") and row.ddWidth) or COG_DD_W)
                 if w > maxDDNeed then maxDDNeed = w end
             end
         end
@@ -4798,7 +4798,7 @@ local function BuildCogPopup(opts)
 
                 local items = type(row.items) == "function" and row.items() or row.items or {}
                 local ddBtn, refresh = EllesmereUI.BuildReorderCBDropdown(
-                    pf, COG_DD_W, pf:GetFrameLevel() + 2, items,
+                    pf, row.ddWidth or COG_DD_W, pf:GetFrameLevel() + 2, items,
                     row.get,
                     function(k, v)
                         row.set(k, v)

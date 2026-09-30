@@ -218,6 +218,7 @@ local defaults = {
         playerThreatNearAggroColor = { r = 0.81, g = 0.72, b = 0.19 },
         -- Threat % text on the target and focus frames (WoW Forever only).
         threatPctEnabled  = false,
+        threatPctFocus    = false,
         threatPctPosition = "CENTER",
         threatPctColorByThreat = true,
         threatPctSize     = 12,
@@ -3275,22 +3276,18 @@ end
 local optionsFrame
 local optionsCategoryID
 
-local unitSettingsMap
+-- Unit token -> its settings key in the profile. The settings table itself is
+-- read live on every call: a profile switch, import or reset (or a layer
+-- paint) can replace db.profile or its unit tables between frame reloads.
+local unitSettingsKey = {
+    player = "player", target = "target", targettarget = "targettarget",
+    pet = "pet", focus = "focus", focustarget = "focustarget",
+    boss1 = "boss", boss2 = "boss", boss3 = "boss", boss4 = "boss", boss5 = "boss",
+}
 local function GetSettingsForUnit(unit)
-    if not unitSettingsMap then
-        unitSettingsMap = {
-            player = db.profile.player,
-            target = db.profile.target,
-            targettarget = db.profile.targettarget,
-            pet = db.profile.pet,
-            focus = db.profile.focus,
-            focustarget = db.profile.focustarget,
-        }
-        for i = 1, 5 do
-            unitSettingsMap["boss" .. i] = db.profile.boss
-        end
-    end
-    return unitSettingsMap[unit] or db.profile.player
+    local p = db.profile
+    local k = unitSettingsKey[unit]
+    return (k and p[k]) or p.player
 end
 
 -- Per-unit frame source resolver. Returns "eui" (spawn skinned frame, default),
@@ -4010,8 +4007,8 @@ end
 function ns.UF_RecolorTexts(frame, unit, s)
     if not frame or not unit then return end
     if not s then
-        GetSettingsForUnit(unit)
-        s = unitSettingsMap and unitSettingsMap[unit]
+        local k = unitSettingsKey[unit]
+        s = k and db.profile[k]
     end
     if not s then return end
     if frame.LeftText and s.leftTextClassColor ~= nil then
@@ -4121,6 +4118,63 @@ function ns.UF_ClassFallbackNeedsSwap(frame, unit)
     return fb ~= "3d", fb
 end
 
+-- Mirror angles (degrees) for playable-race models, whether used by a player or NPC.
+-- Non-playable NPC models are excluded.
+-- Unlisted/missing/restricted IDs stay normal; never infer facing from unit type.
+do
+    local mirrorAngles -- Built only when a 3D portrait is first mirrored.
+    local function GetMirrorAngle(id)
+        if issecretvalue(id) or type(id) ~= "number" or id <= 0 then return end
+        if not mirrorAngles then
+            mirrorAngles = {
+                -- Playable-race model IDs.
+                [118355] = 291, [118135] = 291, [1838560] = 291, [1838562] = 291, [878772] = 291,
+                [950080] = 291, [116921] = 291, [1100258] = 291, [1839709] = 291, [117170] = 291,
+                [1100087] = 291, [1853408] = 291, [1890763] = 291, [1892825] = 291, [1890765] = 291,
+                [1892543] = 291, [117437] = 291, [1022598] = 291, [1822372] = 291, [117721] = 291,
+                [1005887] = 291, [1839253] = 291, [119063] = 291, [940356] = 291, [1838564] = 291,
+                [119159] = 291, [900914] = 291, [1838566] = 291, [119369] = 291, [1838568] = 291,
+                [119376] = 291, [1838570] = 291, [1630402] = 291, [1859379] = 291, [1630218] = 291,
+                [1858265] = 291, [119563] = 291, [1000764] = 291, [1838572] = 291, [1842700] = 291,
+                [119940] = 291, [1011653] = 291, [1838385] = 291, [1886724] = 291, [1721003] = 291,
+                [1593999] = 291, [1825438] = 291, [1620605] = 291, [1839042] = 291, [2564806] = 291,
+                [2622502] = 291, [1810676] = 291, [1858099] = 291, [1814471] = 291, [1857801] = 291,
+                [120590] = 291, [921844] = 291, [1838574] = 291, [120791] = 291, [974343] = 291,
+                [1838576] = 291, [121087] = 291, [949470] = 291, [1838580] = 291, [121287] = 291,
+                [917116] = 291, [1838578] = 291, [1968587] = 291, [1968838] = 291, [1087591] = 291,
+                [1088030] = 291, [589715] = 291, [1853610] = 291, [535052] = 291, [1853956] = 291,
+                [121608] = 291, [997378] = 291, [1838582] = 291, [121768] = 291, [959310] = 291,
+                [1838584] = 291, [121961] = 291, [986648] = 291, [1839008] = 291, [122055] = 291,
+                [968705] = 291, [1838586] = 291, [122414] = 291, [1018060] = 291, [1838588] = 291,
+                [122560] = 291, [1022938] = 291, [1838590] = 291, [1733758] = 291, [1859345] = 291,
+                [1734034] = 291, [1858367] = 291, [1890759] = 291, [1890761] = 291, [307453] = 291,
+                [1838201] = 291, [307454] = 291, [1838592] = 291, [1662187] = 291, [1894572] = 291,
+                [1630447] = 291, [1900779] = 291, [4395382] = 291, [4207724] = 291, [4220448] = 291,
+                [7478494] = 291, [7478487] = 291,
+            }
+        end
+        return mirrorAngles[id]
+    end
+
+    function ns.UF_ApplyPortraitRotation(model, mirror)
+        local angle = mirror and GetMirrorAngle(model:GetModelFileID())
+        if not angle then
+            -- Clear the previous target's transform when switching to a creature,
+            -- losing the model ID, showing a question mark, or disabling mirroring.
+            if model._portraitMirrored then
+                model:SetViewTranslation(0, 0)
+                model:SetRotation(0, false)
+                model._portraitMirrored = nil
+            end
+            return
+        end
+        -- Reapply after every model reload, even when the angle has not changed.
+        model:SetViewTranslation(15, 0)
+        model:SetRotation(math.rad(angle), false)
+        model._portraitMirrored = true
+    end
+end
+
 -- Shared portrait element Override (2D texture and 3D model objects; class texture
 -- keeps its own). The vendored oUF Update only guid-gates the eventless OnUpdate poll,
 -- so every other trigger (onShow, target-changed sweeps, any unit event) repaints
@@ -4182,14 +4236,13 @@ function PortraitOverride(self, event, evtUnit, fallback)
         -- with guid and availability both reading unchanged, field-traced).
         -- Models only: 2D textures survive Hide/Show.
         or (event == "Show" and isModel)
-        -- Blank-model heal: the Show repaint can run before the unit's model
-        -- data streams -- SetUnit lands NOTHING (fid nil, field-traced) and no
-        -- model event follows. PORTRAITS_UPDATED is the client's "portrait
-        -- assets finished streaming" signal and reliably follows; use it to
-        -- re-SetUnit ONLY a still-blank model, so loaded models never churn
-        -- (the reason the plain-model exclusion above exists).
-        or (event == "PORTRAITS_UPDATED" and isModel
-            and element.GetModelFileID and element:GetModelFileID() == nil)
+    -- Blank-model recovery is only needed when no other change requires a paint.
+    -- Show can run before assets stream in; PORTRAITS_UPDATED retries a still-
+    -- blank model without reloading one that is already populated.
+    if not hasStateChanged and event == "PORTRAITS_UPDATED" and isModel and element.GetModelFileID then
+        local modelFileID = element:GetModelFileID()
+        hasStateChanged = not issecretvalue(modelFileID) and modelFileID == nil
+    end
     if hasStateChanged then
         if isModel then
             if not isAvailable then
@@ -4199,7 +4252,7 @@ function PortraitOverride(self, event, evtUnit, fallback)
                 element:ClearModel()
                 element:SetModel([[Interface\Buttons\TalkToMeQuestionMark.m2]])
             else
-                local uKey3d = UnitToSettingsKey(u)
+                local uKey3d = UnitToSettingsKey(self._euiBaseUnit or u)
                 local uS3d = uKey3d and db.profile[uKey3d]
                 local camScale = ((uS3d and uS3d.portrait3dZoom) or 100) / 100
                 element:ClearModel()
@@ -4299,6 +4352,22 @@ function ns.UF_StampPortraitForceUpdate(frame)
     p.ForceUpdate = function()
         if ns.Engine.ElementOn(frame, "Portrait") then
             PortraitOverride(frame, "ForceUpdate", frame._euiUnit)
+        end
+    end
+end
+
+-- Mirror-only edits reuse loaded models; 2D/class art keeps its normal repaint.
+function ns.UF_RefreshPortraitMirror(unitKey)
+    for _, frame in pairs(frames) do
+        if type(frame) == "table" and frame.Portrait
+            and UnitToSettingsKey(frame._euiBaseUnit or frame._euiUnit) == unitKey
+            and ns.Engine.ElementOn(frame, "Portrait") then
+            local p = frame.Portrait
+            if p:IsObjectType("PlayerModel") then
+                ns.UF_ApplyPortraitRotation(p, p.state and db.profile[unitKey].portraitMirror and not ns.UF_Blizz())
+            elseif p.ForceUpdate then
+                p:ForceUpdate()
+            end
         end
     end
 end
@@ -5674,58 +5743,24 @@ end
 -- Shield texture. DO NOT change this path; it is the one that resolves.
 local ABSORB_SHIELD_TEX = "Interface\\AddOns\\EllesmereUIUnitFrames\\Media\\shield.tga"
 
--- Absorb bar style textures and alpha values.
-local ABSORB_STYLE_TEX = {
-    striped         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped3.tga",
-    stripedReversed = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-5-reversed.png",
-    stripedThick    = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-thick.png",
-    stripedThickR   = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\striped-thick-r.png",
-    clean           = "Interface\\Buttons\\WHITE8X8",
-    blizzard        = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\blizzard.tga",
-    largeOutlinedStripes  = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-left.png",
-    largeOutlinedStripesR = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-habsorb-right.png",
-    largeStripes          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-left.png",
-    largeStripesR         = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\large-absorb-right.png",
-    pixelsShield          = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\pixels-shield.tga",
-    pixelsShieldEdge      = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\pixels-shield-edge.tga",
-    pixelsShieldFill      = "Interface\\AddOns\\EllesmereUI\\media\\textures\\shields\\pixels-shield-fill.tga",
-}
+-- Absorb bar style textures (the shared catalogue in EllesmereUI.lua, also
+-- read by the Resource Bars health bar) and alpha values.
+local ABSORB_STYLE_TEX = EllesmereUI.ABSORB_STYLE_TEX
 local ABSORB_STYLE_ALPHA = {
     striped         = 0.8,
     stripedReversed = 0.8,
     clean           = 0.3,
     blizzard        = 0.8,
 }
--- Styles drawn as repeating tiles; every other style stretches (striped3 is
--- a stretch texture: do NOT add "striped"). One set for the live shield and
--- heal-absorb bars and the options preview.
-ns.ABSORB_TILED_STYLES = {
-    stripedReversed = true, stripedThick = true, stripedThickR = true,
-    largeStripes = true, largeStripesR = true,
-    largeOutlinedStripes = true, largeOutlinedStripesR = true,
-    pixelsShieldFill = true,
-}
--- Absorb Style / Heal Absorb Style dropdown data, read by the Main Frames
--- rows and the Textures page tile so the lists cannot drift. Readers copy
--- them first: the SharedMedia tail is appended into the copies.
-ns.ABSORB_STYLE_NAMES = {
-    none            = "None",
-    striped         = "Striped",
-    stripedReversed = "Striped Reversed",
-    stripedThick    = "Striped Thick",
-    stripedThickR   = "Striped Thick Reversed",
-    clean           = "Clean (Flat)",
-    blizzard        = "Blizzard",
-    largeOutlinedStripes  = "Large Outlined Stripes",    -- heal-absorb only
-    largeOutlinedStripesR = "Large Outlined Stripes R",  -- heal-absorb only
-    largeStripes          = "Large Stripes",
-    largeStripesR         = "Large Stripes R",
-    pixelsShield          = "Pixels Shield",
-    pixelsShieldEdge      = "Pixels Shield Edge",        -- shield only
-    pixelsShieldFill      = "Pixels Shield Fill",        -- shield only
-}
-ns.ABSORB_STYLE_ORDER = { "none", "striped", "stripedReversed", "stripedThick", "stripedThickR", "clean", "blizzard", "largeStripes", "largeStripesR", "pixelsShield", "pixelsShieldEdge", "pixelsShieldFill" }
-ns.HEAL_ABSORB_STYLE_ORDER = { "none", "striped", "stripedReversed", "stripedThick", "stripedThickR", "clean", "blizzard", "largeOutlinedStripes", "largeOutlinedStripesR", "largeStripes", "largeStripesR", "pixelsShield" }
+-- Tiled styles (one set for the live shield and heal-absorb bars and the
+-- options preview) and the Absorb Style / Heal Absorb Style dropdown data
+-- read by the Main Frames rows and the Textures page tile, all from the
+-- shared catalogue. Readers copy the names and orders first: the
+-- SharedMedia tail is appended into the copies.
+ns.ABSORB_TILED_STYLES = EllesmereUI.ABSORB_TILED_STYLES
+ns.ABSORB_STYLE_NAMES = EllesmereUI.ABSORB_STYLE_NAMES
+ns.ABSORB_STYLE_ORDER = EllesmereUI.ABSORB_STYLE_ORDER
+ns.HEAL_ABSORB_STYLE_ORDER = EllesmereUI.HEAL_ABSORB_STYLE_ORDER
 
 -- Absorb-style key -> texture path. Built-ins come from ABSORB_STYLE_TEX; "sm:"
 -- SharedMedia keys (shared with the Bar Texture dropdown, appended into
@@ -7266,16 +7301,23 @@ function ns.UF_LayoutPowerSeam(seam)
         t._path = seam._path
     end
     local raise = PP.SnapForES(thick * 5 / 32, es)
+    local portraitSeam = seam:GetParent()._portraitSeparator
+    local leftInset, rightInset = 0, 0
+    if portraitSeam and portraitSeam:IsShown() then
+        -- Leave one physical pixel clear where the portrait divider meets the seam.
+        if portraitSeam._right then rightInset = PP.perfect / es
+        else leftInset = PP.perfect / es end
+    end
     t:ClearAllPoints()
     if seam._above then
         -- Power above health: the join is the bar's bottom edge.
         t:SetTexCoord(0, 1, 1, 0)
-        t:SetPoint("BOTTOMLEFT", power, "BOTTOMLEFT", 0, -raise)
-        t:SetPoint("BOTTOMRIGHT", power, "BOTTOMRIGHT", 0, -raise)
+        t:SetPoint("BOTTOMLEFT", power, "BOTTOMLEFT", leftInset, -raise)
+        t:SetPoint("BOTTOMRIGHT", power, "BOTTOMRIGHT", -rightInset, -raise)
     else
         t:SetTexCoord(0, 1, 0, 1)
-        t:SetPoint("TOPLEFT", power, "TOPLEFT", 0, raise)
-        t:SetPoint("TOPRIGHT", power, "TOPRIGHT", 0, raise)
+        t:SetPoint("TOPLEFT", power, "TOPLEFT", leftInset, raise)
+        t:SetPoint("TOPRIGHT", power, "TOPRIGHT", -rightInset, raise)
     end
     t:SetHeight(thick)
     t:Show()
@@ -7286,6 +7328,8 @@ end
 -- bars. Built only on opt-in; layout and colour updates use existing passes.
 function ns.UpdatePortraitSeparator(frame, portrait, s, side, attached, stock, preview)
     local seam = frame._portraitSeparator
+    local power = frame.Power or frame._power
+    local powerSeam = power and power._pbSeam
     local path
     if s.portraitSeparator and attached and portrait and portrait:IsShown()
        and not stock and (s.borderSize or 1) > 0 then
@@ -7295,6 +7339,7 @@ function ns.UpdatePortraitSeparator(frame, portrait, s, side, attached, stock, p
         if seam then
             seam:Hide()
             EllesmereUI.RegisterPxReapply(seam, nil)
+            if powerSeam and powerSeam:IsShown() then ns.UF_LayoutPowerSeam(powerSeam) end
         end
         return
     end
@@ -7315,6 +7360,7 @@ function ns.UpdatePortraitSeparator(frame, portrait, s, side, attached, stock, p
     seam._tex:SetVertexColor(c and c.r or 0, c and c.g or 0, c and c.b or 0, s.borderAlpha or 1)
     ns.UF_LayoutPortraitSeparator(seam)
     seam:Show()
+    if powerSeam and powerSeam:IsShown() then ns.UF_LayoutPowerSeam(powerSeam) end
     EllesmereUI.RegisterPxReapply(seam, (seam._px and not preview) and ns.UF_LayoutPortraitSeparator or nil)
 end
 
@@ -7899,14 +7945,16 @@ local function CreatePortrait(frame, side, frameHeight, unit)
         model3D:SetCamera(0)
         local camScale = ((uSettings and uSettings.portrait3dZoom) or 100) / 100
         model3D:SetCamDistanceScale(camScale)
-        -- Re-apply zoom after oUF's SetUnit, which resets the camera.
+        -- Re-apply zoom and orientation after SetUnit resets the camera.
         model3D.PostUpdate = function(self)
-            local u = self.__owner and self.__owner._euiUnit
+            -- The frame engine does not assign an __owner to portraits.
+            local u = frame._euiBaseUnit or frame._euiUnit
             if not u then return end
             local uk = UnitToSettingsKey(u)
             local us = uk and db.profile[uk]
             local cs = ((us and us.portrait3dZoom) or 100) / 100
             self:SetCamDistanceScale(cs)
+            ns.UF_ApplyPortraitRotation(self, self.state and us and us.portraitMirror and not ns.UF_Blizz())
         end
         model3D:Hide()
         backdrop._3d = model3D
@@ -7976,12 +8024,12 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     -- SetPortraitTexture resets snapping and anchor points, so re-disable pixel
     -- snap and re-anchor after every portrait repaint (PortraitOverride). hasStateChanged
     -- is set only by the 2D lane's call (the class lane's NPC paint passes none).
-    tex2D.PostUpdate = function(self, _, hasStateChanged)
+    tex2D.PostUpdate = function(self, u, hasStateChanged)
         UnsnapTex(self)
         self:ClearAllPoints()
         -- When detached, ApplyDetachedPortraitShape uses expanded offsets for mask
         -- fill; re-apply those instead of resetting to default.
-        local uKey2 = UnitToSettingsKey(unit)
+        local uKey2 = UnitToSettingsKey(frame._euiBaseUnit or u)
         local uS2 = uKey2 and db.profile[uKey2]
         local isDetNow = ((uS2 and uS2.portraitStyle) or db.profile.portraitStyle or "attached") == "detached"
         if isDetNow and backdrop then
@@ -9260,7 +9308,7 @@ if EllesmereUI.IS_FOREVER then
         if not (frame and frame._textOverlay) then return end
         local fs = frame._threatPctText
         local p = db.profile
-        if p.threatPctEnabled then
+        if p.threatPctEnabled and (unit == "target" or p.threatPctFocus) then
             local isTanking, status, pct = UnitDetailedThreatSituation("player", unit)
             if type(pct) == "number" and (issecretvalue(pct) or pct ~= 0) then
                 if not fs then
@@ -12937,9 +12985,6 @@ ReloadFramesBody = function()
     end
 
     ApplyEnemyColors()
-
-    -- Reset cached settings map so it rebuilds with fresh DB references
-    unitSettingsMap = nil
 
     -- Normalize opacity values: old profiles stored 0-1 floats, new format is 0-100 integers
     do

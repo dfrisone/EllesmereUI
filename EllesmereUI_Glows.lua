@@ -3,7 +3,8 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  EllesmereUI_Glows.lua
 --  Shared glow rendering engine for the EllesmereUI addon suite.
 --  Provides: Pixel Glow (procedural ants), Action Button Glow, Auto-Cast
---  Shine, Shape Glow, and FlipBook-based glows (GCD, Modern WoW, Classic WoW).
+--  Shine, Shape Glow, FlipBook-based glows (GCD, Modern WoW, Classic WoW), and
+--  Blackout (solid colour fill with adjustable transparency).
 --  Each addon attaches to EllesmereUI.Glows.* instead of duplicating engines.
 -------------------------------------------------------------------------------
 if not EllesmereUI then return end
@@ -17,8 +18,9 @@ local sin   = math.sin
 -------------------------------------------------------------------------------
 --  Style Definitions (superset of all addons)
 --  Each addon picks from this table by index or iterates for its dropdown.
---  Fields: name, procedural, buttonGlow, autocast, shapeGlow, atlas, texture,
---          rows, columns, frames, duration, frameW, frameH, scale, previewScale
+--  Fields: name, procedural, buttonGlow, autocast, shapeGlow, solidFill, atlas,
+--          texture, rows, columns, frames, duration, frameW, frameH, scale,
+--          previewScale
 -------------------------------------------------------------------------------
 local GLOW_STYLES = {
     { name = "Pixel Glow",         procedural = true },
@@ -40,6 +42,7 @@ local GLOW_STYLES = {
       -- a direct Classic pick keeps this entry's bare-ants look.
       rows = 5, columns = 5, frames = 22, duration = 0.3,
       frameW = 48, frameH = 48, texPadding = 1.25 },
+    { name = "Blackout",           solidFill = true },
 }
 
 -------------------------------------------------------------------------------
@@ -823,6 +826,38 @@ local function StopFlipBookGlow(wrapper)
     end
 end
 
+-------------------------------------------------------------------------------
+--  Solid Fill Engine (Blackout)
+--  One colour texture covering the wrapper at a caller-chosen alpha (opaque
+--  by default), so the icon can be fully hidden or only partially obscured.
+--  Static: no driver tick and no AnimationGroup, so it renders identically
+--  inside the 12.1 forbidden partition and costs nothing per frame.
+-------------------------------------------------------------------------------
+local function StartSolidFill(wrapper, cr, cg, cb, opts)
+    opts = opts or {}
+    if not wrapper._euiFillData then
+        local tex = wrapper:CreateTexture(nil, "OVERLAY", nil, 7)
+        tex:SetAllPoints(wrapper)
+        wrapper._euiFillData = { tex = tex }
+    end
+    local d = wrapper._euiFillData
+    d.tex:SetColorTexture(cr or 0, cg or 0, cb or 0, opts.alpha or 1)
+    d.tex:SetAlpha(1)
+    -- Shape-masked icons: clip the fill to the icon silhouette so it cannot
+    -- spill past a rounded/circular border.
+    local shapeMask = opts.shapeMask
+    if d.mask ~= shapeMask then
+        if d.mask then pcall(d.tex.RemoveMaskTexture, d.tex, d.mask) end
+        if shapeMask then pcall(d.tex.AddMaskTexture, d.tex, shapeMask) end
+        d.mask = shapeMask
+    end
+    d.tex:Show()
+end
+
+local function StopSolidFill(wrapper)
+    if wrapper._euiFillData then wrapper._euiFillData.tex:Hide() end
+end
+
 -- Defined above StopAllGlows so engine-hosted ants (StartEngineGlow /
 -- StartAnimatedAnts) tear down through the same unified stop path.
 local function StopAnimatedAnts(wrapper)
@@ -845,6 +880,7 @@ local function StopAllGlows(wrapper)
     StopAutoCastShine(wrapper)
     StopShapeGlow(wrapper)
     StopFlipBookGlow(wrapper)
+    StopSolidFill(wrapper)
     StopAnimatedAnts(wrapper)
     -- Blizzard Border (EllesmereUI.Glows.STEALABLE_BORDER) is a static texture
     -- on the same hosts; a stop clears it too.
@@ -892,6 +928,7 @@ end
 --    .maskPath, .borderPath, .shapeMask — shape glow textures
 --    .untinted    -- a nil color stays nil on the FlipBook path (the atlas's
 --                   own untinted look) instead of desaturated white
+--    .alpha       -- Blackout fill opacity (0-1, default 1 = opaque)
 -------------------------------------------------------------------------------
 local function StartGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
     if not wrapper then return end
@@ -901,6 +938,9 @@ local function StartGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
     opts = opts or {}
     local w = szOrW or 36
     local h = szH or w
+    -- An unspecified colour means black (Blackout's default look), not the
+    -- tinted-style gold noColor would otherwise resolve to.
+    local noColor = (cr == nil)
     local keepUntinted = opts.untinted and cr == nil
     cr = cr or 1; cg = cg or 1; cb = cb or 1
 
@@ -926,6 +966,9 @@ local function StartGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
 
     elseif entry.shapeGlow then
         StartShapeGlow(wrapper, w, cr, cg, cb, 1.20, opts)
+
+    elseif entry.solidFill then
+        StartSolidFill(wrapper, noColor and 0 or cr, noColor and 0 or cg, noColor and 0 or cb, opts)
 
     else
         -- FlipBook mode (GCD, Modern WoW Glow, Classic WoW Glow, etc.)
@@ -1169,6 +1212,8 @@ EllesmereUI.Glows = {
     StopShapeGlow       = StopShapeGlow,
     StartFlipBookGlow   = StartFlipBookGlow,
     StopFlipBookGlow    = StopFlipBookGlow,
+    StartSolidFill      = StartSolidFill,
+    StopSolidFill       = StopSolidFill,
     ApplyMaskWith       = ApplyMaskWith,
     StopAllGlows        = StopAllGlows,
 }
@@ -1289,6 +1334,7 @@ do
         [5] = { 6, 7, 1 },
         [6] = { 5, 7, 1 },
         [7] = { 1, 6, 5 },
+        [8] = { 1, 6, 7 },   -- Blackout   -> Pixel
     }
 
     -- Shared index -> renderable shared index, plus whether it had to change.

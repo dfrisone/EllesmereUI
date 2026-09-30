@@ -91,7 +91,8 @@ local CHAT_DEFAULTS = {
             tabBackgroundTexture = "none",
             activeTabBorder = true,
             tabBorderColorActive = { r=1, g=1, b=1, a=0.18 },
-            extendBgBehindTabs = false,
+            -- WoW Forever: tabs inside one continuous chat panel (per-client default).
+            extendBgBehindTabs = (EllesmereUI.IS_FOREVER == true),
             panelBorderTexture = "solid",
             panelBorderThickness = "none",
             panelBorderColorMode = "custom",
@@ -1981,6 +1982,17 @@ end
 -- ChatFrame1's current (Edit-Mode-placed) rect becomes OUR saved position.
 -- Pixel-identical takeover -- users see no change on update; from then on
 -- chat position is an EUI unlock element.
+-- The sidebar's footprint left of the chat panel under the current look: its
+-- width, a Separate Sidebar's gap, less the stock column's seat overlap; 0
+-- while it sits on the right or never shows.
+local function GenesisFP(cfg)
+    if cfg.sidebarRight or cfg.sidebarVisibility == "never" then return 0 end
+    return min(100, max(30, cfg.sidebarWidth
+            or (ECHAT.SidebarWidthDefault and ECHAT.SidebarWidthDefault() or 40)))
+        + ((cfg.sidebarSeparate == true) and (cfg.sidebarSeparateSpacing or 8) or 0)
+        - (ECHAT.SB_KIT and ECHAT.SB_KIT.col.dx or 0)
+end
+
 local function CaptureChatPositionGenesis()
     local cfg = ECHAT.DB()
     if not cfg then return end
@@ -1988,22 +2000,53 @@ local function CaptureChatPositionGenesis()
     -- era are stale (users repositioned via Edit Mode since; re-applying
     -- an ancient spot would visibly move their chat on update). Discard
     -- once so genesis captures the CURRENT placement.
+    local stale = false
     if cfg._chatPosOwnership ~= 1 then
         cfg._chatPosOwnership = 1
+        stale = cfg.chatPosition ~= nil
         cfg.chatPosition = nil
     end
     if cfg.chatPosition then return end
-    -- WoW Forever starts every install from the base layout, never from a
-    -- snapshot of Blizzard's chat placement (EllesmereUI_ForeverLayout.lua).
-    if EllesmereUI.IS_FOREVER and EllesmereUI.ForeverChatPosition then
-        cfg.chatPosition = EllesmereUI.ForeverChatPosition()
-        return
-    end
     local cf1 = _G.ChatFrame1
     if not cf1 then return end
     local left, bottom = cf1:GetLeft(), cf1:GetBottom()
     if not (left and bottom) then return end
+    -- Blizzard's chat spot leaves no room for our sidebar on its left, so the
+    -- first capture moves chat right by the sidebar's footprint. Not for a
+    -- position the migration above just dropped: that layout already had the
+    -- sidebar. The footprint is kept (plain data) for GenesisSettle below.
+    if not stale then
+        local fp = GenesisFP(cfg)
+        left = left + fp / (cf1:GetScale() or 1)
+        cfg._chatGenesisFP, cfg._chatGenesisX = fp, left
+        ns._chatGenesisNow = true
+    end
     cfg.chatPosition = { point = "BOTTOMLEFT", relPoint = "BOTTOMLEFT", x = left, y = bottom }
+end
+
+-- A fresh install settles its look after that capture (the style picker, a
+-- later session), and each look's sidebar has its own footprint: from the
+-- next session on, every settled sight re-measures it and moves chat by the
+-- difference while chat still sits where the capture put it (a drag ends
+-- this), until no style choice is pending.
+local function GenesisSettle()
+    local cfg = ECHAT.DB()
+    local old = cfg and cfg._chatGenesisFP
+    if not old or ns._chatGenesisNow then return end
+    local pos, cf1 = cfg.chatPosition, _G.ChatFrame1
+    if not (pos and cf1 and pos.point == "BOTTOMLEFT" and cfg._chatGenesisX
+            and pos.x and abs(pos.x - cfg._chatGenesisX) < 0.5) then
+        cfg._chatGenesisFP, cfg._chatGenesisX = nil, nil
+        return
+    end
+    local now = GenesisFP(cfg)
+    if now ~= old then
+        pos.x = pos.x + (now - old) / (cf1:GetScale() or 1)
+        cfg._chatGenesisFP, cfg._chatGenesisX = now, pos.x
+    end
+    if not (EllesmereUIDB and EllesmereUIDB.styleChoicePending) then
+        cfg._chatGenesisFP, cfg._chatGenesisX = nil, nil
+    end
 end
 
 -- Edit Mode override, the suite's action-bar anchor-guard pattern: post-hook
@@ -2056,6 +2099,7 @@ function ECHAT.SuppressChatEditModeSelection()
     SuppressEditModeChild(cf1.EditModeResizeButton)
 end
 ns._CaptureChatPositionGenesis = CaptureChatPositionGenesis
+ns._GenesisSettle = GenesisSettle
 ns._InstallChatAnchorGuard = InstallChatAnchorGuard
 
 -- Main chat size is applied as a second corner anchor inside
@@ -5396,6 +5440,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- capture Edit Mode's placement as ours if unsaved, arm the
             -- anchor guard, kill the Edit Mode selection overlay, apply.
             if ns._CaptureChatPositionGenesis then ns._CaptureChatPositionGenesis() end
+            if ns._GenesisSettle then ns._GenesisSettle() end
             if ns._InstallChatAnchorGuard then ns._InstallChatAnchorGuard() end
             if ECHAT.SuppressChatEditModeSelection then ECHAT.SuppressChatEditModeSelection() end
             if ECHAT.ApplyChatPosition then ECHAT.ApplyChatPosition() end

@@ -518,7 +518,8 @@ initFrame:SetScript("OnEvent", function(self)
                     if type(v) == "number" and v > 0 then return true end
                 end
                 local cse = rawget(e, "cdStateEffect")
-                return type(cse) == "string" and cse:find("GlowReady", 1, true) ~= nil
+                return type(cse) == "string"
+                    and (cse == "glowOnCD" or cse:find("GlowReady", 1, true) ~= nil)
             end
             local function CountPerIconGlows()
                 local n = 0
@@ -1570,7 +1571,10 @@ initFrame:SetScript("OnEvent", function(self)
                             cr, cg, cb = entry.glowColor.r, entry.glowColor.g, entry.glowColor.b
                         end
                         ns.StopNativeGlow(ov)
-                        ns.StartNativeGlow(ov, style, cr, cg, cb, EllesmereUI.Glows.PANEL_EXTRA)
+                        -- Blackout reads its fill opacity from the extras; every other
+                        -- style takes the shared panel extras.
+                        ns.StartNativeGlow(ov, style, cr, cg, cb,
+                            style == 8 and { panel = true, alpha = entry.glowAlpha } or EllesmereUI.Glows.PANEL_EXTRA)
                     end
 
                     -- At Stacks (toggle) + gear (Comparison / Stack Count), paired with
@@ -1603,6 +1607,7 @@ initFrame:SetScript("OnEvent", function(self)
                               entry.glowStyle = tonumber(v) or 1
                               Refresh()
                               RefreshPreviewGlow()
+                              EllesmereUI:RefreshPage()
                           end,
                         }
                     );  y = y - h
@@ -1679,7 +1684,8 @@ initFrame:SetScript("OnEvent", function(self)
                                     elseif entry.colorMode == "custom" and entry.glowColor then
                                         cr, cg, cb = entry.glowColor.r, entry.glowColor.g, entry.glowColor.b
                                     end
-                                    ns.StartNativeGlow(ov, style, cr, cg, cb, EllesmereUI.Glows.PANEL_EXTRA)
+                                    ns.StartNativeGlow(ov, style, cr, cg, cb,
+                                        style == 8 and { panel = true, alpha = entry.glowAlpha } or EllesmereUI.Glows.PANEL_EXTRA)
                                     _bgPreviewGlowActive[pvKey] = true
                                     -- Hide accent border so glow is visible
                                     if previewBtn._accentBrd then previewBtn._accentBrd:Hide() end
@@ -1688,6 +1694,29 @@ initFrame:SetScript("OnEvent", function(self)
                             end)
                             eyeBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
                             eyeBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
+
+                            -- Blackout fill opacity, in a cog chained left of the eye. Locked
+                            -- unless the entry renders Blackout (custom-shaped bars always
+                            -- draw Shape Glow); the Glow Type setter's page refresh re-checks it.
+                            leftRgn._lastInline = eyeBtn
+                            EllesmereUI.BuildInlineCog(leftRgn, {
+                                title = "Blackout",
+                                disabled = function()
+                                    return (BarHasCustomShape(curBar) and 2 or (entry.glowStyle or 1)) ~= 8
+                                end,
+                                disabledTooltip = "This option requires the Blackout glow type.",
+                                rawTooltip = true,
+                                frameStrata = "FULLSCREEN_DIALOG", frameLevel = 350,
+                                rows = {
+                                    { type = "slider", label = "Opacity", min = 1, max = 100, step = 1,
+                                      get = function() return math.floor((entry.glowAlpha or 1) * 100 + 0.5) end,
+                                      set = function(v)
+                                          entry.glowAlpha = v / 100
+                                          Refresh()
+                                          RefreshPreviewGlow()
+                                      end },
+                                },
+                            })
                         end
                     end
 
@@ -8161,10 +8190,12 @@ initFrame:SetScript("OnEvent", function(self)
         popup._durBox:HighlightText()
     end
 
-    -- Numeric popup for the "Lower Alpha (On CD)" cooldown-state effect: the user
-    -- enters an opacity percent (1-100) that the icon uses while on cooldown.
-    -- Mirrors ShowDurationPopup's look; onConfirm receives the integer percent.
-    local function ShowAlphaPopup(currentPct, onConfirm)
+    -- Numeric popup for an opacity percent (1-100). Titled for the "Lower Alpha
+    -- (On CD)" cooldown-state effect unless the caller passes its own title and
+    -- hint (already localized), e.g. the Blackout glow opacity. Both texts are
+    -- set on every show. Mirrors ShowDurationPopup's look; onConfirm receives
+    -- the integer percent.
+    local function ShowAlphaPopup(currentPct, onConfirm, title, hint)
         local popupName = "EUI_CDM_AlphaPopup"
         local popup = _G[popupName]
         if not popup then
@@ -8188,21 +8219,21 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.15, EllesmereUI.PP)
             popup._dimmer = dimmer
 
-            local title = popup:CreateFontString(nil, "OVERLAY")
-            title:SetFont(FONT_PATH, 14, GetCDMOptOutline())
-            title:SetPoint("TOP", popup, "TOP", 0, -18)
-            title:SetTextColor(1, 1, 1, 1)
-            title:SetText(EllesmereUI.L("Lower Alpha"))
+            local titleFS = popup:CreateFontString(nil, "OVERLAY")
+            titleFS:SetFont(FONT_PATH, 14, GetCDMOptOutline())
+            titleFS:SetPoint("TOP", popup, "TOP", 0, -18)
+            titleFS:SetTextColor(1, 1, 1, 1)
+            popup._title = titleFS
 
-            local hint = popup:CreateFontString(nil, "OVERLAY")
-            hint:SetFont(FONT_PATH, 11, GetCDMOptOutline())
-            hint:SetPoint("TOP", title, "BOTTOM", 0, -6)
-            hint:SetTextColor(0.7, 0.7, 0.7, 0.85)
-            hint:SetText(EllesmereUI.L("Icon opacity while on cooldown (1-100%)"))
+            local hintFS = popup:CreateFontString(nil, "OVERLAY")
+            hintFS:SetFont(FONT_PATH, 11, GetCDMOptOutline())
+            hintFS:SetPoint("TOP", titleFS, "BOTTOM", 0, -6)
+            hintFS:SetTextColor(0.7, 0.7, 0.7, 0.85)
+            popup._hint = hintFS
 
             local box = CreateFrame("EditBox", nil, popup)
             box:SetSize(180, 28)
-            box:SetPoint("TOP", hint, "BOTTOM", 0, -12)
+            box:SetPoint("TOP", hintFS, "BOTTOM", 0, -12)
             box:SetAutoFocus(true)
             box:SetNumeric(true)
             box:SetMaxLetters(3)
@@ -8255,6 +8286,8 @@ initFrame:SetScript("OnEvent", function(self)
             box:SetScript("OnEscapePressed", function() dimmer:Hide() end)
         end
         popup._onConfirm = onConfirm
+        popup._title:SetText(title or EllesmereUI.L("Lower Alpha"))
+        popup._hint:SetText(hint or EllesmereUI.L("Icon opacity while on cooldown (1-100%)"))
         popup._box:SetText(currentPct and tostring(currentPct) or "")
         ns.PadPopupOpen(popup._dimmer, popup, popup._cancelBtn)  -- controller cursor
         popup._dimmer:Show()
@@ -8760,7 +8793,9 @@ initFrame:SetScript("OnEvent", function(self)
                         spellID = ns.HostedBuffMarkerToSpell(spellID)
                     end
                 end
-                if spellID and spellID ~= 0 then
+                if spellID and spellID ~= 0 and not ns.IsEmptySlotMarker(spellID) then
+                    -- Empty Slot: no spell/item behind it, so skip the whole per-icon settings
+                    -- tree -- the "Remove Spell" row built above is the entire menu for it.
                     -- Hosted-buff SLOT? The slot decides, not the flag alone: the same
                     -- spellID can also be this bar's cooldown entry, which must keep the CD
                     -- store + cd/util menu. Legacy fallback: flag set with no marker entry yet means the plain entry is the buff (pre-marker data).
@@ -9795,13 +9830,18 @@ initFrame:SetScript("OnEvent", function(self)
                         -- (cdStateGlowStyle). The stored button* values still render as
                         -- Action Button Glow and read back as the matching entry here.
                         { val = "pixelGlowReady",  label = "Glow (CD Ready)" },
+                        -- Mirror of the ready glow above: glows for the whole cooldown instead
+                        -- of at readiness. Shares the Glow Style picker and the Proc Glow
+                        -- priority gate below with every other glow effect here.
+                        { val = "glowOnCD", label = "Glow (On CD)" },
                         -- Resource Aware variants: also require the spell to be castable
                         -- (resources/form) via the event-driven usability watcher. That watcher has
                         -- a small cost, so these are separate opt-in values (with a confirm popup) and the plain variants above stay cost-free.
                         { val = "pixelGlowReadyUsable",  label = "Glow CD Ready (Resource Aware)",
                           tooltip = "Glow CD Ready (Resource Aware)" },
                     }
-                    -- CD Ready glow style picker (CDM saved numbering, every icon style).
+                    -- Glow style picker (CDM saved numbering, every icon style), shared by
+                    -- both the CD Ready and On CD glow effects.
                     local CD_READY_STYLE_ITEMS = {}
                     for _, i in ipairs(ns.GLOW_VIEW.ordered) do local entry = ns.GLOW_STYLES[i]
                         CD_READY_STYLE_ITEMS[#CD_READY_STYLE_ITEMS + 1] = { val = i, label = entry.name }
@@ -9809,6 +9849,7 @@ initFrame:SetScript("OnEvent", function(self)
                     local CD_GLOW_EFFECT = {
                         pixelGlowReady = "pixelGlowReady", buttonGlowReady = "pixelGlowReady",
                         pixelGlowReadyUsable = "pixelGlowReadyUsable", buttonGlowReadyUsable = "pixelGlowReadyUsable",
+                        glowOnCD = "glowOnCD",
                     }
                     -- Reverse Swipe single-select (per-spell / per-preset), shared by both the regular-spell (ss) and preset/custom (cas) menus below.
                     local REVERSE_SWIPE_ITEMS = {
@@ -11180,6 +11221,7 @@ initFrame:SetScript("OnEvent", function(self)
                             { val = "hiddenOnCD",      label = "Hidden (On CD)" },
                             { val = "hiddenReady",     label = "Hidden (CD Ready)" },
                             { val = "pixelGlowReady",  label = "Glow (CD Ready)" },
+                            { val = "glowOnCD",        label = "Glow (On CD)" },
                         }
                         local KEEP_COLORED_ITEMS = {
                             { val = nil,  label = "None" },
@@ -11235,11 +11277,12 @@ initFrame:SetScript("OnEvent", function(self)
                                     end)
                                 end
                             end,
-                            { apply = { keys = { "cdStateEffect", "cdStateLowerAlpha", "cdStateGlowStyle" },
+                            { apply = { keys = { "cdStateEffect", "cdStateLowerAlpha", "cdStateGlowStyle", "cdStateGlowAlpha" },
                                         write = function(t, v)
                                             t.cdStateEffect = v or false
                                             t.cdStateGlowStyle = CD_GLOW_EFFECT[v]
                                                 and ns.CdReadyGlowStyle(cas and cas.cdStateEffect, cas) or nil
+                                            t.cdStateGlowAlpha = (t.cdStateGlowStyle == 8) and cas and cas.cdStateGlowAlpha or nil
                                             if v == "lowerAlphaOnCD" then
                                                 -- Push this icon's current percent (no popup).
                                                 t.cdStateLowerAlpha = (cas and cas.cdStateLowerAlpha) or 0.5
@@ -11249,17 +11292,43 @@ initFrame:SetScript("OnEvent", function(self)
                                         end } })
 
                         -- CD Ready Glow Style (preset/custom): mirror of the regular-spell row.
-                        MakeSubnavRow("CD Ready Glow Style", CD_READY_STYLE_ITEMS,
+                        MakeSubnavRow("Glow Style", CD_READY_STYLE_ITEMS,
                             function() return ns.CdReadyGlowStyle(cas.cdStateEffect, cas) end,
                             function(v)
                                 SetCasOwn("cdStateGlowStyle", v)
                                 if ns.FakeActive_Rearm then ns.FakeActive_Rearm() end
                             end,
                             function() return cas.cdStateGlowStyle == nil end,
-                            nil,
+                            function(si, item, sub)
+                                -- Blackout: clicking prompts for the opacity percent, then
+                                -- selects this style (mirrors Lower Alpha's onClick above).
+                                if item.val == 8 then
+                                    item.dynamicLabel = function()
+                                        local base = EllesmereUI.L(ns.GLOW_STYLES[8].name)
+                                        if ns.CdReadyGlowStyle(cas.cdStateEffect, cas) == 8 then
+                                            local pct = math.floor(((cas.cdStateGlowAlpha or 1) * 100) + 0.5)
+                                            return pct .. "% " .. base
+                                        end
+                                        return base
+                                    end
+                                    si:SetScript("OnClick", function()
+                                        local cur = math.floor((((cas and cas.cdStateGlowAlpha) or 1) * 100) + 0.5)
+                                        menu:Hide()
+                                        ShowAlphaPopup(cur, function(pct)
+                                            local c = EnsureCAS()
+                                            c.cdStateGlowAlpha = pct / 100
+                                            c.cdStateGlowStyle = 8
+                                            if ns.FakeActive_Rearm then ns.FakeActive_Rearm() end
+                                        end, EllesmereUI.L("Glow Opacity"), EllesmereUI.L("Blackout glow opacity (1-100%)"))
+                                    end)
+                                end
+                            end,
                             { disabled = function() return not CD_GLOW_EFFECT[cas.cdStateEffect] end,
-                              apply = { keys = { "cdStateGlowStyle" },
-                                        write = function(t, v) t.cdStateGlowStyle = v end } })
+                              apply = { keys = { "cdStateGlowStyle", "cdStateGlowAlpha" },
+                                        write = function(t, v)
+                                            t.cdStateGlowStyle = v
+                                            t.cdStateGlowAlpha = (v == 8) and cas and cas.cdStateGlowAlpha or nil
+                                        end } })
 
                         -- Cooldown Saturation (preset/custom): mirror of the regular-spell row.
                         -- These icons are greyed by the Fake-Active engine rather than by Blizzard, so the runtime reads this key in PresetKeepsColor instead of the SetDesaturated hook -- same setting, same key name.
@@ -11576,14 +11645,14 @@ initFrame:SetScript("OnEvent", function(self)
                         function(v) EnsureSS(); SetOwn("procGlow", v) end,
                         function() return ss.procGlow == nil end,
                         function(si, item)
+                            -- Glow choices lock while the Cooldown State Effect is any glow
+                            -- (CD Ready or On CD): the reverse of that row's Proc Glow gate.
                             local isGlow = item.val and item.val > 0
-                            local cse = ss.cdStateEffect
-                            if isGlow and (cse == "pixelGlowReady" or cse == "buttonGlowReady"
-                               or cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable") then
+                            if isGlow and CD_GLOW_EFFECT[ss.cdStateEffect] then
                                 si:SetAlpha(0.35)
                                 si:SetScript("OnClick", function() end)
                                 si:SetScript("OnEnter", function()
-                                    EllesmereUI.ShowWidgetTooltip(si, "Disable CD Ready glow first")
+                                    EllesmereUI.ShowWidgetTooltip(si, "Disable the Cooldown State glow first")
                                 end)
                                 si:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
                             end
@@ -11880,7 +11949,8 @@ initFrame:SetScript("OnEvent", function(self)
                                 return
                             end
                             local isGlow = (item.val == "pixelGlowReady" or item.val == "buttonGlowReady"
-                                or item.val == "pixelGlowReadyUsable" or item.val == "buttonGlowReadyUsable")
+                                or item.val == "pixelGlowReadyUsable" or item.val == "buttonGlowReadyUsable"
+                                or item.val == "glowOnCD")
                             if isGlow and ss.procGlow and ss.procGlow > 0 then
                                 si:SetAlpha(0.35)
                                 si:SetScript("OnClick", function() end)
@@ -11891,13 +11961,14 @@ initFrame:SetScript("OnEvent", function(self)
                             end
                         end,
                         { apply = { confirmRA = true,
-                                    keys = { "cdStateEffect", "cdStateLowerAlpha", "cdStateGlowStyle" },
+                                    keys = { "cdStateEffect", "cdStateLowerAlpha", "cdStateGlowStyle", "cdStateGlowAlpha" },
                                     write = function(t, v)
                                         -- "None" applied bar-wide = explicitly no effect
                                         -- (false blocks the all-specs tier below).
                                         t.cdStateEffect = v or false
                                         t.cdStateGlowStyle = CD_GLOW_EFFECT[v]
                                             and ns.CdReadyGlowStyle(ss.cdStateEffect, ss) or nil
+                                        t.cdStateGlowAlpha = (t.cdStateGlowStyle == 8) and ss.cdStateGlowAlpha or nil
                                         if v == "lowerAlphaOnCD" then
                                             -- Push this spell's current percent (no popup).
                                             t.cdStateLowerAlpha = ss.cdStateLowerAlpha or 0.5
@@ -11917,17 +11988,43 @@ initFrame:SetScript("OnEvent", function(self)
 
                     -- 4b. CD Ready Glow Style: the style both CD Ready glows use.
                     if not isCustomInjected then
-                        MakeSubnavRow("CD Ready Glow Style", CD_READY_STYLE_ITEMS,
+                        MakeSubnavRow("Glow Style", CD_READY_STYLE_ITEMS,
                             function() return ns.CdReadyGlowStyle(ss.cdStateEffect, ss) end,
                             function(v)
                                 EnsureSS(); SetOwn("cdStateGlowStyle", v)
                                 if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
                             end,
                             function() return ss.cdStateGlowStyle == nil end,
-                            nil,
+                            function(si, item, sub)
+                                -- Blackout: clicking prompts for the opacity percent, then
+                                -- selects this style (mirrors Lower Alpha's onClick above).
+                                if item.val == 8 then
+                                    item.dynamicLabel = function()
+                                        local base = EllesmereUI.L(ns.GLOW_STYLES[8].name)
+                                        if ns.CdReadyGlowStyle(ss.cdStateEffect, ss) == 8 then
+                                            local pct = math.floor(((ss.cdStateGlowAlpha or 1) * 100) + 0.5)
+                                            return pct .. "% " .. base
+                                        end
+                                        return base
+                                    end
+                                    si:SetScript("OnClick", function()
+                                        local cur = math.floor(((ss.cdStateGlowAlpha or 1) * 100) + 0.5)
+                                        menu:Hide()
+                                        ShowAlphaPopup(cur, function(pct)
+                                            EnsureSS()
+                                            ss.cdStateGlowAlpha = pct / 100
+                                            SetOwn("cdStateGlowStyle", 8)
+                                            if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                                        end, EllesmereUI.L("Glow Opacity"), EllesmereUI.L("Blackout glow opacity (1-100%)"))
+                                    end)
+                                end
+                            end,
                             { disabled = function() return not CD_GLOW_EFFECT[ss.cdStateEffect] end,
-                              apply = { keys = { "cdStateGlowStyle" },
-                                        write = function(t, v) t.cdStateGlowStyle = v end } })
+                              apply = { keys = { "cdStateGlowStyle", "cdStateGlowAlpha" },
+                                        write = function(t, v)
+                                            t.cdStateGlowStyle = v
+                                            t.cdStateGlowAlpha = (v == 8) and ss.cdStateGlowAlpha or nil
+                                        end } })
                     end
 
                     -- 4a. Threshold Text: decimals/color change on this spell's countdowns
@@ -12745,6 +12842,43 @@ initFrame:SetScript("OnEvent", function(self)
             end)
 
             allItems[#allItems + 1] = esItem
+            mH = mH + ITEM_H
+
+            -- "Empty Slot" option -- adds a purely decorative placeholder that reserves a
+            -- grid position (no spell/item behind it). Reorders/moves and removes exactly
+            -- like any other tracked entry; each Add mints a fresh unique marker so several can sit on one bar.
+            local eoItem = CreateFrame("Button", nil, inner)
+            eoItem:SetHeight(ITEM_H)
+            eoItem:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH)
+            eoItem:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -1, -mH)
+            eoItem:SetFrameLevel(menu:GetFrameLevel() + 2)
+
+            local eoHl = eoItem:CreateTexture(nil, "ARTWORK")
+            eoHl:SetAllPoints(); eoHl:SetColorTexture(1, 1, 1, 0); eoHl:SetAlpha(0)
+
+            local eoLbl = eoItem:CreateFontString(nil, "OVERLAY")
+            eoLbl:SetFont(FONT_PATH, 11, GetCDMOptOutline())
+            eoLbl:SetPoint("LEFT", 10, 0)
+            eoLbl:SetJustifyH("LEFT")
+            eoLbl:SetText(EllesmereUI.L("Empty Slot"))
+            eoLbl:SetTextColor(tDimR, tDimG, tDimB, tDimA)
+
+            eoItem:SetScript("OnEnter", function()
+                eoLbl:SetTextColor(1, 1, 1, 1)
+                eoHl:SetColorTexture(1, 1, 1, hlA); eoHl:SetAlpha(1)
+            end)
+            eoItem:SetScript("OnLeave", function()
+                eoLbl:SetTextColor(tDimR, tDimG, tDimB, tDimA)
+                eoHl:SetAlpha(0)
+            end)
+            eoItem:SetScript("OnClick", function()
+                menu:Hide()
+                EnsureAssignedSpells(barKey)
+                ns.AddTrackedSpell(barKey, ns.NewEmptySlotMarker())
+                RefreshCDPreview()
+            end)
+
+            allItems[#allItems + 1] = eoItem
             mH = mH + ITEM_H
         end
 
@@ -15237,6 +15371,7 @@ initFrame:SetScript("OnEvent", function(self)
                     slot._previewCdID = trackedCd and trackedCd[i] or nil
                     slot._previewItemID = nil
                     slot._previewHostedBuff = nil
+                    slot._previewIsEmptySlot = nil
                     if id then
                         local tex
                         local cdClaim = ns.CdClaimMarkerToCdID and ns.CdClaimMarkerToCdID(id)
@@ -15288,6 +15423,9 @@ initFrame:SetScript("OnEvent", function(self)
                             end
                             slot._previewSpellID = hostedSid
                             slot._previewHostedBuff = true
+                        elseif ns.IsEmptySlotMarker(id) then
+                            -- Empty Slot: blank placeholder, no icon/tooltip identity.
+                            slot._previewIsEmptySlot = true
                         elseif id <= -100 then
                             -- On-use bag item: negated itemID
                             tex = C_Item.GetItemIconByID(-id)
@@ -15321,6 +15459,7 @@ initFrame:SetScript("OnEvent", function(self)
                     slot._previewCdID = nil
                     slot._previewItemID = nil
                     slot._previewHostedBuff = nil
+                    slot._previewIsEmptySlot = nil
                 end
 
                 local bSz = bd.borderSize or 1

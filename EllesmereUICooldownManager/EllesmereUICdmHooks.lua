@@ -3014,6 +3014,11 @@ ns.ApplyOnlyNumbers = ApplyOnlyNumbers
 --  Add our visual overlays to a CDM frame (one-time per frame).
 -------------------------------------------------------------------------------
 local function DecorateFrame(frame, barData)
+    -- Empty Slot: deliberately undecorated (true blank grid space, no texture/
+    -- cooldown/border/glowOverlay). Never register it in hookFrameData -- every
+    -- _getFD(icon) lookup then reads nil and every fd-driven pass (bar-wide
+    -- glow/border/background included) already no-ops on a nil fd.
+    if frame._isEmptySlotFrame then return end
     local fd = hookFrameData[frame]
     if not fd then fd = {}; hookFrameData[frame] = fd end
 
@@ -3118,6 +3123,7 @@ local function DecorateFrame(frame, barData)
         fd.borderFrame:SetFrameLevel(barData.borderBehind and math.max(0, baseLvl - 1) or (baseLvl + 13))
     end
     if fd.glowOverlay then fd.glowOverlay:SetFrameLevel(baseLvl + 16) end
+    if fd.blackoutOverlay then fd.blackoutOverlay:SetFrameLevel(baseLvl + 12) end
     if fd.textOverlay then fd.textOverlay:SetFrameLevel(baseLvl + 23) end
     if blizzArt then ns.CdmApplyBlizzIconArt(frame) end
 
@@ -3211,6 +3217,20 @@ local function DecorateFrame(frame, barData)
         go:EnableMouse(false)
         fd.glowOverlay = go
         go:SetFrameLevel(baseLvl + 16)
+    end
+
+    -- Blackout (solid-fill Cooldown State glow) lives BELOW frame.Cooldown
+    -- (icon+14), unlike every other glow style on glowOverlay (icon+16,
+    -- above it): a fill there would fully hide the swipe/countdown text.
+    -- ns.StartCdGlow/ns.StopCdGlow pick this frame instead whenever the
+    -- resolved style is Blackout.
+    if not fd.blackoutOverlay then
+        local bo = CreateFrame("Frame", nil, frame)
+        bo:SetAllPoints(frame)
+        bo:SetAlpha(0)
+        bo:EnableMouse(false)
+        fd.blackoutOverlay = bo
+        bo:SetFrameLevel(baseLvl + 12)
     end
 
     -- Re-arm the buff ticker's active-glow "nothing configured" latch: this
@@ -4189,7 +4209,7 @@ local function DecorateFrame(frame, barData)
                 -- (clear any glow we owned).
                 if ns.PresetHasCdState and ns.PresetHasCdState(frame) then
                     if fd._cdStateGlowOn then
-                        if fd.glowOverlay then ns.StopNativeGlow(fd.glowOverlay) end
+                        ns.StopCdGlow(fd)
                         fd._cdStateGlowOn = false
                         -- The Fake-Active path tracks this overlay via its own
                         -- flag; clear it too so its next tick re-asserts the
@@ -4208,7 +4228,7 @@ local function DecorateFrame(frame, barData)
                 elseif cse == "hiddenReadyShift" then cse = "hiddenReady" end
                 if not cse then
                     if fd._cdStateGlowOn then
-                        if fd.glowOverlay then ns.StopNativeGlow(fd.glowOverlay) end
+                        ns.StopCdGlow(fd)
                         fd._cdStateGlowOn = false
                     end
                     -- A preset's cdState lives in customActiveStates (Fake-Active
@@ -4285,7 +4305,7 @@ local function DecorateFrame(frame, barData)
                     if fd._cdGlowBoundSid ~= sid2 then
                         fd._cdGlowBoundSid = sid2
                         if fd._cdStateGlowOn then
-                            ns.StopNativeGlow(fd.glowOverlay)
+                            ns.StopCdGlow(fd)
                             fd._cdStateGlowOn = false
                         end
                     end
@@ -4297,11 +4317,12 @@ local function DecorateFrame(frame, barData)
                         if fd.glowOverlay and not fd._cdStateGlowOn
                             and not fd.procGlowActive then
                             local style = ns.CdReadyGlowStyle(cse, ss2)
-                            ns.StartNativeGlow(fd.glowOverlay, style, ns.CdReadyGlowColor(style, ss2))
+                            local cr, cg, cb = ns.CdReadyGlowColor(style, ss2)
+                            ns.StartCdGlow(fd, style, cr, cg, cb, ns.CdReadyGlowAlpha(ss2))
                             fd._cdStateGlowOn = true
                         end
                     elseif fd._cdStateGlowOn then
-                        if fd.glowOverlay then ns.StopNativeGlow(fd.glowOverlay) end
+                        ns.StopCdGlow(fd)
                         fd._cdStateGlowOn = false
                     end
                 elseif cse == "pixelGlowReadyUsable" or cse == "buttonGlowReadyUsable" then
@@ -4311,7 +4332,7 @@ local function DecorateFrame(frame, barData)
                     if fd._cdGlowBoundSid ~= sid2 then
                         fd._cdGlowBoundSid = sid2
                         if fd._cdStateGlowOn then
-                            ns.StopNativeGlow(fd.glowOverlay)
+                            ns.StopCdGlow(fd)
                             fd._cdStateGlowOn = false
                         end
                     end
@@ -4358,11 +4379,12 @@ local function DecorateFrame(frame, barData)
                                 if fd.glowOverlay and not fd._cdStateGlowOn
                                     and not fd.procGlowActive then
                                     local style = ns.CdReadyGlowStyle(self.cse, self.ss2)
-                                    ns.StartNativeGlow(fd.glowOverlay, style, ns.CdReadyGlowColor(style, self.ss2))
+                                    local cr, cg, cb = ns.CdReadyGlowColor(style, self.ss2)
+                                    ns.StartCdGlow(fd, style, cr, cg, cb, ns.CdReadyGlowAlpha(self.ss2))
                                     fd._cdStateGlowOn = true
                                 end
                             elseif fd._cdStateGlowOn then
-                                if fd.glowOverlay then ns.StopNativeGlow(fd.glowOverlay) end
+                                ns.StopCdGlow(fd)
                                 fd._cdStateGlowOn = false
                             end
                         end)
@@ -4371,6 +4393,33 @@ local function DecorateFrame(frame, barData)
                     pending.sid = liveSid
                     pending.ss2 = ss2
                     pending:Show()
+                elseif cse == "glowOnCD" then
+                    -- Glow (On CD): mirror of the plain Ready branch above, condition
+                    -- inverted -- glows for the whole cooldown instead of at readiness.
+                    if (frame._isRacialFrame or frame._isTrinketFrame or frame._isPresetFrame
+                        or frame._isItemPresetFrame or frame._isCustomSpellFrame)
+                        and ns.CDGlowWatch then
+                        ns.CDGlowWatch(frame)
+                    end
+                    if fd._cdGlowBoundSid ~= sid2 then
+                        fd._cdGlowBoundSid = sid2
+                        if fd._cdStateGlowOn then
+                            ns.StopCdGlow(fd)
+                            fd._cdStateGlowOn = false
+                        end
+                    end
+                    if onCD then
+                        if fd.glowOverlay and not fd._cdStateGlowOn
+                            and not fd.procGlowActive then
+                            local style = ns.CdReadyGlowStyle(cse, ss2)
+                            local cr, cg, cb = ns.CdReadyGlowColor(style, ss2)
+                            ns.StartCdGlow(fd, style, cr, cg, cb, ns.CdReadyGlowAlpha(ss2))
+                            fd._cdStateGlowOn = true
+                        end
+                    elseif fd._cdStateGlowOn then
+                        ns.StopCdGlow(fd)
+                        fd._cdStateGlowOn = false
+                    end
                 end
             end)
         end
@@ -4978,14 +5027,15 @@ do
                 local cse2 = ns.GetSpellCdStateEffect(frame, ss2)
                 local plainGlow = cse2 == "pixelGlowReady" or cse2 == "buttonGlowReady"
                 local usableGlow = cse2 == "pixelGlowReadyUsable" or cse2 == "buttonGlowReadyUsable"
-                if plainGlow or usableGlow then
+                local onCdGlow = cse2 == "glowOnCD"
+                if plainGlow or usableGlow or onCdGlow then
                     keep = true
                     -- Pool reassignment: glow state inherited from a previous
                     -- spell on this frame belongs to that spell -- reset now.
                     if fd._cdGlowBoundSid ~= sid2 then
                         fd._cdGlowBoundSid = sid2
                         if fd._cdStateGlowOn then
-                            ns.StopNativeGlow(fd.glowOverlay)
+                            ns.StopCdGlow(fd)
                             fd._cdStateGlowOn = false
                         end
                     end
@@ -4996,7 +5046,10 @@ do
                     local ci = C_Spell.GetSpellCooldown(liveSid)
                     local onCD = ci and ci.isActive and not ci.isOnGCD
                     local shouldGlow
-                    if onCD then
+                    if onCdGlow then
+                        -- Glow (On CD): mirror of the ready-glow safety net below, inverted.
+                        shouldGlow = onCD and true or false
+                    elseif onCD then
                         -- On cooldown always stops the glow -- a safety net
                         -- independent of the SetDesaturated hook, in case that
                         -- hook doesn't fire for a given transition (it never does
@@ -5016,11 +5069,12 @@ do
                         -- this flush again once the proc ends.
                         if not fd._cdStateGlowOn and not fd.procGlowActive then
                             local style = ns.CdReadyGlowStyle(cse2, ss2)
-                            ns.StartNativeGlow(fd.glowOverlay, style, ns.CdReadyGlowColor(style, ss2))
+                            local cr, cg, cb = ns.CdReadyGlowColor(style, ss2)
+                            ns.StartCdGlow(fd, style, cr, cg, cb, ns.CdReadyGlowAlpha(ss2))
                             fd._cdStateGlowOn = true
                         end
                     elseif fd._cdStateGlowOn then
-                        ns.StopNativeGlow(fd.glowOverlay)
+                        ns.StopCdGlow(fd)
                         fd._cdStateGlowOn = false
                     end
                 end
@@ -5031,7 +5085,7 @@ do
                 -- set drains (checked below and on the next queued flush).
                 _cdGlowWatched[frame] = nil
                 if fd and fd._cdStateGlowOn then
-                    if fd.glowOverlay then ns.StopNativeGlow(fd.glowOverlay) end
+                    ns.StopCdGlow(fd)
                     fd._cdStateGlowOn = false
                 end
             end
@@ -5826,6 +5880,30 @@ local function GetOrCreateItemPresetFrame(barKey, itemID)
     return f
 end
 ns.GetOrCreateItemPresetFrame = GetOrCreateItemPresetFrame
+
+-------------------------------------------------------------------------------
+--  Empty Slot: a purely decorative placeholder that reserves one grid position
+--  with nothing drawn (no texture, no cooldown, no border) -- true blank space,
+--  so a bar can visually group its icons. One frame per marker (unique per Add,
+--  see ns.NewEmptySlotMarker), reused across reanchors like every other custom
+--  frame. Never registered with _RegisterPresetLive: it has no cooldown to poll
+--  (zero cost beyond the one-time frame creation).
+-------------------------------------------------------------------------------
+local function GetOrCreateEmptySlotFrame(marker)
+    local fkey = "emptyslot:" .. marker
+    local f = _presetFrames[fkey]
+    if f then return f end
+
+    f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(36, 36); f:Hide()
+    f:EnableMouse(false)
+    f._isEmptySlotFrame = true
+    f.cooldownID = nil; f.cooldownInfo = nil
+    f.layoutIndex = 99999
+    _presetFrames[fkey] = f
+    return f
+end
+ns.GetOrCreateEmptySlotFrame = GetOrCreateEmptySlotFrame
 
 -- Crafted-quality pip for item frames -- the action bars' Show Rank Icon, for
 -- CDM. Those read C_ActionBar.GetProfessionQualityInfo, which needs an action
@@ -8173,6 +8251,14 @@ local function CollectAndReanchor()
                             else
                                 tf:Hide()
                             end
+                        elseif sid and ns.IsEmptySlotMarker(sid) then
+                            -- Empty Slot: pure grid spacer, no live state to
+                            -- push. Must be tested before the item-preset
+                            -- branch: it is also <= -100.
+                            local f = GetOrCreateEmptySlotFrame(sid)
+                            frames[#frames + 1] = f
+                            local fc = FC(f)
+                            fc.barKey = barKey; fc.spellID = sid
                         elseif sid and sid <= -100 then
                             -- Item preset (potions, healthstone, etc.) or a
                             -- user-added custom item ID. Frame creation (incl.

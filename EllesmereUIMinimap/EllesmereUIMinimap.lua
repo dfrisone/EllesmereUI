@@ -3566,15 +3566,6 @@ local function CaptureBlizzardMinimap()
     if not minimap then return end
     local p = EBS.db.profile.minimap
     if p._capturedOnce then return end
-    -- WoW Forever starts every install from the base layout, never from a
-    -- snapshot of Blizzard's minimap (EllesmereUI_ForeverLayout.lua): the
-    -- map opens at the Forever size, and with no position it takes the
-    -- top-right default below.
-    if EllesmereUI.IS_FOREVER then
-        p.mapSize = EllesmereUI.FOREVER_MINIMAP_SIZE or 200
-        p._capturedOnce = true
-        return
-    end
 
     local uiScale = UIParent:GetEffectiveScale()
     local mScale  = minimap:GetEffectiveScale()
@@ -3597,6 +3588,19 @@ local function CaptureBlizzardMinimap()
             point = "CENTER", relPoint = "CENTER",
             x = cx - (uiW / 2), y = cy - (uiH / 2),
         }
+    end
+
+    -- WoW Forever: a new profile starts with our button, then the error-list
+    -- addon's (its LibDBIcon name; an absent button costs nothing), on the
+    -- button row out of the group. A first-capture seed, not a default: a
+    -- player's regroup clears the entry for good.
+    if EllesmereUI.IS_FOREVER == true then
+        local ug = p.ungroupedButtons
+        if type(ug) ~= "table" then ug = {}; p.ungroupedButtons = ug end
+        if next(ug) == nil then
+            ug.EllesmereUIMinimapButton = 1
+            ug.LibDBIcon10_BugSack = 2
+        end
     end
 
     p._capturedOnce = true
@@ -4318,6 +4322,8 @@ local function ApplyMinimap()
 
     -- Rotate Minimap: enforce the CVar to match our setting (out of combat only).
     SetCVar("rotateMinimap", p.rotateMinimap and "1" or "0")
+    -- Icon Size: nothing while unset (Edit Mode's value stands).
+    EBS._ApplyMinimapIconScale()
 
     local minimap = Minimap
     if not minimap then return end
@@ -4358,6 +4364,8 @@ local function ApplyMinimap()
                 MinimapCluster:SetAlpha(0)
                 MinimapCluster:EnableMouse(false)
             end
+            -- The cluster's Edit Mode selection box ignores that alpha.
+            EBS._SuppressMinimapSelection()
         end)
     end
     -- Blizzard reparents the minimap during housing transitions and other events; hook SetParent to force it back.
@@ -5456,6 +5464,60 @@ function EBS._ApplyMapAlpha()
     if Minimap and p and p.enabled then EBS._WriteMapAlpha(Minimap, p) end
 end
 
+-- Icon Size (the Size row's cog): the scale of the icons on the map, the same
+-- property Blizzard's Edit Mode "Icon Size" sets through MinimapCluster:SetIconScale.
+-- Ours goes straight to the map, so the Edit Mode layout is never written; unset
+-- (nil) leaves Edit Mode's own value. Edit Mode re-applies its value on every
+-- layout apply, so a post-hook on that call puts ours back (installed with the
+-- first value; it returns at once while the setting is unset).
+-- Edit Mode's current Icon Size (percent), or nil before its layout is applied.
+function EBS._EditModeIconScale()
+    local c = MinimapCluster
+    local s = Enum and Enum.EditModeMinimapSetting and Enum.EditModeMinimapSetting.IconScale
+    if not (c and s ~= nil and c.GetSettingValue) then return nil end
+    local ok, v = pcall(c.GetSettingValue, c, s)
+    if ok and type(v) == "number" and v > 0 then return v end
+    return nil
+end
+function EBS._ApplyMinimapIconScale()
+    local p = EBS.db and EBS.db.profile and EBS.db.profile.minimap
+    local v = p and p.iconScale
+    if not (Minimap and Minimap.SetIconScale) then return end
+    local d = GetFFD(Minimap)
+    if not v then
+        -- Unset after a value (a profile swap): hand the map back Edit Mode's.
+        if d.iconScaleSet then
+            d.iconScaleSet = nil
+            local ev = EBS._EditModeIconScale()
+            if ev then Minimap:SetIconScale(ev / 100) end
+        end
+        return
+    end
+    Minimap:SetIconScale(v / 100)
+    d.iconScaleSet = true
+    if not d.iconScaleHooked and MinimapCluster and MinimapCluster.SetIconScale then
+        d.iconScaleHooked = true
+        hooksecurefunc(MinimapCluster, "SetIconScale", function()
+            local m = EBS.db and EBS.db.profile and EBS.db.profile.minimap
+            if m and m.iconScale then Minimap:SetIconScale(m.iconScale / 100) end
+        end)
+    end
+end
+
+-- Edit Mode's selection box on the minimap cluster ignores the cluster's alpha 0
+-- and stays mouse-enabled, so it would show and drag an empty Blizzard minimap:
+-- alpha 0 with the mouse off, on that one frame only. Edit Mode never resets
+-- either, so one write holds; the minimap stays ours until a reload.
+function EBS._SuppressMinimapSelection()
+    local sel = MinimapCluster and MinimapCluster.Selection
+    if not sel then return end
+    local d = GetFFD(sel)
+    if d.suppressed then return end
+    d.suppressed = true
+    sel:SetAlpha(0)
+    sel:EnableMouse(false)
+end
+
 -- Currently registered secure driver string, nil when none is registered.
 local _mmDriverStr
 
@@ -5759,6 +5821,8 @@ function EBS:OnInitialize()
     _G._EMM_ApplyMinimap = ApplyMinimap
     _G._EMM_FullRebuildMinimap = FullRebuildMinimap
     _G._EMM_ApplyMapAlpha = EBS._ApplyMapAlpha
+    _G._EMM_ApplyIconScale = EBS._ApplyMinimapIconScale
+    _G._EMM_EditModeIconScale = EBS._EditModeIconScale
 
     -- Register visibility updater + mouseover target
     EllesmereUI.RegisterVisibilityUpdater(UpdateMinimapVisibility)
