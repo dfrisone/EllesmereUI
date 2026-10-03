@@ -1078,6 +1078,12 @@ local defaults = {
             buffSize = 22,
             buffOffsetX = 0,
             buffOffsetY = 0,
+            auraBorderTexture = "solid",
+            auraBorderSize = 1,
+            auraBorderR = 0, auraBorderG = 0, auraBorderB = 0, auraBorderA = 1,
+            auraBorderBehind = false,
+            auraBorderBehindUnitFrame = false,
+            auraBorderDispelTextured = false,
             debuffSize = 22,
             debuffOffsetX = 0,
             debuffOffsetY = 0,
@@ -1448,7 +1454,7 @@ end
 
 -- Resolve a unit's effective health bar texture KEY. Main frames use their own key
 -- (falling back to the global default); mini frames (pet, ToT, focus target, boss)
--- inherit the donor frame's texture (focus > target > player) unless their own key is
+-- inherit their donor frame's texture (ns.GetMiniDonorSettings) unless their own key is
 -- non-nil/non-"inherit". Shared by the live frames and the options preview to match.
 ns.ResolveHealthBarTextureKey = function(ownSettings, donorSettings)
     local own = ownSettings and ownSettings.healthBarTexture
@@ -3855,17 +3861,28 @@ function ns.UF_CastIconPortrait(castbar, frame, s, unit)
     return bd
 end
 
--- Donor settings table for mini frames (focus > target > player); source of
--- inherited border, texture and font settings. A frame that is disabled, or that
--- Visibility keeps off screen entirely, is not a donor -- before Visibility and
--- enabledFrames were split, "never" cleared that flag and fell out here for free.
-function ns.GetMiniDonorSettings()
-    local ef = db.profile.enabledFrames
-    local focus = db.profile.focus
+-- Donor settings table for a mini frame, the source of its inherited border,
+-- bar texture and hover highlight: the main frame its Copy Look From picks
+-- (lookSource "target" / "focus" / "player"), else Automatic (focus > target >
+-- player; boss frames always). A frame that is disabled, or that Visibility
+-- keeps off screen entirely, is not a donor (a pick of one falls back to
+-- Automatic) -- before Visibility and enabledFrames were split, "never"
+-- cleared that flag and fell out here for free.
+function ns.GetMiniDonorSettings(unitKey)
+    local p = db.profile
+    local ef = p.enabledFrames
+    local own = unitKey and p[unitKey]
+    local pick = own and own.lookSource
+    if pick == "player" then return p.player end
+    if pick == "target" or pick == "focus" then
+        local s = p[pick]
+        if ef[pick] ~= false and s and ns.VisEffective(s) ~= "never" then return s end
+    end
+    local focus = p.focus
     if ef.focus ~= false and focus and ns.VisEffective(focus) ~= "never" then return focus end
-    local target = db.profile.target
+    local target = p.target
     if ef.target ~= false and target and ns.VisEffective(target) ~= "never" then return target end
-    return db.profile.player
+    return p.player
 end
 local GetMiniDonorSettings = ns.GetMiniDonorSettings
 
@@ -3877,6 +3894,13 @@ function ns.UF_BossBorderSettings()
     local s = db.profile.boss
     if s and s.borderCustom == true then return s end
     return GetMiniDonorSettings()
+end
+
+function ns.UF_BossAuraBorderAboveEffects(s)
+    return s.auraBorderAboveEffects == true and not ns.UF_Blizz()
+        and not s.auraBorderBehind and not s.auraBorderBehindUnitFrame
+        and (s.auraBorderSize or 1) > 0
+        and s.auraBorderTexture ~= nil and s.auraBorderTexture ~= "solid" and s.auraBorderTexture ~= ""
 end
 
 -- Boss "Simple Debuff Display" mode: "none"|"left"|"right". Tolerates legacy booleans
@@ -4122,7 +4146,7 @@ end
 -- Non-playable NPC models are excluded.
 -- Unlisted/missing/restricted IDs stay normal; never infer facing from unit type.
 do
-    local mirrorAngles -- Built only when a 3D portrait is first mirrored.
+    local mirrorAngles -- Built only when portrait mirroring first needs a model ID.
     local function GetMirrorAngle(id)
         if issecretvalue(id) or type(id) ~= "number" or id <= 0 then return end
         if not mirrorAngles then
@@ -4154,6 +4178,80 @@ do
             }
         end
         return mirrorAngles[id]
+    end
+
+    -- 2D textures have no model ID: the portrait's hidden, lazy 3D frame loads
+    -- the unit once per GUID and the answer is cached (ns.UF_ForgetPortraitMirror
+    -- drops it on UNIT_MODEL_CHANGED, so forms and transforms check again). A
+    -- model whose file is not resolved yet stays loaded until OnModelLoaded, then
+    -- onReady(guid) lets the portrait repaint its flip. Secret GUIDs are not
+    -- cached. The model is our own frame, so its fields are ours to use.
+    local verdict, verdictCount = {}, 0
+    local function Release(model)
+        model._mirPending, model._mirReady = nil, nil
+        -- Shown = a 3D portrait now owns the model: leave it loaded.
+        if not model:IsShown() then model:ClearModel() end
+        model:SetKeepModelOnHide(false)
+    end
+    local function Store(key, v)
+        if verdict[key] == nil then
+            if verdictCount >= 500 then wipe(verdict); verdictCount = 0 end
+            verdictCount = verdictCount + 1
+        end
+        verdict[key] = v
+    end
+    local function Resolve(model, key)
+        local v = GetMirrorAngle(model:GetModelFileID()) ~= nil
+        local ready = model._mirReady
+        Release(model)
+        Store(key, v)
+        if ready then ready(key) end
+        return v
+    end
+    local function OnModelLoaded(model)
+        local key = model._mirPending
+        if not key then return end
+        if model:IsShown() then Release(model); return end
+        Resolve(model, key)
+    end
+    function ns.UF_CanMirrorPortrait2D(model, unit, onReady)
+        -- IDs may be secret: only type() and issecretvalue() ever test them.
+        local guid = UnitGUID(unit)
+        local key = (not issecretvalue(guid)) and guid or nil
+        if key then
+            local v = verdict[key]
+            if v ~= nil then return v end
+            -- This unit's load is still in flight: take the answer if it is in.
+            if model._mirPending == key then
+                if type(model:GetModelFileID()) == "nil" then return false end
+                model._mirReady = nil
+                return Resolve(model, key)
+            end
+        end
+        if model._mirPending then Release(model) end
+        model:SetKeepModelOnHide(true)
+        model:ClearModel()
+        model:SetUnit(unit)
+        local id = model:GetModelFileID()
+        if type(id) == "nil" and key and onReady then
+            model._mirPending, model._mirReady = key, onReady
+            if not model._mirHooked then
+                model._mirHooked = true
+                model:HookScript("OnModelLoaded", OnModelLoaded)
+            end
+            return false
+        end
+        local v = GetMirrorAngle(id) ~= nil
+        Release(model)
+        if key and type(id) ~= "nil" then Store(key, v) end
+        return v
+    end
+    function ns.UF_ForgetPortraitMirror(unit)
+        local guid = UnitGUID(unit)
+        if not issecretvalue(guid) and guid and verdict[guid] ~= nil then
+            verdict[guid] = nil
+            verdictCount = verdictCount - 1
+        end
     end
 
     function ns.UF_ApplyPortraitRotation(model, mirror)
@@ -4207,9 +4305,9 @@ function PortraitOverride(self, event, evtUnit, fallback)
     local hasStateChanged = changed
         or element.state ~= isAvailable
         or event == "UNIT_PORTRAIT_UPDATE"
-        -- Model changes only matter to a 3D PlayerModel portrait (its SetUnit
-        -- must reload). 2D art follows UNIT_PORTRAIT_UPDATE / PORTRAITS_UPDATED,
-        -- the only portrait events Blizzard's own unit frames listen to.
+        -- 3D portraits must reload on model changes. The opted-in 2D mirror
+        -- eligibility check below also uses this event; ordinary 2D art uses
+        -- UNIT_PORTRAIT_UPDATE / PORTRAITS_UPDATED.
         or (event == "UNIT_MODEL_CHANGED" and isModel)
         or event == "ForceUpdate"
         -- Unit swaps (vehicle enter/exit) always repaint: the swap moment can
@@ -4236,6 +4334,16 @@ function PortraitOverride(self, event, evtUnit, fallback)
         -- with guid and availability both reading unchanged, field-traced).
         -- Models only: 2D textures survive Hide/Show.
         or (event == "Show" and isModel)
+    -- A changed model can also change 2D mirror eligibility, including class
+    -- mode's NPC fallback: drop the cached answer and repaint, only when opted in.
+    if event == "UNIT_MODEL_CHANGED" and not isModel then
+        local uk = UnitToSettingsKey(self._euiBaseUnit or u)
+        local us = uk and db.profile[uk]
+        if us and us.portraitMirror and not ns.UF_Blizz() then
+            ns.UF_ForgetPortraitMirror(u)
+            hasStateChanged = true
+        end
+    end
     -- Blank-model recovery is only needed when no other change requires a paint.
     -- Show can run before assets stream in; PORTRAITS_UPDATED retries a still-
     -- blank model without reloading one that is already populated.
@@ -5600,7 +5708,9 @@ local function UpdateBordersForScale(frame, unit)
     if ns.UF_Blizz() and not ns._ufReloadSweep then ns.UF_ApplyBlizzardLayout(frame, unit) end
     if settings.portraitSeparator or frame._portraitSeparator then
         ns.UpdatePortraitSeparator(frame, frame.Portrait and frame.Portrait.backdrop,
-            settings, effectiveSide, showPortrait and isAttached, ns.UF_Blizz())
+            settings, effectiveSide, showPortrait and isAttached, ns.UF_Blizz(), nil,
+            unit:match("^boss%d$") and ns.UF_BossBorderSettings()
+                or (unit == "targettarget" and GetMiniDonorSettings(unit) or nil))
     end
 end
 
@@ -5900,6 +6010,12 @@ local function UpdateAbsorbBarReverseFill(frame, isReversed, settingsOverride)
     local osm = s and s.overshieldMode
     if osm == nil then osm = (s and s.showOvershield == false) and "never" or "always" end
     local osFromLeft = osm == "fromleft"
+    -- Overlay Reverse (Full): Overlay Reverse, plus the forward bar filling
+    -- from the bar's ORIGIN edge, so the missing-health clip shows the absorb
+    -- exceeding current health past the fill edge instead of losing it. Its
+    -- clip starts exactly at the fill edge: the 1px seal into the fill would
+    -- double that pixel over the backfill.
+    local orFull = absorbMode == "overlayReverseFull"
 
     -- Vertical fill: the whole HP cluster rotates with the health bar. Every anchor
     -- below is the horizontal layout with its axis swapped -- the health fill's RIGHT
@@ -5926,20 +6042,31 @@ local function UpdateAbsorbBarReverseFill(frame, isReversed, settingsOverride)
     fw:ClearAllPoints()
 
     if isVert then
-        -- missClip + forward bar always use the overlay layout; in the edge modes the
-        -- full-bar backfill shows the whole absorb and the Override hides fw.
+        -- missClip + forward bar use the overlay layout (from the origin edge in
+        -- Overlay Reverse (Full)); in the other modes the backfill shows the
+        -- absorb and the Override hides fw.
         if isReversed then
-            missClip:SetPoint("TOPLEFT",     hpTex, "BOTTOMLEFT",  0, 1)
+            missClip:SetPoint("TOPLEFT",     hpTex, "BOTTOMLEFT",  0, orFull and 0 or 1)
             missClip:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
             fw:SetReverseFill(true)
-            fw:SetPoint("TOPLEFT",  hpTex, "BOTTOMLEFT",  0, 0)
-            fw:SetPoint("TOPRIGHT", hpTex, "BOTTOMRIGHT", 0, 0)
+            if orFull then
+                fw:SetPoint("TOPLEFT",  hpBar, "TOPLEFT",  0, 0)
+                fw:SetPoint("TOPRIGHT", hpBar, "TOPRIGHT", 0, 0)
+            else
+                fw:SetPoint("TOPLEFT",  hpTex, "BOTTOMLEFT",  0, 0)
+                fw:SetPoint("TOPRIGHT", hpTex, "BOTTOMRIGHT", 0, 0)
+            end
         else
-            missClip:SetPoint("BOTTOMLEFT", hpTex, "TOPLEFT",  0, -1)
+            missClip:SetPoint("BOTTOMLEFT", hpTex, "TOPLEFT",  0, orFull and 0 or -1)
             missClip:SetPoint("TOPRIGHT",   hpBar, "TOPRIGHT", 0, 0)
             fw:SetReverseFill(false)
-            fw:SetPoint("BOTTOMLEFT",  hpTex, "TOPLEFT",  0, 0)
-            fw:SetPoint("BOTTOMRIGHT", hpTex, "TOPRIGHT", 0, 0)
+            if orFull then
+                fw:SetPoint("BOTTOMLEFT",  hpBar, "BOTTOMLEFT",  0, 0)
+                fw:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
+            else
+                fw:SetPoint("BOTTOMLEFT",  hpTex, "TOPLEFT",  0, 0)
+                fw:SetPoint("BOTTOMRIGHT", hpTex, "TOPRIGHT", 0, 0)
+            end
         end
 
         -- Shield absorb placement.
@@ -5955,12 +6082,13 @@ local function UpdateAbsorbBarReverseFill(frame, isReversed, settingsOverride)
                 ab:SetPoint("TOPLEFT",  hpBar, "TOPLEFT",  0, 0)
                 ab:SetPoint("TOPRIGHT", hpBar, "TOPRIGHT", 0, 0)
             end
-        elseif absorbMode == "overlayReverse" then
+        elseif absorbMode == "overlayReverse" or orFull then
             -- Overlay Reverse: the WHOLE absorb fills from the health fill's
             -- leading edge back INTO the fill; the filled-region clip masks
             -- any excess past empty, so shields larger than current health
             -- never escape the fill (fw hidden by the Override, like the edge
-            -- modes). Axis-swapped for vertical, mirrored for reversed fill.
+            -- modes; Full draws that excess through fw instead).
+            -- Axis-swapped for vertical, mirrored for reversed fill.
             if isReversed then
                 curClip:SetPoint("TOPLEFT",     hpBar, "TOPLEFT",     0, 0)
                 curClip:SetPoint("BOTTOMRIGHT", hpTex, "BOTTOMRIGHT", 0, 0)
@@ -6041,20 +6169,31 @@ local function UpdateAbsorbBarReverseFill(frame, isReversed, settingsOverride)
         return
     end
 
-    -- missClip + forward bar always use the overlay layout; in the edge modes
-    -- the full-bar backfill shows the whole absorb and the Override hides fw.
+    -- missClip + forward bar use the overlay layout (from the origin edge in
+    -- Overlay Reverse (Full)); in the other modes the backfill shows the
+    -- absorb and the Override hides fw.
     if isReversed then
-        missClip:SetPoint("TOPRIGHT",    hpTex, "TOPLEFT", 1, 0)
+        missClip:SetPoint("TOPRIGHT",    hpTex, "TOPLEFT", orFull and 0 or 1, 0)
         missClip:SetPoint("BOTTOMLEFT",  hpBar, "BOTTOMLEFT", 0, 0)
         fw:SetReverseFill(true)
-        fw:SetPoint("TOPRIGHT",    hpTex, "TOPLEFT",    0, 0)
-        fw:SetPoint("BOTTOMRIGHT", hpTex, "BOTTOMLEFT", 0, 0)
+        if orFull then
+            fw:SetPoint("TOPRIGHT",    hpBar, "TOPRIGHT",    0, 0)
+            fw:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
+        else
+            fw:SetPoint("TOPRIGHT",    hpTex, "TOPLEFT",    0, 0)
+            fw:SetPoint("BOTTOMRIGHT", hpTex, "BOTTOMLEFT", 0, 0)
+        end
     else
-        missClip:SetPoint("TOPLEFT",     hpTex, "TOPRIGHT", -1, 0)
+        missClip:SetPoint("TOPLEFT",     hpTex, "TOPRIGHT", orFull and 0 or -1, 0)
         missClip:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
         fw:SetReverseFill(false)
-        fw:SetPoint("TOPLEFT",    hpTex, "TOPRIGHT",    0, 0)
-        fw:SetPoint("BOTTOMLEFT", hpTex, "BOTTOMRIGHT", 0, 0)
+        if orFull then
+            fw:SetPoint("TOPLEFT",    hpBar, "TOPLEFT",    0, 0)
+            fw:SetPoint("BOTTOMLEFT", hpBar, "BOTTOMLEFT", 0, 0)
+        else
+            fw:SetPoint("TOPLEFT",    hpTex, "TOPRIGHT",    0, 0)
+            fw:SetPoint("BOTTOMLEFT", hpTex, "BOTTOMRIGHT", 0, 0)
+        end
     end
 
     -- Shield absorb placement
@@ -6072,10 +6211,11 @@ local function UpdateAbsorbBarReverseFill(frame, isReversed, settingsOverride)
             ab:SetPoint("TOPRIGHT",    hpBar, "TOPRIGHT",    0, 0)
             ab:SetPoint("BOTTOMRIGHT", hpBar, "BOTTOMRIGHT", 0, 0)
         end
-    elseif absorbMode == "overlayReverse" then
+    elseif absorbMode == "overlayReverse" or orFull then
         -- Overlay Reverse: the WHOLE absorb fills from the health fill's
         -- leading edge back INTO the fill; the filled-region clip masks any
-        -- excess past empty (fw hidden by the Override, like the edge modes).
+        -- excess past empty (fw hidden by the Override, like the edge modes;
+        -- Full draws that excess through fw instead).
         if isReversed then
             curClip:SetPoint("TOPRIGHT",   hpBar, "TOPRIGHT",   0, 0)
             curClip:SetPoint("BOTTOMLEFT", hpTex, "BOTTOMLEFT", 0, 0)
@@ -6602,7 +6742,7 @@ function ns.UF_AbsorbGlowApply(frame, unit)
             if osm == nil then osm = (s.showOvershield == false) and "never" or "always" end
             ge = (osm == "fromleft") and 2 or 1
             anc = (osm == "never") and 0 or ge
-        elseif em == "overlayReverse" then
+        elseif em == "overlayReverse" or em == "overlayReverseFull" then
             ge, anc = 3, 0
         elseif em == (rev and "left" or "right") then
             ge, anc = 5, 0
@@ -7157,9 +7297,10 @@ local function CreateAbsorbBar(frame, unit, settings)
                     fw:SetMinMaxValues(0, maxHealth)
                     fw:SetValue(absorbAmt)
                     fw:Show()
-                    -- Edge modes: the full-bar backfill shows the whole absorb,
-                    -- so the overlay-only forward bar is not needed.
-                    if absorbMode ~= "overlay" then fw:Hide() end
+                    -- Edge modes and Overlay Reverse: the backfill shows the
+                    -- absorb, so the forward bar is not needed (Overlay Reverse
+                    -- (Full) draws its excess through it).
+                    if absorbMode ~= "overlay" and absorbMode ~= "overlayReverseFull" then fw:Hide() end
                 end
                 -- Blizzard Glow Line (opt-in; see ns.UF_AbsorbGlowApply).
                 if ab._glowOn then ns.UF_PaintAbsorbGlow(ab, updUnit, absorbAmt, hpH) end
@@ -7215,7 +7356,7 @@ end
 -- live. Shared by the creation path and player/target/focus refresh branches. On ns
 -- for the Lua 5.1 200-local ceiling.
 --
--- Power Bar Seam (s.borderPowerSeam, opt-in; player / target / focus): the frame
+-- Power Bar Seam (s.borderPowerSeam, opt-in; player / target / focus / boss): the frame
 -- Border Style's separator strip (EllesmereUI.GetBorderCompanion "sepH") along the
 -- health / power join while the power bar is attached with a height, the frame
 -- border is above 0 and its style has seam art; flipped for a bar above health.
@@ -7233,13 +7374,19 @@ end
 -- registration.
 function ns.UpdatePowerSeam(power, s, stock, preview)
     local seam = power._pbSeam
+    local b = s
+    local sizeOverride
     local path
     if s and s.borderPowerSeam == true then
+        if s == db.profile.boss then
+            b = ns.UF_BossBorderSettings()
+            sizeOverride = s.borderSizeOverride
+        end
         if stock == nil then stock = ns.UF_Blizz() end
         local pos = s.powerPosition or "below"
         if not stock and (pos == "above" or pos == "below") and (s.powerHeight or 6) > 0
-           and (s.borderSize or 1) > 0 and power:IsShown() then
-            path = EllesmereUI.GetBorderCompanion(s.borderTexture or "solid", "sepH")
+           and (sizeOverride or b.borderSize or 1) > 0 and power:IsShown() then
+            path = EllesmereUI.GetBorderCompanion(b.borderTexture or "solid", "sepH")
         end
     end
     if not path then
@@ -7271,12 +7418,13 @@ function ns.UpdatePowerSeam(power, s, stock, preview)
     seam:SetFrameStrata((border or power):GetFrameStrata())
     seam:SetFrameLevel(math.max(power:GetFrameLevel() + 1,
         border and math.min(border:GetFrameLevel() + 1, owner:GetFrameLevel() + 11) or 0))
-    local key, size = s.borderTexture, s.borderSize or 1
-    local px = EllesmereUI.BorderPx(s.borderSizePx, size, key)
+    local key, size = b.borderTexture, sizeOverride or b.borderSize or 1
+    local px
+    if not sizeOverride then px = EllesmereUI.BorderPx(b.borderSizePx, size, key) end
     seam._key, seam._step, seam._px, seam._path = key, size, px, path
     seam._above = (s.powerPosition == "above")
-    local c = s.borderColor
-    seam._tex:SetVertexColor(c and c.r or 0, c and c.g or 0, c and c.b or 0, s.borderAlpha or 1)
+    local c = b.borderColor
+    seam._tex:SetVertexColor(c and c.r or 0, c and c.g or 0, c and c.b or 0, b.borderAlpha or 1)
     seam:Show()
     ns.UF_LayoutPowerSeam(seam)
     EllesmereUI.RegisterPxReapply(seam, (px and not preview) and ns.UF_LayoutPowerSeam or nil)
@@ -7326,14 +7474,17 @@ end
 -- Attached portrait divider: reuse the border style's vertical companion art.
 -- A sibling of the portrait avoids clipping the strip where it crosses into the
 -- bars. Built only on opt-in; layout and colour updates use existing passes.
-function ns.UpdatePortraitSeparator(frame, portrait, s, side, attached, stock, preview)
+function ns.UpdatePortraitSeparator(frame, portrait, s, side, attached, stock, preview, borderSettings)
     local seam = frame._portraitSeparator
     local power = frame.Power or frame._power
     local powerSeam = power and power._pbSeam
+    local sizeOverride = borderSettings and s.borderSizeOverride
+    local b = borderSettings or s
+    local size = sizeOverride or b.borderSize or 1
     local path
     if s.portraitSeparator and attached and portrait and portrait:IsShown()
-       and not stock and (s.borderSize or 1) > 0 then
-        path = EllesmereUI.GetBorderCompanion(s.borderTexture or "solid", "sepV")
+       and not stock and size > 0 then
+        path = EllesmereUI.GetBorderCompanion(b.borderTexture or "solid", "sepV")
     end
     if not path then
         if seam then
@@ -7353,11 +7504,12 @@ function ns.UpdatePortraitSeparator(frame, portrait, s, side, attached, stock, p
     local border = frame.unifiedBorder or frame._border
     seam:SetFrameLevel(math.max(frame:GetFrameLevel() + (preview and 4 or 9),
         border and border:GetFrameLevel() + 1 or 0))
-    seam._key, seam._step = s.borderTexture, s.borderSize or 1
-    seam._px = EllesmereUI.BorderPx(s.borderSizePx, seam._step, seam._key)
+    seam._key, seam._step = b.borderTexture, size
+    seam._px = nil
+    if not sizeOverride then seam._px = EllesmereUI.BorderPx(b.borderSizePx, size, seam._key) end
     seam._right = side == "right"
-    local c = s.borderColor
-    seam._tex:SetVertexColor(c and c.r or 0, c and c.g or 0, c and c.b or 0, s.borderAlpha or 1)
+    local c = b.borderColor
+    seam._tex:SetVertexColor(c and c.r or 0, c and c.g or 0, c and c.b or 0, b.borderAlpha or 1)
     ns.UF_LayoutPortraitSeparator(seam)
     seam:Show()
     if powerSeam and powerSeam:IsShown() then ns.UF_LayoutPowerSeam(powerSeam) end
@@ -7934,7 +8086,7 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     end
 
     -- 2D and class theme textures are eager; the 3D PlayerModel is deferred until
-    -- mode == "3d" to avoid its GPU/memory cost when unused.
+    -- 3D display or an enabled 2D mirror lookup needs it.
     local model3D = nil
 
     local function EnsureModel3D()
@@ -7967,6 +8119,15 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     PP.Point(tex2D, "BOTTOMRIGHT", backdrop, "BOTTOMRIGHT", 0, 0)
     tex2D:SetTexCoord(0.15, 0.85, 0.15, 0.85)
     tex2D:Hide()
+    -- A 2D mirror lookup that finished loading after the paint: repaint the flip
+    -- when the frame still shows that unit.
+    local function MirrorReady(guid)
+        local u = frame._euiUnit
+        if not (u and UnitIsConnected(u) and UnitIsVisible(u)) then return end
+        local g = UnitGUID(u)
+        if issecretvalue(g) or g ~= guid then return end
+        tex2D:PostUpdate(u)
+    end
 
     -- Class theme icon: painted by the engine portrait painter's class lane
     -- (element.isClass); this creation-time paint only seeds art before the
@@ -8055,7 +8216,8 @@ local function CreatePortrait(frame, side, frameHeight, unit)
         -- creation crop). Never under a stock style (its full-art coords
         -- stand), and the unavailable question mark always reads unflipped.
         local mir = (uS2 and uS2.portraitMirror and not ns.UF_Blizz()
-            and not (hasStateChanged and self.state == false)) and true or false
+            and not (hasStateChanged and self.state == false)
+            and ns.UF_CanMirrorPortrait2D(EnsureModel3D(), u, MirrorReady)) and true or false
         if mir ~= (self._mirrored or false) then
             self._mirrored = mir
             if mir then
@@ -9080,6 +9242,10 @@ ns.ApplyBossBorderState = function(self)
         r, g, b, a = c.r, c.g, c.b, bsrc.borderAlpha or 1
     end
     EllesmereUI.SetBorderStyleColor(self.unifiedBorder, r, g, b, a)
+    local seam = self.Power and self.Power._pbSeam
+    if seam and seam:IsShown() then seam._tex:SetVertexColor(r, g, b, a) end
+    local portraitSeam = self._portraitSeparator
+    if portraitSeam and portraitSeam:IsShown() then portraitSeam._tex:SetVertexColor(r, g, b, a) end
 end
 
 local function FrameBorderEnter(self)
@@ -9092,7 +9258,7 @@ local function FrameBorderEnter(self)
         return
     end
     local isMini = (unit == "pet" or unit == "targettarget" or unit == "focustarget")
-    local settings = isMini and GetMiniDonorSettings() or GetSettingsForUnit(unit)
+    local settings = isMini and GetMiniDonorSettings(unit) or GetSettingsForUnit(unit)
     -- Highlight defaults ON (nil == enabled); only an explicit false disables it.
     if settings.highlightEnabled == false then return end
     -- Per-mini-frame opt-out: with "Show Highlight Border" off, a mini frame never
@@ -9122,7 +9288,7 @@ local function FrameBorderLeave(self)
         return
     end
     local isMini = (unit == "pet" or unit == "targettarget" or unit == "focustarget")
-    local settings = isMini and GetMiniDonorSettings() or GetSettingsForUnit(unit)
+    local settings = isMini and GetMiniDonorSettings(unit) or GetSettingsForUnit(unit)
     local bc = settings.borderColor or { r = 0, g = 0, b = 0 }
     local ba = settings.borderAlpha or 1
     EllesmereUI.SetBorderStyleColor(self.unifiedBorder, bc.r, bc.g, bc.b, ba)
@@ -9274,10 +9440,14 @@ end
 --  SetThreatPctEnabled(true).
 -------------------------------------------------------------------------------
 if EllesmereUI.IS_FOREVER then
+    -- Inside spots sit on the health bar; outside spots sit beside the whole
+    -- frame (past an attached portrait), centred on its height.
     local POS = {
         RIGHT  = { point = "RIGHT",  x = -4 },
         LEFT   = { point = "LEFT",   x = 4 },
         CENTER = { point = "CENTER", x = 0 },
+        OUTRIGHT = { point = "LEFT",  rel = "RIGHT", x = 4,  outside = true },
+        OUTLEFT  = { point = "RIGHT", rel = "LEFT",  x = -4, outside = true },
     }
     local watcher = CreateFrame("Frame")
 
@@ -9297,7 +9467,7 @@ if EllesmereUI.IS_FOREVER then
         local pos = POS[posKey]
         SetFSFont(fs, size)
         fs:ClearAllPoints()
-        PP.Point(fs, pos.point, frame.Health, pos.point, pos.x + x, y)
+        PP.Point(fs, pos.point, pos.outside and frame or frame.Health, pos.rel or pos.point, pos.x + x, y)
         fs:SetJustifyH(pos.point)
     end
 
@@ -10132,10 +10302,10 @@ local function StyleSimpleFrame(frame, unit)
     health.colorDisconnected = true
     health._euiUnitKey = UnitToSettingsKey(unit)
 
-    -- Inherit health bar texture from donor frame (focus > target > player),
+    -- Inherit health bar texture from the donor frame (Copy Look From),
     -- unless this frame set its own override.
-    local donor = GetMiniDonorSettings()
     local unitKey = UnitToSettingsKey(unit)
+    local donor = GetMiniDonorSettings(unitKey)
     ApplyHealthBarTexture(health, unitKey, ns.ResolveHealthBarTextureKey(settings, donor))
     ApplyHealthBarAlpha(health, unitKey)
     health:SetReverseFill(settings.healthReverseFill and true or false)
@@ -11115,15 +11285,15 @@ local function CreateCustomClassPower(playerFrame, style)
     eventFrame:Show()
     if isCustom then
         -- Per-resource event registration: only register what each resource actually
-        -- needs. Icicles and Maelstrom Weapon are aura-driven; everything else polls
-        -- via OnUpdate (either Lua API changes mid-combat, or no reliable event exists).
-        local auraDriven    = (powerType == "MAELSTROM_WEAPON" or powerType == "ICICLES")
+        -- needs. Icicles, Maelstrom Weapon and Tip of the Spear are aura-driven; everything
+        -- else polls via OnUpdate (either Lua API changes mid-combat, or no reliable event exists).
+        local auraDriven    = (powerType == "MAELSTROM_WEAPON" or powerType == "ICICLES"
+            or powerType == "TIP_OF_THE_SPEAR")
         -- Warrior charge buffs are engine-driven end to end (the overlay owns
         -- the row: EllesmereUI_WarriorCharges): no poll, no cast events.
         local engineDriven  = (powerType == "WHIRLWIND_STACKS" or powerType == "SWEEPING_STRIKES")
         local needsOnUpdate = not auraDriven and not engineDriven
         local needsAura     = auraDriven
-        local needsCasts    = (powerType == "TIP_OF_THE_SPEAR")
 
         if needsOnUpdate then
             -- 10 Hz poll on the shared anim ticker (see ns._cpDriverTick):
@@ -11144,24 +11314,7 @@ local function CreateCustomClassPower(playerFrame, style)
         if needsAura then
             eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
         end
-        if needsCasts then
-            eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-            eventFrame:RegisterEvent("PLAYER_DEAD")
-            eventFrame:RegisterEvent("PLAYER_ALIVE")
-        end
-        eventFrame:SetScript("OnEvent", function(_, event, ...)
-            if event == "UNIT_SPELLCAST_SUCCEEDED" then
-                if not _G._ERB_AceDB and EllesmereUI then
-                    local unit, castGUID, spellID = ...
-                    if unit == "player" then
-                        EllesmereUI.HandleTipOfTheSpear(event, unit, castGUID, spellID)
-                    end
-                end
-            elseif event == "PLAYER_DEAD" or event == "PLAYER_ALIVE" then
-                if not _G._ERB_AceDB and EllesmereUI then
-                    EllesmereUI.HandleTipOfTheSpear(event)
-                end
-            end
+        eventFrame:SetScript("OnEvent", function()
             UpdatePips()
         end)
     else
@@ -11308,1660 +11461,6 @@ local function ApplyEnemyColors()
     ns.Engine.ForceAll("OnShow")
 end
 ns.ApplyEnemyColors = ApplyEnemyColors
-
--------------------------------------------------------------------------------
---  Stock styles (Global Settings > Style). A stock unit frame look on our own
---  frames: the frame art, portrait masks, bar shapes and bar placement of one
---  ART KIT, applied as an idempotent post-pass over the built EUI frame so
---  every EUI feature (text zones, auras, absorbs, cast bars, class power,
---  unlock movers) keeps working; only the EUI-look settings step aside. The
---  pass runs after every geometry re-apply (UpdateBordersForScale, the class
---  power re-anchor, the ReloadFrames sweep), creates its regions once per
---  frame, and costs nothing while the style is off. Two kits share the pass:
---  ns.UF_KITS.blizzard (Blizzard Style: the current stock atlases, rounded
---  masks and bevels) and ns.UF_KITS.classic (Classic WoW UI: the vanilla
---  frame files, plain rectangular bars). ns.UF_BLIZZ is the ACTIVE kit,
---  pointed at the latched style once per session (ns.UF_Style). An art entry
---  is an atlas name (validated once per session; a missing one leaves that
---  piece on the EUI look) or a file descriptor { key, file, l, r, t, b, w,
---  h, point, x, y }. Reload-gated per-profile flags. ns fields only: the
---  file is at the cap.
--------------------------------------------------------------------------------
-ns.UF_BLIZZ = {
-    player = {
-        w = 232, h = 100, hit = { 6, 0, 4, 9 }, side = "left",
-        -- Insets from the stock box to the visible art (the 198x71 atlas is
-        -- centred in the box; measured from its alpha): what auras, anchors and
-        -- the unlock mover line up with.
-        vis = { l = 20, r = 18, t = 16.5, b = 15.5 },
-        -- Transparent rows above / below the visible art (the options preview
-        -- trims them; the live frame keeps the stock box for its hit rect).
-        -- Same rows as vis, so the preview and the live alignment agree.
-        pad = { top = 16.5, bottom = 15.5 },
-        art = "UI-HUD-UnitFrame-Player-PortraitOn",
-        -- The player mask squares off the lower-right corner (under the bars);
-        -- rawArt = the client's own round crop is switched off so it shows.
-        portrait = { point = "TOPLEFT", x = 24, y = -19, size = 60, mask = "UI-HUD-UnitFrame-Player-Portrait-Mask", rawArt = true },
-        health = { x = 85, y = 40, w = 124, h = 20,
-                   atlas = "UI-HUD-UnitFrame-Player-PortraitOn-Bar-Health",
-                   mask = "UI-HUD-UnitFrame-Player-PortraitOn-Bar-Health-Mask", mx = -2, my = 6 },
-        power = { x = 85, y = 61, w = 124, h = 10,
-                  prefix = "UI-HUD-UnitFrame-Player-PortraitOn-Bar-",
-                  mask = "UI-HUD-UnitFrame-Player-PortraitOn-Bar-Mana-Mask", mx = -2, my = 2 },
-        name = { point = "TOPLEFT", x = 88, y = -27, w = 96 },
-        -- Level number in the art's level circle (right end of the name bar).
-        level = { point = "TOPRIGHT", x = -24.5, y = -28, justify = "RIGHT" },
-    },
-    target = {
-        w = 232, h = 100, hit = { 0, 5, 4, 9 }, side = "right",
-        vis = { l = 20, r = 21, t = 17.5, b = 17.5 },
-        pad = { top = 17.5, bottom = 17.5 },
-        art = "UI-HUD-UnitFrame-Target-PortraitOn",
-        artRare = "UI-HUD-UnitFrame-Target-Rare-PortraitOn",
-        portrait = { point = "TOPRIGHT", x = -26, y = -19, size = 58, mask = "CircleMask" },
-        health = { x = 23, y = 40, w = 126, h = 20,
-                   atlas = "UI-HUD-UnitFrame-Target-PortraitOn-Bar-Health",
-                   mask = "UI-HUD-UnitFrame-Target-PortraitOn-Bar-Health-Mask", mx = -1, my = 6 },
-        power = { x = 23, y = 61, w = 134, h = 10,
-                  prefix = "UI-HUD-UnitFrame-Target-PortraitOn-Bar-",
-                  mask = "UI-HUD-UnitFrame-Target-PortraitOn-Bar-Mana-Mask", mx = -61, my = 3 },
-        rep = { atlas = "UI-HUD-UnitFrame-Target-PortraitOn-Type", x = -75, y = -25 },
-        -- Level number on the type strip: the stock frame puts it in the
-        -- circle at the strip's LEFT end (-133,-2 off the strip's top-right),
-        -- but every frame keeps its level on the RIGHT here (user ruling), so
-        -- it sits right-aligned where the name ends, just before the portrait
-        -- ring, and the name gives up that much width (nameTrim).
-        level = { point = "TOPRIGHT", x = -91, y = -27, justify = "RIGHT", nameTrim = 26 },
-        name = { point = "TOPLEFT", x = 30, y = -26, w = 120 },
-        boss = { gold = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold",
-                 silver = "ui-hud-unitframe-target-portraiton-boss-rare-silver",
-                 winged = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged" },
-    },
-    mini = {
-        w = 120, h = 49, hit = { 0, 0, 0, 0 }, side = "left", small = true,
-        vis = { l = 2, r = 1, t = 3, b = 1 },
-        art = "UI-HUD-UnitFrame-TargetofTarget-PortraitOn",
-        portrait = { point = "TOPLEFT", x = 5, y = -5, size = 37, mask = "CircleMask" },
-        health = { x = 44, y = 17, w = 70, h = 10,
-                   atlas = "UI-HUD-UnitFrame-TargetofTarget-PortraitOn-Bar-Health",
-                   mask = "UI-HUD-UnitFrame-Party-PortraitOn-Bar-Health-Mask", mx = -29, my = 3 },
-        power = { x = 40, y = 28, w = 74, h = 7,
-                  prefix = "UI-HUD-UnitFrame-TargetofTarget-PortraitOn-Bar-",
-                  mask = "UI-HUD-UnitFrame-Party-PortraitOn-Bar-Mana-Mask", mx = -27, my = 4 },
-        name = { point = "TOPLEFT", x = 44, y = -5, w = 68 },
-    },
-}
-ns.UF_CAST_BLIZZ = {
-    bg      = { "ui-castingbar-background",       "UI-CastingBar-Background" },
-    frame   = { "ui-castingbar-frame",            "UI-CastingBar-Frame" },
-    textbox = { "ui-castingbar-textbox",          "UI-CastingBar-TextBox" },
-    cast    = { "ui-castingbar-filling-standard", "UI-CastingBar-Fill" },
-    channel = { "ui-castingbar-filling-channel",  "UI-CastingBar-Fill" },
-}
--- Classic WoW UI: the vanilla frames. The 256x128 frame sheet is drawn as
--- the 230x99 region the stock frame samples (x 26..256, y 1..100), which
--- also holds the elite, rare and boss variants' dragons; the player frame
--- samples it flipped so its portrait ring sits on the left. Bars are plain
--- rectangles in the art's transparent tracks (no masks, no bevel), the
--- portrait a plain round crop. Every art draws OVER the bars: its tracks are
--- windows in opaque art whose rim overlaps the fills' edges, which is the
--- look; a fill drawn over the art covers that rim. Sizes at 1x.
-ns.UF_CLASSIC_SHEET = "Interface\\TargetingFrame\\UI-TargetingFrame"
-ns.UF_KITS = {}
-ns.UF_KITS.blizzard = ns.UF_BLIZZ
-ns.UF_KITS.classic = {
-    noBevel = true,
-    skull = { key = "c-skull", file = "Interface\\TargetingFrame\\UI-TargetingFrame-Skull", w = 16, h = 16 },
-    -- The vanilla cast bar frame: the shared nine-slice in
-    -- EllesmereUI_ClassicArt.lua round the bar (caps and rims at the sheet's
-    -- own pixel size, only the window stretching); `frame` is the file the
-    -- presence probe checks before it is drawn.
-    cast = {
-        frame = { key = "c-castframe", file = "Interface\\CastingBar\\UI-CastingBar-Border" },
-    },
-    player = {
-        w = 232, h = 100, hit = { 21, 19, 12, 15 }, side = "left", artAbove = true,
-        vis = { l = 19.5, r = 19.5, t = 11.5, b = 11.5 },
-        pad = { top = 11.5, bottom = 11.5 },
-        art = { key = "c-player", file = ns.UF_CLASSIC_SHEET, l = 1, r = 0.1015625, t = 0.0078125, b = 0.78125, w = 230, h = 99, x = -18.5, y = -4 },
-        -- The dark plaque behind the name and both bars.
-        back = { x = 89.5, y = 26, w = 119, h = 41 },
-        portrait = { point = "TOPLEFT", x = 24, y = -16, size = 64, mask = "CircleMask" },
-        health = { x = 90, y = 45, w = 119, h = 12 },
-        power  = { x = 90, y = 56, w = 119, h = 12 },
-        name  = { point = "CENTER", x = 34, y = 15, w = 100, justify = "CENTER" },
-        -- Level number in the ring under the portrait. The ring is an oval
-        -- in the sheet (28 wide, 24 tall) centred 35.6 from the frame's left
-        -- and 31.4 up from its bottom, measured on the client's own render;
-        -- the box sits half a unit right and under that so the digits' ink,
-        -- which rides a little above and left of its box's middle, lands
-        -- on the ring's middle.
-        level = { point = "CENTER", relPoint = "BOTTOMLEFT", x = 36, y = 30.5, justify = "CENTER" },
-    },
-    target = {
-        w = 232, h = 100, hit = { 19, 21, 12, 15 }, side = "right", artAbove = true,
-        vis = { l = 19.5, r = 19.5, t = 11.5, b = 11.5 },
-        pad = { top = 11.5, bottom = 11.5 },
-        art = { key = "c-target", file = ns.UF_CLASSIC_SHEET, l = 0.1015625, r = 1, t = 0.0078125, b = 0.78125, w = 230, h = 99, x = 18.5, y = -4 },
-        -- Whole-frame variants by classification (the dragon is part of the art).
-        artByClass = {
-            elite     = { key = "c-elite",     file = ns.UF_CLASSIC_SHEET .. "-Elite",      l = 0.1015625, r = 1, t = 0.0078125, b = 0.78125, w = 230, h = 99, x = 18.5, y = -4 },
-            rareelite = { key = "c-rareelite", file = ns.UF_CLASSIC_SHEET .. "-Rare-Elite", l = 0.1015625, r = 1, t = 0.0078125, b = 0.78125, w = 230, h = 99, x = 18.5, y = -4 },
-            rare      = { key = "c-rare",      file = ns.UF_CLASSIC_SHEET .. "-Rare",       l = 0.1015625, r = 1, t = 0.0078125, b = 0.78125, w = 230, h = 99, x = 18.5, y = -4 },
-            boss      = { key = "c-boss",      file = "Interface\\TargetingFrame\\UI-UnitFrame-Boss", l = 0.1015625, r = 1, t = 0.0078125, b = 0.78125, w = 230, h = 99, x = 18.5, y = -4 },
-        },
-        back = { x = 23.5, y = 26, w = 119, h = 41 },
-        portrait = { point = "TOPRIGHT", x = -24, y = -16, size = 64, mask = "CircleMask" },
-        health = { x = 23, y = 45, w = 119, h = 12 },
-        power  = { x = 23, y = 56, w = 119, h = 12 },
-        -- The name plaque behind the name, tinted by the unit's selection
-        -- colour, under the art (the art's name window shows it).
-        rep = { art = { key = "c-namebg", file = "Interface\\TargetingFrame\\UI-TargetingFrame-LevelBackground", w = 119, h = 19 },
-                point = "TOPRIGHT", x = -90, y = -26, below = true },
-        name  = { point = "CENTER", x = -34, y = 15, w = 100, justify = "CENTER" },
-        -- The player ring's measured centre, mirrored.
-        level = { point = "CENTER", relPoint = "BOTTOMRIGHT", x = -36, y = 30.5, justify = "CENTER" },
-    },
-    -- Target-of-target / focus-target.
-    mini = {
-        w = 93, h = 45, hit = { 0, 0, 0, 0 }, side = "left", small = true, artAbove = true,
-        vis = { l = 2, r = 1, t = 3, b = 1 },
-        art = { key = "c-tot", file = "Interface\\TargetingFrame\\UI-TargetofTargetFrame", l = 0.015625, r = 0.7265625, t = 0, b = 0.703125, w = 93, h = 45 },
-        back = { x = 42, y = 17, w = 46, h = 15 },
-        portrait = { point = "TOPLEFT", x = 6, y = -6, size = 35, mask = "CircleMask" },
-        health = { x = 45, y = 15, w = 46, h = 7 },
-        power  = { x = 45, y = 23, w = 46, h = 7 },
-        name = { point = "TOPLEFT", x = 42, y = -33, w = 49, justify = "LEFT" },
-    },
-    pet = {
-        w = 128, h = 53, hit = { 7, 10, 6, 7 }, side = "left", small = true, artAbove = true,
-        vis = { l = 2, r = 1, t = 3, b = 1 },
-        art = { key = "c-pet", file = "Interface\\TargetingFrame\\UI-SmallTargetingFrame", w = 128, h = 64, point = "TOPLEFT", x = 0, y = -2 },
-        portrait = { point = "TOPLEFT", x = 7, y = -6, size = 37, mask = "CircleMask" },
-        health = { x = 47, y = 22, w = 69, h = 8 },
-        power  = { x = 47, y = 29, w = 69, h = 8 },
-        name = { point = "TOPLEFT", x = 50, y = -9, w = 70, justify = "LEFT" },
-    },
-}
--- WoW Forever (a Blizzard Style variant, Forever client only): the stock kit,
--- whose atlas names the client already paints with its Forever art, plus the
--- Forever layout -- the level in a round badge at the frame's bottom corner
--- (the target's skull centred in it, the target name widened into the strip
--- the level left), a round PvP badge, Forever's dragon offsets and the
--- silver-winged dragon on rares too. The badge hangs below the art, so the
--- visible bottom edge (auras, cast bar, mover) is the badge's. Built once,
--- when the variant latches.
-function ns.UF_ForeverKit()
-    local k = ns.UF_KITS.forever
-    if k then return k end
-    k = CopyTable(ns.UF_KITS.blizzard)
-    local circle = "UI-HUD-UnitFrame-SmallCircle"
-    local P, T = k.player, k.target
-    P.badge = { point = "BOTTOMLEFT", x = 13, y = 7, size = 39, atlas = circle }
-    P.level = { point = "CENTER", x = 0, y = -0.5, justify = "CENTER", skullDy = 0.5 }
-    P.pvp = { point = "TOP", relPoint = "TOPLEFT", x = 20, y = -50, scale = 0.8, atlas = circle }
-    P.vis.b, P.pad.bottom = 7, 7
-    T.badge = { point = "BOTTOMRIGHT", x = -13, y = 7, size = 39, atlas = circle }
-    T.level = { point = "CENTER", x = 0, y = -0.5, justify = "CENTER", skullDy = 0.5 }
-    T.name = { point = "TOPLEFT", x = 24, y = -26, w = 117 }
-    T.pvp = { point = "TOP", relPoint = "TOPRIGHT", x = -23, y = -50, scale = 0.8, atlas = circle }
-    T.vis.b, T.pad.bottom = 7, 7
-    T.boss.silver = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Rare-Silver-Winged"
-    T.boss.silverRare = true
-    T.boss.pos = { winged = { 11, -4 }, silver = { 8, -7 }, gold = { 0, 1 } }
-    ns.UF_KITS.forever = k
-    return k
-end
-ns._ufAtlasMemo = {}
--- The style this module renders: "eui", "blizzard" or "classic". Read from
--- the profile once (first call with a profile present) and latched for the
--- session, pointing ns.UF_BLIZZ at the kit: a live profile switch never flips
--- the look under the one-time art setup; the profile system prompts for a
--- reload instead. The Classic flag wins when both flags are set.
-function ns.UF_Style()
-    local v = ns._ufStyle
-    if v == nil then
-        local p = db and db.profile
-        if not p then return "eui" end
-        v = (p.useClassicStyle and "classic") or (p.useBlizzardStyle and "blizzard") or "eui"
-        ns._ufStyle = v
-        -- The WoW Forever variant of Blizzard Style, latched with it: the
-        -- Forever client, Blizzard Style, and the sibling useForeverStyle
-        -- flag set together with the Blizzard one.
-        ns._ufForever = v == "blizzard" and EllesmereUI.IS_FOREVER == true
-            and p.useForeverStyle == true
-        if v == "classic" then ns.UF_BLIZZ = ns.UF_KITS.classic end
-        if ns._ufForever then ns.UF_BLIZZ = ns.UF_ForeverKit() end
-    end
-    return v
-end
--- Stock-art mode: a kit dictates the geometry (true for both stock styles).
-function ns.UF_Blizz() return ns.UF_Style() ~= "eui" end
--- WoW Forever variant: UF_Style() still reads "blizzard" (every stock site
--- stays as it is); this gates the Forever-only pieces. False off Forever.
-function ns.UF_Forever()
-    if ns._ufStyle == nil then ns.UF_Style() end
-    return ns._ufForever == true
-end
--- The class resource style that builds. WoW Forever outside its own style
--- has no Blizzard class resource bar to adopt, so a saved "blizzard" builds
--- as modern there. Read-side only: the saved style is never rewritten.
--- nil on every other client (readers test the field).
-if EllesmereUI.IS_FOREVER == true then
-    function ns.UF_ForeverCPStyle(style)
-        if style == "blizzard" and not ns.UF_Forever() then return "modern" end
-        return style
-    end
-end
--- A custom frame border Color Custom Borders can copy (the player's Dispel
--- Overlay cog): a Border Style other than Solid with a size, under the
--- EllesmereUI style. Read from the saved keys, like the options gate, so a
--- saved true stands down under a stock style or a Solid border.
-function ns.UF_CustomBorderOn(s)
-    if ns.UF_Blizz() then return false end
-    local tex = s and s.borderTexture
-    if tex == nil or tex == "" or tex == "solid" then return false end
-    return (s.borderSize or 1) > 0
-end
--- Blizzard Style's coloured type strip over the target-family name ("Blizz
--- Colored Target Header", on unless the unit's settings turn it off, which
--- leaves the header uncoloured like the player frame's). Classic keeps its
--- name plaque either way.
-function ns.UF_BlizzHeaderOn(s)
-    return not (ns.UF_Style() == "blizzard" and s and s.blizzColoredHeader == false)
-end
--- The stock-style seeds on the profile `p` for `styleKey` ("blizzard" |
--- "classic"). Once per profile: the "Blizzard" cast fill (the vanilla cast
--- bar's own texture) as the cast bar texture, and under Classic the Plating
--- health bar texture on every frame (per-frame choices cleared so they
--- inherit it). Once per style switch: the
--- player frame's combat indicator on the portrait, in the style's own icon
--- (the Classic icon under Classic WoW UI, the Dungeoneer icon under
--- Blizzard Style), so each stock look starts with its matching indicator
--- while a later choice stands until the style changes again. Run by the
--- Style page on the switch and at enable for a profile that arrived already
--- switched (an import, an older build).
-ns.UF_STOCK_COMBAT = { classic = "combat2", blizzard = "combat1" }
--- Frames whose own bar texture key overrides (or inherits) the global one.
-ns.UF_TEXTURE_UNITS = { "player", "target", "focus", "pet", "targettarget", "focustarget", "boss" }
--- The keys the Style page keeps per style for this module (its SLOT_KEYS).
-function ns.UF_StyleSlotKeys()
-    local k = { "castBarTexture", "healthBarTexture",
-                "player.combatIndicatorStyle", "player.combatIndicatorPosition" }
-    local units = ns.UF_TEXTURE_UNITS
-    for i = 1, #units do k[#k + 1] = units[i] .. ".healthBarTexture" end
-    return k
-end
--- The WoW Forever variant's own seed: its combo point arc (the "Blizzard"
--- class resource there), once per profile. The Style page keeps these keys
--- in a Forever-only slot (p._foreverStyleSlots): the other looks' values are
--- banked on the way into the variant and come back on the way out.
-function ns.UF_SeedForever(p)
-    if not (p and p.player) or p.foreverClassPowerSeeded then return end
-    p.foreverClassPowerSeeded = true
-    p.player.classPowerStyle = "blizzard"
-    p.player.showClassPowerBar = true
-end
--- `isForever`: the WoW Forever variant of Blizzard Style, which also runs
--- its own seed (UF_SeedForever).
-function ns.UF_SeedStock(p, styleKey, isForever)
-    if not p then return end
-    if isForever then ns.UF_SeedForever(p) end
-    if not p.stockCastTextureSeeded then
-        p.stockCastTextureSeeded = true
-        p.castBarTexture = "blizzard"
-    end
-    -- Classic WoW UI: "Plating" as the bar texture, once per profile (the
-    -- controls stay the user's afterwards): the global key, with each frame's
-    -- own override cleared so every frame (and its power bar) follows it.
-    if styleKey == "classic" and not p.classicTextureSeeded then
-        p.classicTextureSeeded = true
-        p.healthBarTexture = "plating"
-        local units = ns.UF_TEXTURE_UNITS
-        for i = 1, #units do
-            local s = p[units[i]]
-            if type(s) == "table" then s.healthBarTexture = nil end
-        end
-    end
-    local icon = ns.UF_STOCK_COMBAT[styleKey]
-    if icon and p.player and p.stockCombatSeededStyle ~= styleKey then
-        p.stockCombatSeededStyle = styleKey
-        p.player.combatIndicatorStyle = icon
-        p.player.combatIndicatorPosition = "portrait"
-    end
-end
-function ns.UF_AtlasOK(name)
-    if not name then return false end
-    local memo = ns._ufAtlasMemo
-    local v = memo[name]
-    if v == nil then
-        v = (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)) and true or false
-        memo[name] = v
-    end
-    return v
-end
--- Art entries: an atlas name or a file descriptor (see the header). A file
--- is probed once through the client's path table (memo on the descriptor),
--- so a file this client does not ship leaves its piece on the fallback art
--- instead of painting blank.
-function ns.UF_ArtOK(a)
-    if type(a) == "table" then
-        if not a.file then return false end
-        local ok = a._ok
-        if ok == nil then
-            ok = true
-            if GetFileIDFromPath then ok = GetFileIDFromPath(a.file) and true or false end
-            a._ok = ok
-        end
-        return ok
-    end
-    return ns.UF_AtlasOK(a)
-end
-function ns.UF_ArtName(a)
-    if type(a) == "table" then return a.key or a.file or "" end
-    return a or ""
-end
--- Kit atlas paints in place of tex:SetAtlas / C_Texture.GetAtlasInfo: the
--- stock looks draw the retail art on the Forever client (the shared stock
--- atlas helper), the WoW Forever look keeps the client's own frame art (the
--- cast bar background skips this: a bar texture, retail under the WoW
--- Forever look too).
--- Plain textures only (never a mask or a StatusBar fill).
-function ns.UF_StockAtlas(tex, name, ...)
-    if ns.UF_Forever() then return tex:SetAtlas(name, ...) end
-    return EllesmereUI.StockAtlas(tex, name, ...)
-end
-function ns.UF_StockAtlasInfo(name)
-    if ns.UF_Forever() then return C_Texture.GetAtlasInfo(name) end
-    return EllesmereUI.StockAtlasInfo(name)
-end
--- Paints an art entry on a texture; useSize takes the entry's own size.
-function ns.UF_SetArt(tex, a, useSize)
-    if type(a) == "table" then
-        if not ns.UF_ArtOK(a) then return false end
-        tex:SetTexture(a.file)
-        tex:SetTexCoord(a.l or 0, a.r or 1, a.t or 0, a.b or 1)
-        if useSize and a.w and a.h then tex:SetSize(a.w, a.h) end
-        return true
-    end
-    if not ns.UF_AtlasOK(a) then return false end
-    ns.UF_StockAtlas(tex, a, useSize)
-    return true
-end
--- The classic cast frame round a horizontal cast bar `bar`: the shared
--- nine-slice (EllesmereUI.ClassicFrame) whose pieces ride `tex`'s parent on
--- its layer, created once; `tex` is the callers' handle and draws nothing.
--- `pct` is the unit's Border Size percentage (nil = the shared default).
--- Idempotent (the seat memoizes on the rect and scale).
-function ns.UF_SeatClassicCastFrame(tex, bar, h, pct)
-    local CK = ns.UF_BLIZZ.cast
-    local CF = EllesmereUI.ClassicFrame
-    if not (tex and bar and CK and CF) then return end
-    if not ns.UF_ArtOK(CK.frame) then tex:Hide(); return end
-    local p = tex._classicPieces
-    if not p then
-        local layer, sub = tex:GetDrawLayer()
-        p = CF.Create(tex:GetParent(), layer, sub)
-        tex._classicPieces = p
-        tex:Hide()
-    end
-    CF.Seat(p, bar, CF.ScaleK(pct), false)
-end
--- First existing atlas of a candidate list (nil when none is available).
-function ns.UF_BlizzAtlas(list)
-    for i = 1, #list do
-        if ns.UF_AtlasOK(list[i]) then return list[i] end
-    end
-    return nil
-end
--- Frame kind: the player art, the target/focus/boss art, the pet art where
--- the kit has one, or the small target-of-target / focus-target art.
-function ns.UF_BlizzKind(unit)
-    if not unit then return nil end
-    if unit == "player" then return "player" end
-    if unit == "target" or unit == "focus" or unit:match("^boss%d$") then return "target" end
-    if unit == "pet" and ns.UF_BLIZZ.pet then return "pet" end
-    return "mini"
-end
--- Portrait Side keeps working. Each art is drawn for one side (G.side). A
--- full frame set to the other side takes the stock layout drawn for that
--- side instead (player art for a left portrait, target art for a right one),
--- so its art, bars, masks and portrait are all native pieces. The small
--- frames have a single art, so the other side renders it mirrored: anchors
--- flip left/right with x negated and the art flips; their bar masks cannot
--- flip (MaskTextures ignore texcoords), so mirrored small bars run unmasked.
--- Resolved by the layout pass and stamped on the frame for the art helpers.
-function ns.UF_BlizzResolve(frame, unit)
-    unit = unit or frame._euiBaseUnit or frame._euiUnit
-    local kind = ns.UF_BlizzKind(unit)
-    if not kind then return nil end
-    local native = ns.UF_BLIZZ[kind]
-    local side = ns.UF_BlizzSide(GetSettingsForUnit(unit), native)
-    local G, mirror = native, false
-    if native.small then
-        mirror = side ~= native.side
-    elseif side == "right" then
-        G = ns.UF_BLIZZ.target
-    else
-        G = ns.UF_BLIZZ.player
-    end
-    frame._blizzGeom = G
-    frame._blizzMirror = mirror or nil
-    -- The type strip, elite dragon and rare frame belong to the target family
-    -- on its own art only.
-    frame._blizzExtras = (G.rep and kind == "target") or nil
-    return G, mirror
-end
-function ns.UF_BlizzGeom(frame)
-    if not frame then return nil end
-    return frame._blizzGeom or ns.UF_BlizzResolve(frame)
-end
--- Visible art edges under the style: the frame is the stock box, whose art is
--- centred inside it with transparent padding round the visible frame (about
--- 20px each side and 16px above/below on the full frames). Returns the insets
--- from the box edges to the visible art -- left, right, top, bottom, in the
--- frame's units -- or nil while the style is off. A mirrored small frame
--- swaps left and right with its art.
-function ns.UF_BlizzVis(frame)
-    if not frame or not ns.UF_Blizz() then return nil end
-    local G = ns.UF_BlizzGeom(frame)
-    local v = G and G.vis
-    if not v then return nil end
-    if frame._blizzMirror then return v.r, v.l, v.t, v.b end
-    return v.l, v.r, v.t, v.b
-end
--- The aura block: an invisible frame spanning the stock box's width from the
--- visible art's bottom edge down to the bottom of the frame's lowest
--- bottom-anchored aura stack (the aura containers re-point it through
--- ns.UF_BlizzAuraBlockBottom; see AnchorContainer in
--- EUI_UnitFrames_AuraContainers). A cast bar linked under the frame anchors
--- to it (the follow provider below), so it hangs below the auras the way the
--- stock spell bar does and rides the rows engine-side: an engine aura
--- container's geometry is a secret value under aura restriction, so the
--- stack's extent can only ever be followed by anchoring, never read. The
--- block is the box's width so its centre is the frame's centre, which the
--- anchor math works from. Created once per frame, only under the style.
--- An engine aura container refuses any dependent that would silently inherit
--- its layout aspect ("Anchoring disallowed as dependent object would inherit
--- forbidden aspects: UntrustedLayoutScriptExecution"): a frame may anchor to
--- it only when it already carries that aspect, which Blizzard's opt-in
--- template stamps at creation (Blizzard_SharedXMLBase/ForbiddenAspectTemplates
--- .xml; the stock target spell bar takes the same aspect before anchoring to
--- its aura container). The aspect only stops the frame's own OnSizeChanged
--- scripts, which nothing on the block or the cast bar uses. Verified once on
--- a probe: a client without the template (or one that ignores it) keeps the
--- block on the resting bottom and never anchors to a container.
-ns.UF_LAYOUT_ASPECT_TEMPLATE = "DisableUntrustedLayoutScriptsTemplate"
-function ns.UF_LayoutAspectOK()
-    local v = ns._ufLayoutAspectOK
-    if v == nil then
-        v = false
-        local ok, probe = pcall(CreateFrame, "Frame", nil, UIParent, ns.UF_LAYOUT_ASPECT_TEMPLATE)
-        if ok and probe then
-            local want = Enum and Enum.ForbiddenAspect and Enum.ForbiddenAspect.UntrustedLayoutScriptExecution
-            local mask = probe.GetForbiddenAspects and probe:GetForbiddenAspects()
-            if want and type(mask) == "number" and bit.band(mask, want) ~= 0 then v = true end
-            probe:Hide()
-        end
-        ns._ufLayoutAspectOK = v
-    end
-    return v
-end
--- The template a unit's cast bar holder is created with under the style, so
--- it can hang off the aura block (nil = a plain frame: off-style, boss frames,
--- or a client without the aspect).
-function ns.UF_CastbarAspectTemplate(unit)
-    if ns.UF_Blizz() and CastbarUnlockKey(unit) and ns.UF_LayoutAspectOK() then
-        return ns.UF_LAYOUT_ASPECT_TEMPLATE
-    end
-    return nil
-end
-function ns.UF_BlizzAuraBlock(frame)
-    local blk = frame and frame._blizzAuraBlock
-    if blk then return blk end
-    if not ns.UF_BlizzVis(frame) then return nil end
-    if ns.UF_LayoutAspectOK() then
-        blk = CreateFrame("Frame", nil, frame, ns.UF_LAYOUT_ASPECT_TEMPLATE)
-    else
-        blk = CreateFrame("Frame", nil, frame)
-    end
-    blk:EnableMouse(false)
-    frame._blizzAuraBlock = blk
-    ns.UF_BlizzAuraBlockBottom(frame, nil)
-    return blk
-end
--- Re-point the block's bottom edge: `rel` nil = the visible art's bottom
--- (nothing stacked below); else the container's BOTTOMLEFT/BOTTOMRIGHT corner
--- (`relPoint`), x shifted by `x` so the corner lands on the box's own edge --
--- the top corners already pin left and right, and a bottom corner that
--- agrees with them keeps the rect from being over-constrained.
-function ns.UF_BlizzAuraBlockBottom(frame, rel, relPoint, x)
-    local blk = frame and frame._blizzAuraBlock
-    if not blk then return end
-    local _, _, _, b = ns.UF_BlizzVis(frame)
-    b = b or 0
-    blk:ClearAllPoints()
-    blk:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, b)
-    blk:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0, b)
-    -- A refused container anchor (the probe passed but this container still
-    -- denies it) must not abort the aura pass: fall back to the resting bottom.
-    if rel and ns.UF_LayoutAspectOK()
-       and pcall(blk.SetPoint, blk, relPoint, rel, relPoint, x or 0, 0) then
-        return
-    end
-    blk:SetPoint("BOTTOM", frame, "BOTTOM", 0, b)
-end
--- Anchor-target edges for the unlock anchor system under the style: the
--- visible art's edges rather than the stock box. Static insets only -- the
--- aura stack below is never read (see the block). Chained in front of any
--- provider installed before this file loaded (ns fields: the file is at the
--- local cap).
-ns._ufPrevAnchorExtent = EllesmereUI._GetAnchorTargetExtent
-ns._ufAnchorKeys = { player = true, target = true, focus = true, pet = true, targettarget = true, focustarget = true, boss = true }
-EllesmereUI._GetAnchorTargetExtent = function(targetKey, side)
-    if ns._ufAnchorKeys[targetKey] and ns.UF_Blizz() then
-        local f = (targetKey == "boss") and frames.boss1 or frames[targetKey]
-        local l, r, t, b = ns.UF_BlizzVis(f)
-        if l and f:GetLeft() then
-            local ratio = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
-            if side == "LEFT" then return (f:GetLeft() + l) * ratio
-            elseif side == "RIGHT" then return (f:GetRight() - r) * ratio
-            elseif side == "TOP" then return (f:GetTop() - t) * ratio
-            elseif side == "BOTTOM" then return (f:GetBottom() + b) * ratio
-            end
-        end
-    end
-    local prev = ns._ufPrevAnchorExtent
-    if prev then return prev(targetKey, side) end
-    return nil
-end
--- Follow provider for the unlock anchor system: a unit's own cast bar linked
--- to the BOTTOM of its frame anchors to the frame's aura block instead of an
--- absolute position (its offsets stay edge-to-edge from the visible art's
--- bottom, the block's resting edge), so it rides the aura stack engine-side.
-ns._ufPrevAnchorFollow = EllesmereUI._GetAnchorFollowFrame
-EllesmereUI._GetAnchorFollowFrame = function(childKey, targetKey, side)
-    -- Inert in unlock mode: a bar on the block reports a SECRET rect (the
-    -- container's geometry is secret-wrapped), which the movers must read, so
-    -- the bar sits at its resting spot there and re-attaches on the exit
-    -- re-apply (the same posture as the tracking bar extent provider).
-    if side == "BOTTOM" and ns.UF_Blizz() and not EllesmereUI._unlockActive
-       and childKey == CastbarUnlockKey(targetKey) then
-        -- Only a holder created with the layout aspect may hang off the block.
-        local f = frames[targetKey]
-        local holder = f and f.Castbar and f.Castbar:GetParent()
-        if holder and holder._blizzAspect then return ns.UF_BlizzAuraBlock(f) end
-    end
-    local prev = ns._ufPrevAnchorFollow
-    if prev then return prev(childKey, targetKey, side) end
-    return nil
-end
-
--- Saved positions are UIParent offsets, but a frame reads anchor offsets in
--- its own scale: a frame scaled by Frame Scale (Blizzard Style, where the
--- stock size is fixed) divides them back down so it lands where it was
--- saved. Identity at scale 1, which is every frame outside the style.
-function ns.UF_ScaledOffsets(fr, x, y)
-    local s = fr and fr:GetScale() or 1
-    if s ~= 1 and s > 0 and x and y then return x / s, y / s end
-    return x, y
-end
-
--- Boss frames' Vertical Spacing: the top-to-top step between boss 2..5 and
--- the one before. Stack Direction alone sets the sign, so a negative value
--- saved while the slider allowed one stacks the same way as its positive.
-function ns.UF_BossSpacing()
-    return math.abs(db.profile.bossSpacing or 80)
-end
-
-ns._ufMirrorPoint = {
-    TOPLEFT = "TOPRIGHT", TOPRIGHT = "TOPLEFT", LEFT = "RIGHT", RIGHT = "LEFT",
-    BOTTOMLEFT = "BOTTOMRIGHT", BOTTOMRIGHT = "BOTTOMLEFT",
-}
-function ns.UF_BlizzPoint(region, point, rel, relPoint, x, y, mirror)
-    if mirror then
-        point = ns._ufMirrorPoint[point] or point
-        relPoint = ns._ufMirrorPoint[relPoint] or relPoint
-        x = -x
-    end
-    region:SetPoint(point, rel, relPoint, x, y)
-end
--- Flipped art is drawn straight from the atlas's sheet with the sheet coords
--- reversed (SetTexCoord on an atlas-mode texture does not address the sheet,
--- so SetAtlas + SetTexCoord samples the wrong region); see UF_PaintBlizzArt.
--- The side the portrait renders on: the frame's Portrait Side setting (the
--- inside variants map to their side), else the art's own side.
-function ns.UF_BlizzSide(settings, G)
-    local side = settings and settings.portraitSide
-    if side == "insideleft" then side = "left" elseif side == "insideright" then side = "right" end
-    if side ~= "left" and side ~= "right" then side = G.side end
-    return side
-end
-
--- Re-seat a mask on a fill (AddMaskTexture is additive, so drop first).
-function ns.UF_SetMask(tex, mask)
-    if not tex or not mask then return end
-    pcall(tex.RemoveMaskTexture, tex, mask)
-    tex:AddMaskTexture(mask)
-end
--- Health + power bars: the user's own Bar Texture stays on the fills (the
--- stock fill art is pre-coloured and would darken every chosen colour), so
--- colours, gradients, opacity and textures render exactly as on the EUI
--- look; the stock rounded masks shape the fills AND the EUI bar backgrounds,
--- so Bar Background keeps working inside the stock track. Masks are
--- (re)seated after every texture swap (a swap replaces the fill object), so
--- a re-apply can never leave a bar unmasked.
-function ns.UF_ApplyBlizzBarArt(frame)
-    local G = ns.UF_BlizzGeom(frame)
-    if not G then return end
-    local mirror = frame._blizzMirror
-    local health = frame.Health
-    if health then
-        local fill = health:GetStatusBarTexture()
-        health:SetOrientation("HORIZONTAL")
-        ns.ApplyFillRotation(health)
-        -- The mask object exists only for a kit with bar masks (the classic
-        -- kit's bars are plain rectangles).
-        local mask = health._blizzMask
-        if not mask and ns.UF_AtlasOK(G.health.mask) then
-            mask = health:CreateMaskTexture()
-            health._blizzMask = mask
-        end
-        local hp = frame.HealthPrediction and frame.HealthPrediction.damageAbsorb
-        -- Reused scratch list (a layout pass allocates nothing).
-        local bars = ns._ufBarScratch
-        if not bars then bars = {}; ns._ufBarScratch = bars end
-        bars[1], bars[2], bars[3], bars[4], bars[5] = hp, hp and hp._forward, hp and hp._healAbsorb, hp and hp._topBar, hp and hp._healTopBar
-        if not mirror and ns.UF_AtlasOK(G.health.mask) then
-            mask:SetAtlas(G.health.mask, true)
-            mask:ClearAllPoints()
-            mask:SetPoint("TOPLEFT", health, "TOPLEFT", G.health.mx, G.health.my)
-            ns.UF_SetMask(fill, mask)
-            if health.bg then ns.UF_SetMask(health.bg, mask) end
-            ns.UF_BlizzBarShadow(health, mask, G.health.h)
-            -- Absorb fills ride the same rounded ends.
-            for i = 1, 5 do
-                local sb = bars[i]
-                if sb and sb.GetStatusBarTexture then ns.UF_SetMask(sb:GetStatusBarTexture(), mask) end
-            end
-            if hp then hp._blizzMaskOn = true end
-        else
-            -- Mirrored small frame (or no mask art): plain fills.
-            if mask then
-                if fill then pcall(fill.RemoveMaskTexture, fill, mask) end
-                if health.bg then pcall(health.bg.RemoveMaskTexture, health.bg, mask) end
-                for i = 1, #bars do
-                    local sb = bars[i]
-                    local t = sb and sb.GetStatusBarTexture and sb:GetStatusBarTexture()
-                    if t then pcall(t.RemoveMaskTexture, t, mask) end
-                end
-            end
-            if hp then hp._blizzMaskOn = nil end
-            ns.UF_BlizzBarShadow(health, nil, G.health.h)
-        end
-        -- Heal prediction segments take the shape too (Overheal 0 only).
-        if hp and hp._predMy then ns.UF_HealPredMasks(hp) end
-    end
-    local power = frame.Power
-    if power then
-        local pfill = power:GetStatusBarTexture()
-        -- Stock rounded mask on the attached bar (stamped by the layout pass);
-        -- a mirrored small frame runs unmasked.
-        if pfill then
-            local pm = power._blizzMask
-            if power._blizzMasked and not mirror and ns.UF_AtlasOK(G.power.mask) then
-                if not pm then
-                    pm = power:CreateMaskTexture()
-                    power._blizzMask = pm
-                end
-                pm:SetAtlas(G.power.mask, true)
-                pm:ClearAllPoints()
-                pm:SetPoint("TOPLEFT", power, "TOPLEFT", G.power.mx, G.power.my)
-                ns.UF_SetMask(pfill, pm)
-                if power.bg then ns.UF_SetMask(power.bg, pm) end
-                ns.UF_BlizzBarShadow(power, pm, G.power.h)
-            else
-                if pm then
-                    pcall(pfill.RemoveMaskTexture, pfill, pm)
-                    if power.bg then pcall(power.bg.RemoveMaskTexture, power.bg, pm) end
-                end
-                if power._blizzMasked then
-                    -- Mirrored small frame: in the track, unmasked.
-                    ns.UF_BlizzBarShadow(power, nil, G.power.h)
-                elseif power._blizzShadow then
-                    -- Detached bar: it carries its own EUI border.
-                    for i = 1, 4 do power._blizzShadow[i]:Hide() end
-                end
-            end
-        end
-    end
-end
-
--- Paints the frame art (one texture on the art frame, centred) from the
--- atlas sheet; a mirrored small frame samples the sheet flipped. The extras
--- (type strip, dragon) draw above it on higher sublevels.
-function ns.UF_PaintBlizzArt(frame, atlas)
-    local af = frame._blizzArtFrame
-    local art = af._art
-    if not art then
-        art = af:CreateTexture(nil, "BACKGROUND")
-        UnsnapTex(art)
-        af._art = art
-    end
-    local file, l, r, t, b, w, h, point, x, y
-    if type(atlas) == "table" then
-        -- File descriptor: its own sheet coords and anchor (CENTER by default).
-        if not ns.UF_ArtOK(atlas) then art:Hide(); return end
-        file = atlas.file
-        l, r, t, b = atlas.l or 0, atlas.r or 1, atlas.t or 0, atlas.b or 1
-        w, h = atlas.w, atlas.h
-        point, x, y = atlas.point or "CENTER", atlas.x or 0, atlas.y or 0
-    else
-        local info = ns.UF_StockAtlasInfo(atlas)
-        if not info then art:Hide(); return end
-        file = info.file or info.filename
-        l, r, t, b = info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord
-        w, h = info.width, info.height
-        point, x, y = "CENTER", 0, 0
-    end
-    if not file then art:Hide(); return end
-    art:SetTexture(file)
-    if frame._blizzMirror then
-        art:SetTexCoord(r, l, t, b)
-        point = ns._ufMirrorPoint[point] or point
-        x = -x
-    else
-        art:SetTexCoord(l, r, t, b)
-    end
-    art:ClearAllPoints()
-    art:SetPoint(point, frame, point, x, y)
-    art:SetSize(w, h)
-    art:Show()
-end
-
--- Inner shadow on a bar, above its fill and under the bar's rounded mask so
--- it follows the track's shape: the stock fill art bakes this shading in,
--- and our fills are the user's own textures, so it is drawn here. Black
--- fading in from the top (deepest), the bottom and both ends. Regions of
--- the bar itself (no frame-level games); created once, resized per pass.
-ns._ufShadeClear  = CreateColor(0, 0, 0, 0)
-ns._ufShadeTop    = CreateColor(0, 0, 0, 0.55)
-ns._ufShadeBottom = CreateColor(0, 0, 0, 0.30)
-ns._ufShadeEnd    = CreateColor(0, 0, 0, 0.35)
-function ns.UF_BlizzBarShadow(bar, mask, h)
-    local sh = bar._blizzShadow
-    -- A kit with flat bars (the classic frames) draws no bevel.
-    if ns.UF_BLIZZ.noBevel then
-        if sh then
-            for i = 1, 4 do sh[i]:Hide() end
-        end
-        return
-    end
-    if not sh then
-        sh = {}
-        bar._blizzShadow = sh
-        for i = 1, 4 do
-            local tex = bar:CreateTexture(nil, "OVERLAY", nil, -3)
-            tex:SetTexture("Interface\\Buttons\\WHITE8X8")
-            UnsnapTex(tex)
-            sh[i] = tex
-        end
-        -- VERTICAL runs bottom -> top, HORIZONTAL left -> right.
-        sh[1]:SetGradient("VERTICAL", ns._ufShadeClear, ns._ufShadeTop)
-        sh[2]:SetGradient("VERTICAL", ns._ufShadeBottom, ns._ufShadeClear)
-        sh[3]:SetGradient("HORIZONTAL", ns._ufShadeEnd, ns._ufShadeClear)
-        sh[4]:SetGradient("HORIZONTAL", ns._ufShadeClear, ns._ufShadeEnd)
-    end
-    -- nil = unmasked strips (mirrored small frames): an earlier mask comes off.
-    if sh._mask ~= mask then
-        for i = 1, 4 do
-            if sh._mask then pcall(sh[i].RemoveMaskTexture, sh[i], sh._mask) end
-            if mask then sh[i]:AddMaskTexture(mask) end
-        end
-        sh._mask = mask
-    end
-    local top, bottom, ends = math.max(2, math.floor(h * 0.2)), math.max(1, math.floor(h * 0.1)), math.max(2, math.floor(h * 0.15))
-    sh[1]:ClearAllPoints(); sh[1]:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0); sh[1]:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0); sh[1]:SetHeight(top)
-    sh[2]:ClearAllPoints(); sh[2]:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0); sh[2]:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); sh[2]:SetHeight(bottom)
-    sh[3]:ClearAllPoints(); sh[3]:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0); sh[3]:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0); sh[3]:SetWidth(ends)
-    sh[4]:ClearAllPoints(); sh[4]:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0); sh[4]:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); sh[4]:SetWidth(ends)
-    for i = 1, 4 do sh[i]:Show() end
-end
-
--- Frame art (plus the reputation strip and boss/elite dragon on the target
--- family) on a child frame under the bars and over the portrait, as the
--- stock frame layers it: the art's ring overlaps the portrait, the bars
--- draw over the art's tracks.
-function ns.UF_ApplyBlizzFrameArt(frame, G)
-    local mirror = frame._blizzMirror
-    local af = frame._blizzArtFrame
-    if not af then
-        af = CreateFrame("Frame", nil, frame)
-        af:SetAllPoints(frame)
-        af:EnableMouse(false)
-        frame._blizzArtFrame = af
-    end
-    -- Target-family extras (type strip, dragon), created the first time a
-    -- frame renders on the target art; a side change can turn them off again.
-    if frame._blizzExtras and not af._rep then
-        local rep = af:CreateTexture(nil, "BACKGROUND", nil, 1)
-        UnsnapTex(rep)
-        af._rep = rep
-        local dragon = af:CreateTexture(nil, "BACKGROUND", nil, 2)
-        UnsnapTex(dragon)
-        dragon:Hide()
-        af._dragon = dragon
-        -- One shared event frame refreshes every target-family frame's
-        -- art; created with the first such frame, so it never exists
-        -- while the style is off.
-        if not ns._ufBlizzArtEvents then
-            ns._ufBlizzArtFrames = {}
-            local ev = CreateFrame("Frame")
-            ev:RegisterEvent("PLAYER_TARGET_CHANGED")
-            ev:RegisterEvent("PLAYER_FOCUS_CHANGED")
-            ev:RegisterEvent("PLAYER_ENTERING_WORLD")
-            ev:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT")
-            ev:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", "target", "focus")
-            ev:RegisterUnitEvent("UNIT_FACTION", "target", "focus")
-            ev:SetScript("OnEvent", function()
-                local list = ns._ufBlizzArtFrames
-                for i = 1, #list do ns.UF_RefreshBlizzTargetArt(list[i]) end
-            end)
-            ns._ufBlizzArtEvents = ev
-        end
-        table.insert(ns._ufBlizzArtFrames, frame)
-    end
-    -- Draw order: art UNDER the bars, over the portrait. The bars live in a
-    -- clipping container that renders as one group at the container's level
-    -- (a frame AT that level ties with the group, and the tie fell either
-    -- way in-game), so the art sits one level below the container; strata
-    -- follows the container so a custom Strata setting cannot separate them.
-    local clip = frame._barClip
-    local base = (clip and clip:GetFrameLevel()) or frame:GetFrameLevel()
-    af:SetFrameStrata((clip and clip:GetFrameStrata()) or frame:GetFrameStrata())
-    -- A kit whose art is opaque round transparent bar windows (the classic
-    -- target and pet frames) draws it OVER the bars instead: above the
-    -- clipped group, still under the text overlays.
-    if G.artAbove then
-        af:SetFrameLevel(base + 2)
-    else
-        af:SetFrameLevel(math.max(0, base - 1))
-    end
-    af._artSig = mirror and "|m" or ""
-    -- The target family resolves its art (classification variants) in the
-    -- refresh below: one paint per change, never the base art first.
-    if not af._rep then
-        local key = ns.UF_ArtName(G.art) .. af._artSig
-        if af._artKey ~= key then
-            af._artKey = key
-            ns.UF_PaintBlizzArt(frame, G.art)
-        end
-    end
-    -- The dark plaque behind the name and bars (classic kit): its own frame
-    -- under the bars whatever level the art takes.
-    if G.back then
-        local bf = af._backFrame
-        if not bf then
-            bf = CreateFrame("Frame", nil, frame)
-            bf:SetAllPoints(frame)
-            bf:EnableMouse(false)
-            local bk = bf:CreateTexture(nil, "BACKGROUND")
-            bk:SetColorTexture(0, 0, 0, 0.5)
-            UnsnapTex(bk)
-            bf._tex = bk
-            af._backFrame = bf
-        end
-        bf:SetFrameStrata(af:GetFrameStrata())
-        -- Under the art whether the art sits under the bars (base - 1) or
-        -- over them; beside the portrait backdrop's level, never overlapping it.
-        bf:SetFrameLevel(math.max(0, base - 2))
-        bf._tex:ClearAllPoints()
-        ns.UF_BlizzPoint(bf._tex, "TOPLEFT", frame, "TOPLEFT", G.back.x, -G.back.y, mirror)
-        bf._tex:SetSize(G.back.w, G.back.h)
-        bf:Show()
-    elseif af._backFrame then
-        af._backFrame:Hide()
-    end
-    if af._rep then
-        local rep = G.rep
-        local repArt = rep and (rep.art or rep.atlas)
-        if frame._blizzExtras and ns.UF_ArtOK(repArt)
-            and ns.UF_BlizzHeaderOn(GetSettingsForUnit(frame._euiBaseUnit or frame._euiUnit)) then
-            ns.UF_SetArt(af._rep, repArt, true)
-            -- Over the art (the stock type strip) or under it (the classic
-            -- name plaque, seen through the art's name window).
-            af._rep:SetDrawLayer("BACKGROUND", rep.below and -1 or 1)
-            af._rep:ClearAllPoints()
-            local rp = rep.point or "TOPRIGHT"
-            af._rep:SetPoint(rp, frame, rp, rep.x, rep.y)
-            af._rep:Show()
-        else
-            af._rep:Hide()
-        end
-        ns.UF_RefreshBlizzTargetArt(frame)
-    end
-end
-
--- Target-family art that follows the unit: rare frame variant, elite/rare/
--- boss dragon, reputation strip tint. Every unit read is secrecy-guarded.
-function ns.UF_RefreshBlizzTargetArt(frame)
-    local af = frame and frame._blizzArtFrame
-    if not af or not af._rep then return end
-    local G = frame._blizzGeom
-    if not G then return end
-    local unit = frame._euiUnit
-    local extras = frame._blizzExtras and G.rep and unit and UnitExists(unit)
-    local c
-    if extras then
-        local r, g, b = UnitSelectionColor(unit)
-        if r and not issecretvalue(r) and not issecretvalue(g) and not issecretvalue(b) then
-            af._rep:SetVertexColor(r, g, b)
-        else
-            af._rep:SetVertexColor(0.5, 0.5, 0.5)
-        end
-        c = UnitClassification(unit)
-        if issecretvalue(c) then c = nil end
-    end
-    local boss = extras and UnitIsBossMob and UnitIsBossMob(unit)
-    if issecretvalue(boss) then boss = false end
-    -- The one art paint for this family (see UF_ApplyBlizzFrameArt): the
-    -- classification variant -- the stock kit's rare frame, or the classic
-    -- kit's whole-frame elite / rare / rare-elite / boss arts (boss frames
-    -- always wear the boss art) -- else the base art, memo on the result.
-    local artName = G.art
-    local byc = G.artByClass
-    if byc then
-        -- A variant this client does not ship falls back a step (boss art to
-        -- the elite frame, then the base art).
-        if unit and unit:match("^boss%d$") and ns.UF_ArtOK(byc.boss) then
-            artName = byc.boss
-        elseif (boss or (unit and unit:match("^boss%d$"))) and ns.UF_ArtOK(byc.elite) then
-            artName = byc.elite
-        elseif extras and c and ns.UF_ArtOK(byc[c]) then
-            artName = byc[c]
-        end
-    elseif (c == "rare" or c == "rareelite") and ns.UF_ArtOK(G.artRare) then
-        artName = G.artRare
-    end
-    local artKey = ns.UF_ArtName(artName) .. (af._artSig or "")
-    if af._artKey ~= artKey then
-        af._artKey = artKey
-        ns.UF_PaintBlizzArt(frame, artName)
-    end
-    -- The classic arts carry their dragon; the stock kit adds it below.
-    if not extras or byc then
-        af._dragon:Hide()
-        return
-    end
-    -- Stock rule: the winged dragon for boss mobs, silver for rare elites,
-    -- gold for elites, nothing else. WoW Forever puts the silver dragon on
-    -- plain rares too and places each dragon its own way (the kit's `pos`).
-    local B = G.boss
-    local dragon, dx, pos
-    if boss then
-        dragon, dx, pos = B.winged, 8, B.pos and B.pos.winged
-    elseif c == "rareelite" or (B.silverRare and c == "rare") then
-        dragon, dx, pos = B.silver, -11, B.pos and B.pos.silver
-    elseif c == "elite" then
-        dragon, dx, pos = B.gold, -11, B.pos and B.pos.gold
-    end
-    local dy = -8
-    if pos then dx, dy = pos[1], pos[2] end
-    if dragon and ns.UF_AtlasOK(dragon) then
-        ns.UF_StockAtlas(af._dragon, dragon, true)
-        af._dragon:ClearAllPoints()
-        af._dragon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", dx, dy)
-        af._dragon:Show()
-    else
-        af._dragon:Hide()
-    end
-end
-
--- Portrait: always shown (the stock frames carry one), the stock size and
--- position with the stock mask (round, or the player frame's own crop), full
--- art, no EUI backdrop, and UNDER the frame art (the art's ring and bar edge
--- overlap it exactly as on the stock frame).
-function ns.UF_ApplyBlizzPortrait(frame, G)
-    local pt = frame.Portrait
-    local bd = pt and pt.backdrop
-    if not bd then return end
-    local mirror = frame._blizzMirror
-    bd:ClearAllPoints()
-    ns.UF_BlizzPoint(bd, G.portrait.point, frame, G.portrait.point, G.portrait.x, G.portrait.y, mirror)
-    bd:SetSize(G.portrait.size, G.portrait.size)
-    -- Under the art (which sits one level below the bar clip container; see
-    -- UF_ApplyBlizzFrameArt), in the same strata.
-    local clip = frame._barClip
-    bd:SetFrameStrata((clip and clip:GetFrameStrata()) or frame:GetFrameStrata())
-    bd:SetFrameLevel(math.max(0, ((clip and clip:GetFrameLevel()) or frame:GetFrameLevel()) - 2))
-    bd:SetClipsChildren(false)
-    if bd._bg then bd._bg:SetAlpha(0) end
-    if bd._2d then bd._2d:SetTexCoord(0, 1, 0, 1) end
-    local m = bd._blizzMask
-    if not m and ns.UF_AtlasOK(G.portrait.mask) then
-        m = bd:CreateMaskTexture()
-        m:SetAllPoints(bd)
-        if bd._2d then bd._2d:AddMaskTexture(m) end
-        if bd._class then bd._class:AddMaskTexture(m) end
-        bd._blizzMask = m
-    end
-    -- Re-set each pass: a side change swaps the player crop for the circle.
-    -- (A mirrored small frame keeps its circle; masks cannot flip anyway.)
-    if m and ns.UF_AtlasOK(G.portrait.mask) then m:SetAtlas(G.portrait.mask) end
-    -- SetPortraitTexture crops the art to a circle by itself (the stock
-    -- target/pet frames keep that crop under their CircleMask); the player
-    -- frame's mask is not a circle, so there the crop is switched off and the
-    -- atlas mask is the only shape. The engine's portrait paint reads the
-    -- stamp; a change repaints the current art.
-    local repaint
-    if bd._2d then
-        local raw = (m and G.portrait.rawArt) or nil
-        if bd._2d._blizzNoMask ~= raw then
-            bd._2d._blizzNoMask = raw
-            repaint = true
-        end
-    end
-    -- Forced on: a profile with the portrait hidden or set to None still shows it.
-    bd:Show()
-    if frame.IsElementEnabled and not frame:IsElementEnabled("Portrait") then
-        frame:EnableElement("Portrait")
-        repaint = true
-    end
-    if repaint and pt.ForceUpdate then pt:ForceUpdate() end
-end
-
--- Text zones: the left zone (the name by default) moves onto the stock name
--- strip; the other zones keep their bar-relative placement.
-function ns.UF_BlizzTextPass(frame)
-    local G = ns.UF_BlizzGeom(frame)
-    local lt = frame and frame.LeftText
-    if not (G and lt and G.name) then return end
-    -- The Left Text offsets still apply on top of the stock spot, in screen
-    -- terms (+X right, +Y up) on the mirrored art too, so they are added
-    -- after the mirror rather than through it.
-    local s = GetSettingsForUnit(frame._euiBaseUnit or frame._euiUnit)
-    local lxo, lyo = (s and s.leftTextX) or 0, (s and s.leftTextY) or 0
-    lt:ClearAllPoints()
-    lt:SetJustifyH(G.name.justify or "LEFT")
-    local point, x = G.name.point, G.name.x
-    if frame._blizzMirror then
-        point = ns._ufMirrorPoint[point] or point
-        x = -x
-    end
-    lt:SetPoint(point, frame, point, x + lxo, G.name.y + lyo)
-    lt:SetWidth(G.name.w)
-end
-
--- Level number in the frame's level circle, as the stock frames draw it:
--- the stock number font at the stock spot (the right end of the player
--- art's name bar, the left end of the target art's type strip), gold, green
--- while the player is level-scaled, the creature difficulty colour on an
--- attackable target, and the stock skull for a level the client will not
--- tell. One FontString per full frame on its own host above the bars,
--- refreshed by a shared event frame created with the first frame (nothing
--- exists while the style is off). Per-unit "Show Level" (blizzShowLevel,
--- default on) hides it; per-unit "Difficulty Color" (blizzLevelDifficultyColor,
--- default on) off keeps an attackable unit's level gold too.
-ns.UF_BLIZZ_SKULL = "UI-HUD-UnitFrame-Target-HighLevelTarget_Icon"
-function ns.UF_BlizzLevelPass(frame)
-    local G = ns.UF_BlizzGeom(frame)
-    local L = G and G.level
-    if not L then return end
-    local clip = frame._barClip
-    local host = frame._blizzLevelHost
-    if not host then
-        host = CreateFrame("Frame", nil, frame)
-        host:SetAllPoints(frame)
-        host:EnableMouse(false)
-        frame._blizzLevelHost = host
-        local fs = host:CreateFontString(nil, "OVERLAY")
-        -- The stock number font as the baseline: the name's font is copied
-        -- below once the name text carries one (not yet at first spawn).
-        fs:SetFontObject(GameNormalNumberFont)
-        frame._blizzLevel = fs
-        local skull = host:CreateTexture(nil, "OVERLAY", nil, 1)
-        skull:Hide()
-        frame._blizzLevelSkull = skull
-        if not ns._ufBlizzLevelEvents then
-            ns._ufBlizzLevelFrames = {}
-            local ev = CreateFrame("Frame")
-            ev:RegisterEvent("PLAYER_TARGET_CHANGED")
-            ev:RegisterEvent("PLAYER_FOCUS_CHANGED")
-            ev:RegisterEvent("PLAYER_ENTERING_WORLD")
-            ev:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT")
-            ev:RegisterEvent("PLAYER_LEVEL_UP")
-            ev:RegisterEvent("UNIT_LEVEL")
-            ev:RegisterEvent("UNIT_FACTION")
-            ev:SetScript("OnEvent", function(_, event, unit)
-                -- Unit events refresh their frame; everything else refreshes all.
-                local list = ns._ufBlizzLevelFrames
-                local byUnit = type(unit) == "string"
-                for i = 1, #list do
-                    local f = list[i]
-                    if not byUnit or f._euiUnit == unit then ns.UF_BlizzLevelRefresh(f, event) end
-                end
-            end)
-            ns._ufBlizzLevelEvents = ev
-        end
-        table.insert(ns._ufBlizzLevelFrames, frame)
-    end
-    -- Re-seated every pass: the host follows the bar clip's strata and sits
-    -- above the bars, like the art frame does below them.
-    host:SetFrameStrata((clip and clip:GetFrameStrata()) or frame:GetFrameStrata())
-    host:SetFrameLevel(((clip and clip:GetFrameLevel()) or frame:GetFrameLevel()) + 12)
-    local fs, skull = frame._blizzLevel, frame._blizzLevelSkull
-    local s = GetSettingsForUnit(frame._euiBaseUnit or frame._euiUnit)
-    -- Same face, outline and shadow as the unit name (and its size, unless
-    -- the level has its own): the name's font object first (it carries the
-    -- shadow), then its face. The colour keeps the stock rules (set as an
-    -- instance text colour, never vertex-only).
-    local lt = frame.LeftText
-    if lt then
-        local face, size, flags = lt:GetFont()
-        if face then
-            local fo = lt:GetFontObject()
-            if fo then fs:SetFontObject(fo) end
-            fs:SetFont(face, (s and s.blizzLevelSize) or size, flags)
-        end
-    end
-    -- The stock spot, plus the level's own offsets.
-    local ox, oy = (s and s.blizzLevelX) or 0, (s and s.blizzLevelY) or 0
-    -- WoW Forever: the level sits in a round badge at the frame's bottom
-    -- corner, which the level's own offsets move as a whole; the number and
-    -- the skull centre on it (a fixed size, so a missing atlas keeps the spot).
-    local rel, B = frame, G.badge
-    if B then
-        local badge = frame._blizzLevelBadge
-        if not badge then
-            badge = host:CreateTexture(nil, "OVERLAY", nil, -1)
-            UnsnapTex(badge)
-            ns.UF_SetArt(badge, B.atlas)
-            frame._blizzLevelBadge = badge
-        end
-        badge:SetSize(B.size, B.size)
-        badge:ClearAllPoints()
-        ns.UF_BlizzPoint(badge, B.point, frame, B.point, B.x + ox, B.y + oy, frame._blizzMirror)
-        rel, ox, oy = badge, 0, 0
-    end
-    fs:ClearAllPoints()
-    fs:SetJustifyH(L.justify or "CENTER")
-    ns.UF_BlizzPoint(fs, L.point, rel, L.relPoint or L.point, L.x + ox, L.y + oy, frame._blizzMirror)
-    -- The skull takes the number's spot (its own anchor, so a hidden number
-    -- never moves it).
-    skull:ClearAllPoints()
-    ns.UF_BlizzPoint(skull, L.point, rel, L.relPoint or L.point, L.x + ox, L.y + (L.skullDy or 2) + oy, frame._blizzMirror)
-    ns.UF_SetArt(skull, ns.UF_BLIZZ.skull or ns.UF_BLIZZ_SKULL, true)
-    -- WoW Forever: the round PvP badge on the player, target and focus
-    -- frames (Blizzard's own display rule paints and shows it, below).
-    local PV = G.pvp
-    local u = frame._euiUnit
-    if PV and (u == "player" or u == "target" or u == "focus") then
-        local els = frame._blizzPvP
-        if not els then
-            els = { pvpBackground = host:CreateTexture(nil, "OVERLAY", nil, 2),
-                    pvpIcon = host:CreateTexture(nil, "OVERLAY", nil, 3) }
-            UnsnapTex(els.pvpBackground)
-            UnsnapTex(els.pvpIcon)
-            -- Blizzard's own scale and offsets, so the badge lands where the
-            -- stock frame puts it whatever the scale does to the offsets.
-            els.pvpBackground:SetScale(PV.scale)
-            els.pvpIcon:SetScale(PV.scale)
-            ns.UF_SetArt(els.pvpBackground, PV.atlas, true)
-            els.pvpIcon:SetPoint("CENTER", els.pvpBackground, "CENTER", 0, 0)
-            els.pvpBackground:Hide()
-            els.pvpIcon:Hide()
-            frame._blizzPvP = els
-        end
-        els.pvpBackground:ClearAllPoints()
-        ns.UF_BlizzPoint(els.pvpBackground, PV.point, frame, PV.relPoint, PV.x, PV.y, frame._blizzMirror)
-    end
-    -- Where the level shares the name's end of the strip, the name gives up
-    -- that width while the level shows (the text pass set the full width).
-    if lt and G.name and L.nameTrim then
-        local on = s and s.blizzShowLevel ~= false
-        lt:SetWidth(G.name.w - (on and L.nameTrim or 0))
-    end
-    ns.UF_BlizzLevelRefresh(frame)
-end
--- `event`: the level event that asked (nil = the layout pass).
-function ns.UF_BlizzLevelRefresh(frame, event)
-    local fs = frame and frame._blizzLevel
-    if not fs then return end
-    local skull = frame._blizzLevelSkull
-    -- WoW Forever's level badge (nil on every other kit).
-    local badge = frame._blizzLevelBadge
-    local unit = frame._euiUnit
-    -- WoW Forever's PvP badge, only where its unit can have changed.
-    if frame._blizzPvP then
-        local only = event and ns.UF_PVP_EVENT_UNIT[event]
-        if only == nil or only == unit then ns.UF_ForeverPvPRefresh(frame, unit) end
-    end
-    local s = unit and GetSettingsForUnit(frame._euiBaseUnit or unit)
-    if not s or s.blizzShowLevel == false or not UnitExists(unit) then
-        fs:Hide(); skull:Hide()
-        if badge then badge:Hide() end
-        return
-    end
-    -- Every unit read is treated as possibly secret: a secret level still
-    -- paints (SetText takes it), a secret flag reads as its stock default.
-    local gold, level = true, nil
-    if unit == "player" then
-        level = UnitEffectiveLevel(unit)
-        local base = UnitLevel(unit)
-        if not issecretvalue(level) and not issecretvalue(base) and level ~= base then
-            fs:SetTextColor(0.1, 1, 0.1); gold = false
-        end
-    else
-        local corpse = UnitIsCorpse(unit)
-        if issecretvalue(corpse) then corpse = false end
-        local pet = UnitIsWildBattlePet(unit) or UnitIsBattlePetCompanion(unit)
-        if issecretvalue(pet) then pet = false end
-        if corpse then
-            level = 0
-        elseif pet and badge then
-            -- WoW Forever shows neither the level nor its badge for a battle pet.
-            fs:Hide(); skull:Hide(); badge:Hide()
-            return
-        elseif pet then
-            level = UnitBattlePetLevel(unit)
-        else
-            level = UnitEffectiveLevel(unit)
-            local can = s.blizzLevelDifficultyColor ~= false and UnitCanAttack("player", unit)
-            if not issecretvalue(can) and can then
-                local diff = C_PlayerInfo.GetContentDifficultyCreatureForPlayer(unit)
-                local color = not issecretvalue(diff) and GetDifficultyColor and GetDifficultyColor(diff)
-                if color then fs:SetTextColor(color.r, color.g, color.b); gold = false end
-            end
-        end
-    end
-    if gold then
-        -- WoW Forever paints the player's own level white.
-        if badge and unit == "player" then
-            fs:SetTextColor(1, 1, 1)
-        else
-            fs:SetTextColor(1, 0.82, 0)
-        end
-    end
-    if badge then badge:Show() end
-    -- A level the client will not tell (corpse, or 0 and below): the stock skull.
-    if issecretvalue(level) or (level and level > 0) then
-        fs:SetText(level)
-        fs:Show(); skull:Hide()
-    else
-        fs:Hide(); skull:Show()
-    end
-end
--- WoW Forever's round PvP badge: the client's own secret-safe painter (the
--- one its unit frames call, offered to addons) sets the faction or free for
--- all crest and shows the crest and circle under Blizzard's rule, including
--- the mercenary swap on the player. Rides the level refresh's events.
--- The level events that leave the badge alone, or repaint one frame's only:
--- a target or focus swap repaints that frame alone, and a level change or
--- an encounter unit none. Every other event (the unit's own UNIT_FACTION,
--- the loading screen) and the layout pass repaint each badge they reach.
-ns.UF_PVP_EVENT_UNIT = { PLAYER_TARGET_CHANGED = "target", PLAYER_FOCUS_CHANGED = "focus",
-    INSTANCE_ENCOUNTER_ENGAGE_UNIT = false, PLAYER_LEVEL_UP = false, UNIT_LEVEL = false }
-function ns.UF_ForeverPvPRefresh(frame, unit)
-    local els = frame._blizzPvP
-    local paint = UnitFrameUtil and UnitFrameUtil.UpdateUnitPvPIndicator
-    if paint and UnitExists(unit) then
-        paint(els, unit, unit == "player")
-    else
-        els.pvpIcon:Hide()
-        els.pvpBackground:Hide()
-    end
-end
-
--- Cast bar fill per cast kind ("cast" | "channel"); one field test when the
--- style is off, memoized per bar.
-function ns.UF_SetBlizzCastFill(cb, kind)
-    if not cb or not cb._blizzCast then return end
-    kind = kind or "cast"
-    if cb._blizzFillKind == kind then return end
-    local atlas = ns.UF_BlizzAtlas(ns.UF_CAST_BLIZZ[kind] or ns.UF_CAST_BLIZZ.cast)
-    if not atlas then return end
-    cb._blizzFillKind = kind
-    cb:GetStatusBarTexture():SetAtlas(atlas)
-end
--- Spell name into the text box under the bar (honouring its side + offsets).
-function ns.UF_BlizzCastText(cb)
-    local box = cb and cb._blizzTextBox
-    if not box or not box:IsShown() or not cb.Text then return end
-    if cb._nameSide == "none" then return end
-    -- The box spans the bar (not the holder: an in-width icon takes part of
-    -- the holder), so the name's width follows the bar.
-    local w = cb:GetWidth()
-    -- Secret under aura restriction when the holder rides the aura block:
-    -- keep the out-of-combat layout (the width is fixed in combat).
-    if issecretvalue(w) then return end
-    w = w or 0
-    cb.Text:ClearAllPoints()
-    local side = cb._nameSide or "left"
-    local ox, oy = cb._nameOX or 0, cb._nameOY or 0
-    if side == "right" then
-        cb.Text:SetJustifyH("RIGHT")
-        cb.Text:SetPoint("RIGHT", box, "RIGHT", -8 + ox, oy)
-    elseif side == "center" then
-        cb.Text:SetJustifyH("CENTER")
-        cb.Text:SetPoint("CENTER", box, "CENTER", ox, oy)
-    else
-        cb.Text:SetJustifyH("LEFT")
-        cb.Text:SetPoint("LEFT", box, "LEFT", 8 + ox, oy)
-    end
-    if w > 20 then cb.Text:SetWidth(w - 16) end
-    ns.ReflowFontString(cb.Text)
-end
--- Cast icon under the style: a square spanning the bar and the stock text
--- box under it (the box hangs 13px below the bar while the spell name
--- shows), hung from the holder's top corner on the configured side -- inside
--- the footprint, where the bar then starts past it, or off its edge -- with
--- the user's offsets, so its top lines up with the bar and its bottom with
--- the box. Inputs are the ones LayoutCastbarIcon stamped; the only rect read
--- is the holder's explicit height (plain on every anchor chain).
-function ns.UF_BlizzCastIcon(cb)
-    local ico = cb and cb._iconFrame
-    local host = cb and cb:GetParent()
-    if not ico or not host then return end
-    -- The configured height LayoutCastbarIcon stamped (the holder's own rect
-    -- reads back secret while it rides the aura block).
-    local hostH = cb._icoSide or host:GetHeight()
-    if issecretvalue(hostH) or not hostH or hostH <= 0 then return end
-    local box = cb._blizzTextBox
-    local side = hostH + ((box and box:IsShown()) and 13 or 0)
-    local inWidth, onRight = cb._icoInWidth, cb._icoOnRight
-    local offX, offY = cb._icoOffX or 0, cb._icoOffY or 0
-    ico:ClearAllPoints()
-    ico:SetSize(side, side)
-    if inWidth then
-        if onRight then
-            PP.Point(ico, "TOPRIGHT", host, "TOPRIGHT", offX, offY)
-        else
-            PP.Point(ico, "TOPLEFT", host, "TOPLEFT", offX, offY)
-        end
-        -- The bar takes the rest of the footprint (LayoutCastbarIcon inset it
-        -- by the EUI square; this icon is wider).
-        cb:ClearAllPoints()
-        if onRight then
-            PP.Point(cb, "TOPLEFT", host, "TOPLEFT", 0, 0)
-            PP.Point(cb, "BOTTOMRIGHT", host, "BOTTOMRIGHT", -side, 0)
-        else
-            PP.Point(cb, "TOPLEFT", host, "TOPLEFT", side, 0)
-            PP.Point(cb, "BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
-        end
-    elseif onRight then
-        PP.Point(ico, "TOPLEFT", host, "TOPRIGHT", offX, offY)
-    else
-        PP.Point(ico, "TOPRIGHT", host, "TOPLEFT", offX, offY)
-    end
-end
--- Cast bar: stock background, fill art, frame and text box; the EUI tint
--- layer stays off (the fill art is its own colour). Border and icon frame go.
-function ns.UF_ApplyBlizzCastbar(cb)
-    if not cb then return end
-    -- The stock chrome owns the frame: a Custom Border Style host stays hidden.
-    if cb._cbBorder then cb._cbBorder:Hide() end
-    local host = cb:GetParent()
-    local CK = ns.UF_BLIZZ.cast
-    if CK then
-        -- Classic kit: the vanilla cast bar frame round the user's own fill
-        -- and colours; no stock background, fill art or text box (the spell
-        -- name stays on the bar in its EUI zone). The frame is the shared
-        -- nine-slice anchored to the HOLDER's corners (bar plus icon: the
-        -- icon is part of the bar under this kit and sits inside the frame's
-        -- window), so no rect is read here. Its pieces ride an art child of
-        -- the holder above the bar and the icon (both holder +1) and under
-        -- the text overlay, so the rim overlaps the icon's edges as it does
-        -- the fill's.
-        cb._blizzCast = nil
-        PP.HideBorder(cb)
-        if not cb._blizzFrame and host then
-            local af = CreateFrame("Frame", nil, host)
-            af:SetAllPoints(host)
-            af:EnableMouse(false)
-            af:SetFrameLevel(host:GetFrameLevel() + 3)
-            cb._classicArt = af
-            local fr = af:CreateTexture(nil, "OVERLAY", nil, 2)
-            UnsnapTex(fr)
-            cb._blizzFrame = fr
-        end
-        if cb._blizzFrame then ns.UF_SeatClassicCastFrame(cb._blizzFrame, host, nil, cb._classicPct) end
-        local ico = cb._iconFrame
-        if ico then
-            PP.HideBorder(ico)
-            if ico._bg then ico._bg:Hide() end
-            if cb.Icon then
-                cb.Icon:ClearAllPoints()
-                cb.Icon:SetAllPoints(ico)
-            end
-        end
-        if cb.Icon then cb.Icon:SetTexCoord(0, 1, 0, 1) end
-        ns.UF_BlizzCastIcon(cb)
-        if cb._layoutTextZones then cb:_layoutTextZones() end
-        return
-    end
-    cb._blizzCast = true
-    cb._blizzFillKind = nil
-    cb:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-    local fill = cb:GetStatusBarTexture()
-    if fill then fill:SetHorizTile(false); UnsnapTex(fill) end
-    ns.UF_SetBlizzCastFill(cb, cb.channeling and "channel" or "cast")
-    cb:SetStatusBarColor(1, 1, 1, cb._fillOp or 1)
-    if cb.castTintLayer then
-        cb.castTintLayer:SetAlpha(0)
-        cb._castTintOn = nil
-    end
-    if host and host._bgTex then
-        -- A bar texture, not frame chrome: the retail background under
-        -- Blizzard Style, WoW Forever included.
-        local bgAtlas = ns.UF_BlizzAtlas(ns.UF_CAST_BLIZZ.bg)
-        if bgAtlas then EllesmereUI.StockAtlas(host._bgTex, bgAtlas) end
-        host._bgTex:ClearAllPoints()
-        host._bgTex:SetPoint("TOPLEFT", host, "TOPLEFT", -1, 1)
-        host._bgTex:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 1, -1)
-    end
-    PP.HideBorder(cb)
-    if not cb._blizzFrame then
-        -- The frame art rides its own child of the bar, above the
-        -- uninterruptible shield's host (bar +1) and the kick marker (bar +2),
-        -- under the text overlay: as a region of the bar itself, the shield
-        -- frame would draw its grey over the art.
-        local af = CreateFrame("Frame", nil, cb)
-        af:SetAllPoints(cb)
-        af:EnableMouse(false)
-        cb._blizzArtFr = af
-        local fr = af:CreateTexture(nil, "OVERLAY", nil, 2)
-        UnsnapTex(fr)
-        cb._blizzFrame = fr
-        local tb = host:CreateTexture(nil, "BACKGROUND", nil, -1)
-        UnsnapTex(tb)
-        cb._blizzTextBox = tb
-        local orig = cb._layoutTextZones
-        if orig then
-            cb._layoutTextZones = function(self)
-                orig(self)
-                ns.UF_BlizzCastText(self)
-            end
-        end
-    end
-    -- Re-asserted every pass (a strata change rebuilds child levels).
-    local artLvl = cb:GetFrameLevel() + 3
-    if cb._blizzArtFr and cb._blizzArtFr:GetFrameLevel() ~= artLvl then cb._blizzArtFr:SetFrameLevel(artLvl) end
-    local frAtlas = ns.UF_BlizzAtlas(ns.UF_CAST_BLIZZ.frame)
-    if frAtlas then
-        ns.UF_StockAtlas(cb._blizzFrame, frAtlas)
-        cb._blizzFrame:ClearAllPoints()
-        cb._blizzFrame:SetPoint("TOPLEFT", cb, "TOPLEFT", -2, 2)
-        cb._blizzFrame:SetPoint("BOTTOMRIGHT", cb, "BOTTOMRIGHT", 2, -2)
-        cb._blizzFrame:Show()
-    else
-        cb._blizzFrame:Hide()
-    end
-    local tbAtlas = ns.UF_BlizzAtlas(ns.UF_CAST_BLIZZ.textbox)
-    if tbAtlas and cb._nameSide ~= "none" then
-        -- Under the BAR (not the holder): with an in-width icon the bar
-        -- starts past the icon, and the box's left edge follows the bar's.
-        ns.UF_StockAtlas(cb._blizzTextBox, tbAtlas)
-        cb._blizzTextBox:ClearAllPoints()
-        cb._blizzTextBox:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 0, 3)
-        cb._blizzTextBox:SetPoint("BOTTOMRIGHT", cb, "BOTTOMRIGHT", 0, -13)
-        cb._blizzTextBox:Show()
-    else
-        cb._blizzTextBox:Hide()
-    end
-    -- The icon is the bare art, as stock: no EUI black plate, no border and
-    -- no 1px inset (the inset was that border's room).
-    local ico = cb._iconFrame
-    if ico then
-        PP.HideBorder(ico)
-        if ico._bg then ico._bg:Hide() end
-        if cb.Icon then
-            cb.Icon:ClearAllPoints()
-            cb.Icon:SetAllPoints(ico)
-        end
-    end
-    if cb.Icon then cb.Icon:SetTexCoord(0, 1, 0, 1) end
-    ns.UF_BlizzCastIcon(cb)
-    if cb._layoutTextZones then cb:_layoutTextZones() end
-end
-
--- Small-frame power bar (pet focus/energy/mana, target-of-target and
--- focus-target mana), as the stock small frames carry it. Built at spawn
--- ONLY under Blizzard Style, from the unit's own settings with the stock bar
--- geometry stamped over them, so it is not a user-positioned bar: the layout
--- pass owns its spot, size and art. Zero cost otherwise: the frame keeps no
--- Power widget (a WoW Forever pet builds its own user-positioned bar in
--- StyleSimpleFrame instead), so the engine registers no power channel and the
--- painter returns on the first field test, exactly as today.
-function ns.UF_BlizzMiniPower(frame, unit, settings)
-    if not ns.UF_Blizz() or not frame.Health then return nil end
-    local view = setmetatable({ powerPosition = "below", powerHeight = 7, powerWidth = 0 },
-        { __index = settings })
-    return CreatePowerBar(frame, unit, view)
-end
-
--- The post-pass. Idempotent: geometry is re-asserted, regions exist once.
-function ns.UF_ApplyBlizzardLayout(frame, unit)
-    if not frame or not frame.Health then return end
-    if InCombatLockdown() then return end
-    unit = unit or frame._euiBaseUnit or frame._euiUnit
-    -- Layout by unit + Portrait Side (stamped on the frame for the helpers).
-    local G, mirror = ns.UF_BlizzResolve(frame, unit)
-    if not G then return end
-    local settings = GetSettingsForUnit(unit)
-
-    -- Frame: stock size + hit rect.
-    frame:SetSize(G.w, G.h)
-    local hit = G.hit
-    if mirror then
-        frame:SetHitRectInsets(hit[2], hit[1], hit[3], hit[4])
-    else
-        frame:SetHitRectInsets(hit[1], hit[2], hit[3], hit[4])
-    end
-    -- Frame Scale: the stock size is fixed, so the whole frame scales instead.
-    -- A change re-seats the saved position (anchor offsets follow the scale);
-    -- chained boss frames and unlock-anchored frames sit relative to their
-    -- anchor and need nothing.
-    local sc = settings and settings.blizzScale or 1
-    if sc < 0.5 then sc = 0.5 elseif sc > 2 then sc = 2 end
-    local prevScale = frame:GetScale()
-    if prevScale ~= sc then
-        frame:SetScale(sc)
-        local posKey = unit:match("^boss%d$") and "boss" or unit
-        if (posKey ~= "boss" or unit == "boss1")
-           and not (EllesmereUI.IsUnlockAnchored and EllesmereUI.IsUnlockAnchored(posKey)) then
-            ApplyFramePosition(frame, posKey)
-        end
-        -- Elements size-matched to the frame from another scale (bars on
-        -- UIParent) re-pull its art width at the new scale; the frame's own
-        -- size never changes, so no resize notify would reach them. Only on a
-        -- real change: GetScale reads back float32, so most scales never
-        -- compare equal to the setting.
-        if math.abs(prevScale - sc) > 0.001 and (posKey ~= "boss" or unit == "boss1")
-           and EllesmereUI.ReapplyMatchPads then
-            EllesmereUI.ReapplyMatchPads(posKey)
-        end
-    end
-    if frame._barClip then
-        frame._barClip:ClearAllPoints()
-        frame._barClip:SetAllPoints(frame)
-    end
-
-    -- Health bar at the stock position; the offsets the class power and
-    -- scale passes read back are kept in step.
-    local health = frame.Health
-    local clip = frame._barClip or frame
-    health:ClearAllPoints()
-    ns.UF_BlizzPoint(health, "TOPLEFT", clip, "TOPLEFT", G.health.x, -G.health.y, mirror)
-    health:SetSize(G.health.w, G.health.h)
-    local hx = mirror and (G.w - G.health.x - G.health.w) or G.health.x
-    health._xOffset = hx
-    health._rightInset = G.w - hx - G.health.w
-    health._topOffset = G.health.y
-
-    -- Power bar: stock position when attached; detached bars keep their own
-    -- spot (only the art changes); "none" stays hidden. The small frames carry
-    -- the stock bar in the art's track, never a user-positioned one.
-    local power = frame.Power
-    local ppPos = settings and settings.powerPosition or "below"
-    if power and G.small then
-        power:ClearAllPoints()
-        ns.UF_BlizzPoint(power, "TOPLEFT", clip, "TOPLEFT", G.power.x, -G.power.y, mirror)
-        power:SetSize(G.power.w, G.power.h)
-        if power._pbBorder then power._pbBorder:Hide() end
-        power._blizzMasked = true
-        power:Show()
-    elseif power and ppPos ~= "none" then
-        local detached = (ppPos == "detached_top" or ppPos == "detached_bottom")
-        if not detached then
-            power:ClearAllPoints()
-            ns.UF_BlizzPoint(power, "TOPLEFT", clip, "TOPLEFT", G.power.x, -G.power.y, mirror)
-            power:SetSize(G.power.w, G.power.h)
-            -- The art pass below seats the stock mask after the fill texture is set.
-            power._blizzMasked = true
-        else
-            power._blizzMasked = nil
-        end
-        if power._pbBorder then power._pbBorder:Hide() end
-    end
-
-    ns.UF_ApplyBlizzFrameArt(frame, G)
-
-    ns.UF_ApplyBlizzBarArt(frame)
-
-    -- Absorb overlays share the bar's new footprint.
-    local hp = frame.HealthPrediction and frame.HealthPrediction.damageAbsorb
-    if hp then
-        local hw, hh = health:GetWidth(), health:GetHeight()
-        local bars = ns._ufBarScratch
-        if not bars then bars = {}; ns._ufBarScratch = bars end
-        bars[1], bars[2], bars[3], bars[4], bars[5] = hp, hp._forward, hp._healAbsorb, nil, nil
-        for i = 1, 3 do
-            local sb = bars[i]
-            if sb and sb.SetSize then sb:SetSize(hw, hh) end
-        end
-    end
-
-    ns.UF_ApplyBlizzPortrait(frame, G)
-
-    -- No EUI chrome: unified border and text bar step aside for the art.
-    if frame.unifiedBorder then frame.unifiedBorder:Hide() end
-    if frame.BottomTextBar then frame.BottomTextBar:Hide() end
-
-    ns.UF_BlizzTextPass(frame)
-    ns.UF_BlizzLevelPass(frame)
-    -- Live text-position edits re-run the style's ApplyTextPositions directly;
-    -- follow every call with the strip placement (wrapped once per frame).
-    if frame._applyTextPositions and not frame._blizzTextWrapped then
-        frame._blizzTextWrapped = true
-        local orig = frame._applyTextPositions
-        frame._applyTextPositions = function(s)
-            orig(s)
-            ns.UF_BlizzTextPass(frame)
-            ns.UF_BlizzLevelPass(frame)
-        end
-    end
-    if frame.Castbar then ns.UF_ApplyBlizzCastbar(frame.Castbar) end
-end
 
 -- Blizzard Style: the per-unit geometry re-applies inside a reload each run
 -- the stock pass from UpdateBordersForScale's tail, only for the re-anchors
@@ -14481,7 +12980,7 @@ ReloadFramesBody = function()
 
             -- Determine if this is a mini frame that inherits border/texture/font
             local isMiniFrame = (unit == "pet" or unit == "targettarget" or unit == "focustarget" or unit:match("^boss%d$"))
-            local donorSettings = isMiniFrame and GetMiniDonorSettings() or settings
+            local donorSettings = isMiniFrame and GetMiniDonorSettings(UnitToSettingsKey(unit)) or settings
 
             -- Apply health bar texture overlay (mini frames inherit the donor
             -- texture unless they set their own override).
@@ -14870,7 +13369,7 @@ function ns.UF_FrameBorderPad(k)
     local settings = GetSettingsForUnit(k)
     if not settings then return nil end
     local isMini = (k == "pet" or k == "targettarget" or k == "focustarget")
-    local d = isMini and GetMiniDonorSettings() or settings
+    local d = isMini and GetMiniDonorSettings(k) or settings
     local btex = d.borderTexture or "solid"
     if btex == "solid" then return nil end
     local bs = settings.borderSizeOverride or d.borderSize or 1
@@ -17296,10 +15795,13 @@ function InitializeFrames()
                 -- that used to leave the player frame unspawned and the bar with it,
                 -- and the other hiding modes have always kept their own bar visible.
                 -- Written only when it moves: this pass runs on every target change,
-                -- and for the "blizzard" style the bar is Blizzard's own frame.
+                -- and for the "blizzard" style the bar is Blizzard's own frame. A bar
+                -- locked to the frame is its child, so the Show When Health Missing
+                -- reveal makes its alpha read secret: it is written blind then.
                 if unitKey == "player" and frames._classPowerBar then
                     local cpWant = visNever and 0 or 1
-                    if frames._classPowerBar:GetAlpha() ~= cpWant then
+                    local cpHave = frames._classPowerBar:GetAlpha()
+                    if issecretvalue(cpHave) or cpHave ~= cpWant then
                         frames._classPowerBar:SetAlpha(cpWant)
                     end
                 end
@@ -17702,1501 +16204,22 @@ function InitializeFrames()
     ReloadFrames()
 end
 
-
-function SetupOptionsPanel()
-    ns.db = db
-    ns.frames = frames
-
-    -- Live Enable Boss Frames for the EUI source. The boss frames spawn at login
-    -- only, so the enable toggle used to be a silent no-op in the ON->OFF
-    -- direction: PromptReloadIfUnspawned only prompts when frames are MISSING,
-    -- and nothing hid the live frames -- they kept showing on every boss for the
-    -- rest of the session (field report 2026-08-13; Blizzard source toggled live,
-    -- hence "only works on Blizzard default"). The unit watch is the show/hide
-    -- authority (RegisterUnitWatch at spawn), so toggling it IS the live enable/
-    -- disable; frames never spawned this session still fall through to the
-    -- reload prompt in the options setter. Watch/Hide writes on these secure
-    -- frames are lockdown-blocked: in combat, park a one-shot that re-applies
-    -- the CURRENT setting at regen (reads the profile at fire time, so the last
-    -- click wins and stacked toggles collapse to one apply).
-    function ns.UF_SetBossFramesActive(on)
-        if InCombatLockdown() then
-            ns.CombatQueue.Defer("BossFramesActive", function()
-                ns.UF_SetBossFramesActive(db.profile.enabledFrames.boss ~= false)
-            end)
-            return
-        end
-        for i = 1, 5 do
-            local f = frames["boss" .. i]
-            if f then
-                if on then
-                    RegisterUnitWatch(f)
-                else
-                    UnregisterUnitWatch(f)
-                    f:Hide()
-                end
-            end
-        end
-    end
-    ns.ApplyFramePosition = ApplyFramePosition
-    ns.GetFrameDimensions = GetFrameDimensions
-    local reloadPending = false
-    local reloadThrottle = CreateFrame("Frame")
-    reloadThrottle:Hide()
-    -- Realise a classPowerStyle that changed through a path which never calls
-    -- _toggleClassPower (a Spec Override applying at login, a profile switch, an
-    -- import). Gated on an actual change because the toggle is a full teardown
-    -- and rebuild; running it every reload would thrash the bar.
-    local RealiseClassPowerStyle
-    RealiseClassPowerStyle = function()
-        if not frames._toggleClassPower then return end
-        local wantCP = db.profile.player.classPowerStyle or "none"
-        -- WoW Forever: compare the style that builds, not the saved one (the
-        -- toggle keeps the saved style and builds its effective style).
-        local builtCP = wantCP
-        if ns.UF_ForeverCPStyle then builtCP = ns.UF_ForeverCPStyle(wantCP) end
-        if builtCP == frames._classPowerBuiltStyle then return end
-        -- The toggle reparents Blizzard's class power frame and re-anchors the
-        -- health bar. The throttle body keeps running after ReloadFrames()'s
-        -- lockdown return (same shape as the UpdateFrameVisibility note above),
-        -- so this needs its own guard plus a regen re-run to re-arm the pass.
-        if InCombatLockdown() then
-            ns.CombatQueue.Defer("RealiseClassPowerStyle", RealiseClassPowerStyle)
-            return
-        end
-        frames._toggleClassPower(wantCP)
-    end
-    reloadThrottle:SetScript("OnUpdate", function(self)
-        self:Hide()
-        reloadPending = false
-        ReloadFrames()
-        ApplyBlizzCastbarState()
-        -- Hide While Using Gamepad: a profile switch or spec override changes
-        -- the saved toggles without calling the options setter.
-        ns.UF_ApplyGamepadCastbar()
-        -- A reload restyles the boss frames and re-colors their health to the
-        -- player's class color (preview rides on unit="player") + re-tags the name.
-        -- Re-assert the preview (red color + fake name) so a settings change doesn't
-        -- revert it. Secret-safe: no health values are read.
-        if ns._bossPreviewActive and ns.SetBossPreview then ns.SetBossPreview(true) end
-        -- ReloadFrames rebuilds frames but never touches the top-level wrapper/3D-
-        -- portrait alpha, so recompute the out-of-combat fade here. Without this, a
-        -- profile/spec swap (or first switch to a 3D portrait, whose PlayerModel is
-        -- created at alpha 1) leaves player/target/focus stuck at the old opacity
-        -- until the next combat/target/zone event. Safe from the throttle:
-        -- UpdateFrameVisibility guards its restricted Show/Hide behind
-        -- InCombatLockdown, and SetAlpha is unrestricted.
-        if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
-        -- 12.1 aura containers reload with every real pass (direct call --
-        -- ns.ReloadFrames is just the throttle-arming stub, so wrapping it
-        -- from the container file is timing-unreliable).
-        if ns.UF_ReloadAllAuraContainers then ns.UF_ReloadAllAuraContainers() end
-        -- Class power: _toggleClassPower is the only thing that honours a
-        -- classPowerStyle change, and options + the spec watcher are its only
-        -- other callers -- styles changed by overrides, profile switch, or
-        -- import land here.
-        RealiseClassPowerStyle()
-        -- Threat watchers: a profile switch or spec override changes the
-        -- saved toggles without calling their setters.
-        ns.SyncPlayerThreat()
-        if ns.SyncThreatPct then ns.SyncThreatPct() end
-    end)
-    ns.ReloadFrames = function()
-        if not reloadPending then
-            reloadPending = true
-            reloadThrottle:Show()
-        end
-    end
-    _G._EUF_ReloadFrames = ns.ReloadFrames
-
-    -- Fake debuff icons for the boss preview. Three square icons anchored where the
-    -- real Debuffs frame would live, sized to match the Simple Debuff Display layout
-    -- (frame bar height, growing right-to-left off the frame's left edge). Created on
-    -- demand and torn down on preview disable.
-    local FAKE_DEBUFF_SPELLS = { 122, 172, 1714 }  -- Frost Nova, Corruption, Curse of Tongues
-    local FAKE_DEBUFF_STACKS = { [2] = 3 }          -- one fake stack (icon 2 only)
-    local FAKE_DEBUFF_FRACS  = { 0.35, 0.62, 0.88 } -- static fake swipe fraction remaining
-    local FAKE_DEBUFF_SECS   = { 8, 15, 23 }         -- static fake duration-text seconds
-    -- Preview-only: a fake aura icon wears the boss aura border settings (the ring
-    -- the live buttons' style builds, drawn through the same eight-slice path;
-    -- the owned border frame doubles as its texture cache). Blizzard Style keeps
-    -- the plain 1 px ring the preview always drew. On ns: this function sits at
-    -- the Lua 5.1 local ceiling.
-    ns.BossPreviewAuraBorder = function(border, settings)
-        if ns.UF_Blizz and ns.UF_Blizz() then
-            if PP and PP.CreateBorder then PP.CreateBorder(border, 0, 0, 0, 1) end
-            return
-        end
-        local size = settings.auraBorderSize or 1
-        local tex = settings.auraBorderTexture or "solid"
-        EllesmereUI.ApplySecretSafeBorderStyle(border, border, size,
-            settings.auraBorderR or 0, settings.auraBorderG or 0, settings.auraBorderB or 0, settings.auraBorderA or 1,
-            tex, settings.auraBorderTextureOffset, settings.auraBorderTextureOffsetY,
-            settings.auraBorderTextureShiftX, settings.auraBorderTextureShiftY,
-            "unitframes", size, nil, EllesmereUI.BorderPx(settings.auraBorderSizePx, size, tex))
-    end
-    local function AttachFakeDebuffs(frame)
-        -- Tear down any prior holder so size/anchor refresh on every call.
-        if frame._previewDebuffs then
-            frame._previewDebuffs:Hide()
-            frame._previewDebuffs:SetParent(nil)
-            frame._previewDebuffs = nil
-        end
-        -- Suppress the real (player-unit) debuffs while the fake overlay is up so
-        -- the preview shows exactly the fake set. Restored by ReloadFrames when
-        -- the preview is disabled.
-        if ns.UF_HideAuraContainers then ns.UF_HideAuraContainers(frame) end
-        local settings = db.profile.boss or {}
-        local simpleMode = ns.GetBossSimpleDebuffMode(settings)
-        local simple = simpleMode ~= "none"
-        -- No debuffs shown at all (Simple Debuff Display None + Debuffs Location
-        -- None): the prior holder was already torn down above, so bail without
-        -- drawing any fake debuffs (mirrors AttachFakeBuffs' none guard).
-        if not simple and (settings.debuffAnchor or "bottomleft") == "none" then return end
-        local dOffX = settings.debuffOffsetX or 0
-        local dOffY = settings.debuffOffsetY or 0
-        -- Simple mode uses its own X/Y offsets (falling back to the regular
-        -- debuff offsets for existing users) so the preview matches live.
-        if simple then dOffX, dOffY = ns.GetBossSimpleDebuffOffset(settings) end
-        local powerPos = settings.powerPosition or "below"
-        local powerIsAtt = (powerPos == "below" or powerPos == "above")
-        local powerH = powerIsAtt and (settings.powerHeight or 0) or 0
-        local iconSize
-        if simple then
-            -- Pixel-snap so the preview icon matches the frame's snapped height
-            -- exactly (== frame:GetHeight()), same as the live boss debuffs.
-            iconSize = PP.Scale((settings.healthHeight or 34) + powerH)
-        else
-            iconSize = settings.debuffSize or 22
-        end
-        local count = #FAKE_DEBUFF_SPELLS
-        local gap = 1
-        -- Inter-icon spacing from the configured slider (physical pixels). `gap`
-        -- stays at 1 for the holder-to-frame edge offset (matches the runtime).
-        local iconGap = PP.FromPixels(ns.GetBossDebuffSpacing(settings, simple))
-        local holder = CreateFrame("Frame", nil, frame)
-        holder:SetSize(iconSize * count + iconGap * (count - 1), iconSize)
-        -- Above the unified border so it sits BEHIND the preview debuffs, matching
-        -- the live boss aura layering. The border FRAME is frame+10 but its solid
-        -- PP border textures live on a sub-container at frame+11, so clear that
-        -- (frame+13 also clears the class-icon holder at frame+12).
-        holder:SetFrameLevel(frame:GetFrameLevel() + 13)
-        holder:ClearAllPoints()
-        -- The boss cast bar lives as a sibling parented to the frame but
-        -- anchored BELOW frame bottom, so frame:GetHeight() excludes it.
-        -- Mirror the live runtime behavior where bottom-anchored debuffs
-        -- push down by the cast bar height to avoid overlap.
-        local castBg = frame.Castbar and frame.Castbar:GetParent()
-        local castbarH = (settings.showCastbar ~= false and castBg)
-                         and castBg:GetHeight() or 0
-        if simple then
-            -- Simple mode: align debuff stack with the health bar top so
-            -- they never encroach on the cast bar area. Left grows off the
-            -- frame's left edge; Right grows off the right edge.
-            if simpleMode == "right" then
-                holder:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1 + dOffX, dOffY)
-            else
-                holder:SetPoint("TOPRIGHT", frame, "TOPLEFT", -1 + dOffX, dOffY)
-            end
-        else
-            local dAnc = settings.debuffAnchor or "bottomleft"
-            if dAnc == "topleft" then
-                holder:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0 + dOffX, gap + dOffY)
-            elseif dAnc == "topright" then
-                holder:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0 + dOffX, gap + dOffY)
-            elseif dAnc == "bottomleft" then
-                holder:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0 + dOffX, -gap - castbarH + dOffY)
-            elseif dAnc == "bottomright" then
-                holder:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0 + dOffX, -gap - castbarH + dOffY)
-            elseif dAnc == "right" then
-                holder:SetPoint("LEFT", frame, "RIGHT", gap + dOffX, 0 + dOffY)
-            else  -- "left" or fallback
-                holder:SetPoint("RIGHT", frame, "LEFT", -gap + dOffX, 0 + dOffY)
-            end
-        end
-        -- Cooldown-text + stack settings, mode-aware so the preview mirrors the
-        -- live boss aura buttons (simple keys in Simple Debuff Display, regular
-        -- debuff keys otherwise).
-        local showCD, cdSize, cdOffX, cdOffY
-        if simple then
-            showCD = settings.simpleDebuffShowCooldownText
-            cdSize = settings.simpleDebuffCooldownTextSize or 14
-            cdOffX = settings.simpleDebuffCooldownTextOffsetX or 0
-            cdOffY = settings.simpleDebuffCooldownTextOffsetY or 0
-        else
-            showCD = settings.debuffShowCooldownText
-            cdSize = settings.debuffCooldownTextSize or 10
-            cdOffX = settings.debuffCooldownTextOffsetX or 0
-            cdOffY = settings.debuffCooldownTextOffsetY or 0
-        end
-        local stackSize = settings.debuffStackTextSize or 14
-        local stackOffX = settings.debuffStackTextOffsetX or 0
-        local stackOffY = settings.debuffStackTextOffsetY or 0
-        local stackPos = settings.debuffStackTextPosition
-        local cdTextColor = settings.debuffCooldownTextColor or {r=1, g=1, b=1}
-        local stackTextColor = settings.debuffStackTextColor or {r=1, g=1, b=1}
-        local fontPath = (EllesmereUI.GetFontPath("unitFrames")) or "Fonts\\FRIZQT__.TTF"
-        local now = GetTime()
-        for idx, spellID in ipairs(FAKE_DEBUFF_SPELLS) do
-            local iconFrame = CreateFrame("Frame", nil, holder)
-            iconFrame:SetSize(iconSize, iconSize)
-            if simpleMode == "right" then
-                iconFrame:SetPoint("LEFT", holder, "LEFT", (idx - 1) * (iconSize + iconGap), 0)
-            else
-                iconFrame:SetPoint("RIGHT", holder, "RIGHT", -(idx - 1) * (iconSize + iconGap), 0)
-            end
-            iconFrame:SetFrameLevel(holder:GetFrameLevel())
-            local icon = iconFrame:CreateTexture(nil, "ARTWORK")
-            icon:SetAllPoints()
-            local tex = GetSpellTexture and GetSpellTexture(spellID)
-                     or (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID))
-            if tex then icon:SetTexture(tex) end
-            local z = settings.debuffIconZoom or 0.07
-            icon:SetTexCoord(z, 1 - z, z, 1 - z)
-            -- Static fake cooldown swipe: a huge duration parked at a fixed fraction so
-            -- the wedge never visibly moves. Native countdown numbers stay hidden; the
-            -- duration text below is a manual static FontString instead.
-            local cd = CreateFrame("Cooldown", nil, iconFrame, "CooldownFrameTemplate")
-            cd:SetAllPoints(iconFrame)
-            -- Swipe sits above the border (border at +1, PP container at +2) so
-            -- the layering matches the live boss aura buttons.
-            cd:SetFrameLevel(iconFrame:GetFrameLevel() + 3)
-            cd:SetDrawEdge(false)
-            cd:SetDrawBling(false)
-            cd:SetReverse(false)
-            cd:SetDrawSwipe(true)
-            cd:SetSwipeColor(0, 0, 0, 0.6)
-            cd:SetHideCountdownNumbers(true)
-            local frac = FAKE_DEBUFF_FRACS[idx] or 0.6
-            cd:SetCooldown(now - 3600 * (1 - frac), 3600)
-            -- Text host above the swipe AND the border container so the
-            -- duration/stack text renders over the icon border, not under it.
-            local textHost = CreateFrame("Frame", nil, iconFrame)
-            textHost:SetAllPoints(iconFrame)
-            textHost:SetFrameLevel(iconFrame:GetFrameLevel() + 4)
-            local durText = textHost:CreateFontString(nil, "OVERLAY")
-            durText:SetDrawLayer("OVERLAY", 7)
-            EllesmereUI.ApplyIconTextFont(durText, fontPath, cdSize, "unitFrames")
-            durText:SetPoint("CENTER", iconFrame, "CENTER", cdOffX, cdOffY)
-            durText:SetTextColor(cdTextColor.r, cdTextColor.g, cdTextColor.b)
-            durText:SetText(FAKE_DEBUFF_SECS[idx] or 10)
-            if not showCD then durText:Hide() end
-            -- Stack text on a single icon only (looks natural; most debuffs are
-            -- unstacked). Driven by the Stack Size / Stack X / Stack Y controls.
-            if FAKE_DEBUFF_STACKS[idx] then
-                local stack = textHost:CreateFontString(nil, "OVERLAY")
-                stack:SetDrawLayer("OVERLAY", 7)
-                EllesmereUI.ApplyIconTextFont(stack, fontPath, stackSize, "unitFrames")
-                ns.ApplyStackAnchor(stack, iconFrame, stackPos, stackOffX, stackOffY)
-                stack:SetTextColor(stackTextColor.r, stackTextColor.g, stackTextColor.b)
-                stack:SetText(FAKE_DEBUFF_STACKS[idx])
-            end
-            -- Border just above the icon; its PP container renders at border+1
-            -- (iconFrame+2), below the swipe and text host so both stay on top.
-            local border = CreateFrame("Frame", nil, iconFrame)
-            border:SetAllPoints(icon)
-            border:SetFrameLevel(iconFrame:GetFrameLevel() + 1)
-            ns.BossPreviewAuraBorder(border, settings)
-        end
-        frame._previewDebuffs = holder
-    end
-    local function DetachFakeDebuffs(frame)
-        if frame._previewDebuffs then frame._previewDebuffs:Hide() end
-    end
-
-    -- Fake buff icons for the boss preview. Two square icons anchored where the
-    -- real Buffs frame would live, sized to the buff size. Created on demand and
-    -- torn down on preview disable. Capped at 2 regardless of Max Count.
-    local FAKE_BUFF_SPELLS = { 21562, 1459 }  -- Power Word: Fortitude, Arcane Intellect
-    local function AttachFakeBuffs(frame)
-        if frame._previewBuffs then
-            frame._previewBuffs:Hide()
-            frame._previewBuffs:SetParent(nil)
-            frame._previewBuffs = nil
-        end
-        -- Suppress the real (player-unit) buffs while preview is up. Restored by
-        -- ReloadFrames when the preview is disabled.
-        if ns.UF_HideAuraContainers then ns.UF_HideAuraContainers(frame) end
-        local settings = db.profile.boss or {}
-        local simpleMode = ns.GetBossSimpleBuffMode(settings)
-        local simple = simpleMode ~= "none"
-        -- Simple Buff Display overrides Buffs Location, so only bail on the
-        -- location/visibility guards when simple mode is off.
-        if not simple and (settings.showBuffs == false or (settings.buffAnchor or "topleft") == "none") then return end
-        local anchor = settings.buffAnchor or "topleft"
-        local bOffX = settings.buffOffsetX or 0
-        local bOffY = settings.buffOffsetY or 0
-        -- Simple mode uses its own X/Y offsets (falling back to the regular buff
-        -- offsets for existing users) so the preview matches live.
-        if simple then bOffX, bOffY = ns.GetBossSimpleBuffOffset(settings) end
-        local powerPos = settings.powerPosition or "below"
-        local powerIsAtt = (powerPos == "below" or powerPos == "above")
-        local powerH = powerIsAtt and (settings.powerHeight or 0) or 0
-        local iconSize
-        if simple then
-            -- Pixel-snap so the preview icon matches the frame's snapped height
-            -- exactly (== frame:GetHeight()), same as the live boss buffs.
-            iconSize = PP.Scale((settings.healthHeight or 34) + powerH)
-        else
-            iconSize = settings.buffSize or 22
-        end
-        local count = #FAKE_BUFF_SPELLS
-        local gap = 1
-        -- Inter-icon spacing from the configured slider (physical pixels). `gap`
-        -- stays at 1 for the holder-to-frame edge offset (matches the runtime).
-        local iconGap = PP.FromPixels(ns.GetBossBuffSpacing(settings, simple))
-        local holder = CreateFrame("Frame", nil, frame)
-        holder:SetSize(iconSize * count + iconGap * (count - 1), iconSize)
-        -- Above the unified border so it sits BEHIND the preview buffs, matching
-        -- the live boss aura layering. The border FRAME is frame+10 but its solid
-        -- PP border textures live on a sub-container at frame+11, so clear that
-        -- (frame+13 also clears the class-icon holder at frame+12).
-        holder:SetFrameLevel(frame:GetFrameLevel() + 13)
-        holder:ClearAllPoints()
-        local castBg = frame.Castbar and frame.Castbar:GetParent()
-        local castbarH = (settings.showCastbar ~= false and castBg)
-                         and castBg:GetHeight() or 0
-        if simple then
-            -- Align the column with the health bar top, side-based (matches the
-            -- live runtime + Simple Debuff Display).
-            if simpleMode == "right" then
-                holder:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1 + bOffX, bOffY)
-            else
-                holder:SetPoint("TOPRIGHT", frame, "TOPLEFT", -1 + bOffX, bOffY)
-            end
-        elseif anchor == "topleft" then
-            holder:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0 + bOffX, gap + bOffY)
-        elseif anchor == "topright" then
-            holder:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0 + bOffX, gap + bOffY)
-        elseif anchor == "bottomleft" then
-            holder:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0 + bOffX, -gap - castbarH + bOffY)
-        elseif anchor == "bottomright" then
-            holder:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0 + bOffX, -gap - castbarH + bOffY)
-        elseif anchor == "right" then
-            holder:SetPoint("LEFT", frame, "RIGHT", gap + bOffX, 0 + bOffY)
-        else  -- "left" or fallback
-            holder:SetPoint("RIGHT", frame, "LEFT", -gap + bOffX, 0 + bOffY)
-        end
-        for idx, spellID in ipairs(FAKE_BUFF_SPELLS) do
-            local iconFrame = CreateFrame("Frame", nil, holder)
-            iconFrame:SetSize(iconSize, iconSize)
-            if simple and simpleMode == "left" then
-                -- Left mode grows leftward from the right edge of the holder.
-                iconFrame:SetPoint("RIGHT", holder, "RIGHT", -(idx - 1) * (iconSize + iconGap), 0)
-            else
-                iconFrame:SetPoint("LEFT", holder, "LEFT", (idx - 1) * (iconSize + iconGap), 0)
-            end
-            iconFrame:SetFrameLevel(holder:GetFrameLevel())
-            local icon = iconFrame:CreateTexture(nil, "ARTWORK")
-            icon:SetAllPoints()
-            local tex = GetSpellTexture and GetSpellTexture(spellID)
-                     or (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID))
-            if tex then icon:SetTexture(tex) end
-            local z = settings.buffIconZoom or 0.07
-            icon:SetTexCoord(z, 1 - z, z, 1 - z)
-            local border = CreateFrame("Frame", nil, iconFrame)
-            border:SetAllPoints(icon)
-            border:SetFrameLevel(iconFrame:GetFrameLevel() + 1)
-            ns.BossPreviewAuraBorder(border, settings)
-        end
-        frame._previewBuffs = holder
-    end
-    local function DetachFakeBuffs(frame)
-        if frame._previewBuffs then frame._previewBuffs:Hide() end
-    end
-
-    -- Fake static cast bar for the boss preview (boss2 only). This drives the
-    -- REAL cast bar so it is 100% identical to a live cast: it disables the oUF
-    -- Castbar element (so oUF never resets our frozen state), then shows the bar
-    -- with a fixed mid-cast fill + spell name / timer / icon and the active-cast
-    -- tint -- the same state OnCastbarCastActive produces during a real cast.
-    local FAKE_CAST_SPELL_NAME = "Shadow Bolt"
-    local FAKE_CAST_SPELL_ICON = 136197
-    local function DetachFakeCastBar(frame)
-        if not frame._fakeCastActive then return end
-        frame._fakeCastActive = nil
-        local castbar = frame.Castbar
-        local castbarBg = castbar and castbar:GetParent()
-        if castbar then
-            if castbar.castTintLayer then
-                castbar.castTintLayer:SetAlpha(0)
-                castbar._castTintOn = nil
-            end
-            castbar:Hide()
-        end
-        if castbarBg then castbarBg:Hide() end
-        -- The real Castbar element is re-enabled by ReloadFrames when the preview
-        -- is turned off, so no manual re-enable is needed here.
-    end
-    local function AttachFakeCastBar(frame)
-        local castbar = frame.Castbar
-        local castbarBg = castbar and castbar:GetParent()
-        if not castbar or not castbarBg then return end
-        local settings = db.profile.boss or {}
-        if settings.showCastbar == false then
-            castbarBg:Hide()
-            return
-        end
-        -- Suppress the real Castbar element so oUF can't reset the frozen cast.
-        if frame:IsElementEnabled("Castbar") then frame:DisableElement("Castbar") end
-        castbar._eufSettings = settings
-        -- Frozen mid-cast fill (respects the configured reverse-fill direction).
-        castbar:SetMinMaxValues(0, 1)
-        castbar:SetValue(0.65)
-        if castbar.Text then castbar.Text:SetText(FAKE_CAST_SPELL_NAME) end
-        if castbar.Time then
-            if settings.showCastDuration == false then
-                castbar.Time:SetText(""); castbar.Time:Hide()
-            else
-                castbar.Time:Show(); castbar.Time:SetText("1.8")
-            end
-        end
-        if castbar.Icon then
-            castbar.Icon:SetTexture(FAKE_CAST_SPELL_ICON)
-            -- SetTexture resets the crop; re-apply the cast icon's fixed zoom.
-            castbar.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        end
-        -- Active-cast tint -- same path a real cast uses.
-        if castbar.castTintLayer then
-            castbar.castTintLayer:SetAlpha(castbar._fillOp or 1)
-            castbar._castTintOn = true
-            ApplyUnitFrameCastColor(castbar)
-        end
-        castbarBg:Show()
-        castbar:Show()
-        if castbar._iconFrame then
-            if settings.showCastIcon == false then castbar._iconFrame:Hide()
-            else castbar._iconFrame:Show() end
-        end
-        if castbar._layoutTextZones then castbar:_layoutTextZones() end
-        frame._fakeCastActive = true
-    end
-
-    -- Refresh the in-game boss preview's fake auras when boss settings that affect them
-    -- (simpleDebuffs, debuffAnchor, debuffSize, buffAnchor, etc.) change.
-    ns.RefreshBossPreviewDebuffs = function()
-        if not ns._bossPreviewActive then return end
-        for i = 1, 3 do
-            local f = frames["boss" .. i]
-            if f then
-                AttachFakeDebuffs(f); AttachFakeBuffs(f)
-                -- Only the 2nd boss frame shows a sample cast bar.
-                if i == 2 then AttachFakeCastBar(f) end
-            end
-        end
-    end
-
-    -- Apply / clear a hostile-red health bar override on a boss frame while
-    -- preview is active. Real boss frames never class-color (no player class),
-    -- so piggybacking on unit="player" would otherwise paint the bar in the
-    -- user's class color -- wrong for a preview.
-    local PREVIEW_HEALTH_RED_R, PREVIEW_HEALTH_RED_G, PREVIEW_HEALTH_RED_B = 0.8, 0.2, 0.2
-
-    -- Fake boss names for the preview. Generated once per activation (stable
-    -- across reloads), regenerated on a fresh activation. Health is intentionally
-    -- NOT faked: the health max is a secret value in Midnight and cannot be read
-    -- or compared, so the bar keeps the player's real (filled) health.
-    local PREVIEW_BOSS_NAMES = {
-        "The Lich King", "Ragnaros", "Kel'Thuzad", "Archimonde", "Kil'jaeden",
-        "Deathwing", "Yogg-Saron", "C'Thun", "Cenarius", "Varimathras",
-    }
-    local function GenBossPreviewNames()
-        local pool = {}
-        for i = 1, #PREVIEW_BOSS_NAMES do pool[i] = PREVIEW_BOSS_NAMES[i] end
-        for i = #pool, 2, -1 do
-            local j = math.random(i)
-            pool[i], pool[j] = pool[j], pool[i]
-        end
-        return { pool[1], pool[2], pool[3] }
-    end
-
-    -- Override the name fontstring with a fake boss name. Its text zone is
-    -- parked so the engine's text painter stops overwriting it; SetText with a
-    -- literal string is secret-safe. Restored on clear.
-    local function BossPreviewNameFS(f)
-        local s = db.profile.boss
-        local lc = (s and s.leftTextContent) or "name"
-        local rc = (s and s.rightTextContent) or "perhp"
-        local cc = (s and s.centerTextContent) or "none"
-        if lc == "name" then return f.LeftText end
-        if rc == "name" then return f.RightText end
-        if cc == "name" then return f.CenterText end
-        return nil
-    end
-    local function ApplyBossPreviewName(f, name)
-        local fs = BossPreviewNameFS(f)
-        if not fs then return end
-        f._previewNameFS = fs
-        local zones = f._euiTextZones
-        if zones and not fs._previewSavedZone then
-            for i = #zones, 1, -1 do
-                if zones[i].fs == fs then
-                    fs._previewSavedZone = table.remove(zones, i)
-                    break
-                end
-            end
-        end
-        fs:SetText(name)
-    end
-    local function ClearBossPreviewName(f)
-        local fs = f._previewNameFS
-        if not fs then return end
-        if fs._previewSavedZone then
-            local zones = f._euiTextZones
-            if not zones then zones = {}; f._euiTextZones = zones end
-            zones[#zones + 1] = fs._previewSavedZone
-            fs._previewSavedZone = nil
-        end
-        f._previewNameFS = nil
-        if ns.UF_PaintText then ns.UF_PaintText(f, f._euiUnit) end
-    end
-
-    local function ApplyBossPreviewColor(f)
-        local h = f.Health
-        if not h then return end
-        f._previewColorSaved = f._previewColorSaved or {
-            colorClass       = h.colorClass,
-            colorReaction    = h.colorReaction,
-            colorTapped      = h.colorTapped,
-            colorDisconnected= h.colorDisconnected,
-        }
-        -- Color the fake boss frames exactly as a real boss frame would: Dark Mode
-        -- dark fill/bg, or a Custom Colored Fill, via ApplyDarkTheme (both leave
-        -- colorClass off). The ONE exception: where a real frame would show the live
-        -- unit's class/reaction color (ApplyDarkTheme leaves colorClass ON), our fake
-        -- unit is the player with no boss classification -- substitute the red
-        -- preview color instead of the player's class color.
-        ApplyDarkTheme(h)
-        if h.colorClass then
-            h.colorClass = false
-            h.colorReaction = false
-            h.colorTapped = false
-            h.colorDisconnected = false
-            h:SetStatusBarColor(PREVIEW_HEALTH_RED_R, PREVIEW_HEALTH_RED_G, PREVIEW_HEALTH_RED_B)
-            -- oUF's own update may re-color on the next tick; this PostUpdate keeps
-            -- the override sticky for the duration of the preview.
-            h.PostUpdateColor = function(self) self:SetStatusBarColor(PREVIEW_HEALTH_RED_R, PREVIEW_HEALTH_RED_G, PREVIEW_HEALTH_RED_B) end
-        end
-    end
-    local function ClearBossPreviewColor(f)
-        local h = f.Health
-        if not h then return end
-        local s = f._previewColorSaved
-        if s then
-            h.colorClass = s.colorClass
-            h.colorReaction = s.colorReaction
-            h.colorTapped = s.colorTapped
-            h.colorDisconnected = s.colorDisconnected
-            f._previewColorSaved = nil
-        end
-        h.PostUpdateColor = nil
-    end
-
-    -- Re-apply the boss preview colors after a Dark Mode change: the dark refresher
-    -- repaints every frame via ApplyDarkTheme, which would drop our red class-color
-    -- substitute. Called from the dark-mode refresher while the preview is active.
-    ns._ReapplyBossPreviewColor = function()
-        for i = 1, 3 do
-            local f = frames["boss" .. i]
-            if f then ApplyBossPreviewColor(f) end
-        end
-    end
-
-    -- Boss preview: force boss1/2/3 to render with the player's unit data so
-    -- the user can see the boss frame styling live in-game without a real
-    -- encounter. Gated out of combat to avoid taint; caller is responsible
-    -- for auto-clearing on EUI options window close.
-    ns.SetBossPreview = function(enabled)
-        if InCombatLockdown() then return false end
-        ns._bossPreviewActive = enabled and true or false
-        if enabled and not ns._bossPreviewNames then
-            ns._bossPreviewNames = GenBossPreviewNames()
-        end
-        for i = 1, 3 do
-            local f = frames["boss" .. i]
-            if f then
-                if enabled then
-                    f:SetAttribute("unit", "player")
-                    f:Show()
-                    ApplyBossPreviewColor(f)
-                    if f.UpdateAllElements then f:UpdateAllElements("BossPreview") end
-                    -- After UpdateAllElements re-tags the name, override it with a fake boss name.
-                    ApplyBossPreviewName(f, (ns._bossPreviewNames and ns._bossPreviewNames[i]) or PREVIEW_BOSS_NAMES[i] or "Boss")
-                    AttachFakeDebuffs(f)
-                    AttachFakeBuffs(f)
-                    -- Only the 2nd boss frame shows a sample cast bar.
-                    if i == 2 then AttachFakeCastBar(f) end
-                else
-                    ClearBossPreviewColor(f)
-                    ClearBossPreviewName(f)
-                    f:SetAttribute("unit", "boss" .. i)
-                    if not UnitExists("boss" .. i) then f:Hide() end
-                    if f.UpdateAllElements then f:UpdateAllElements("BossPreview") end
-                    DetachFakeDebuffs(f)
-                    DetachFakeBuffs(f)
-                    DetachFakeCastBar(f)
-                end
-            end
-        end
-        if not enabled then
-            ns._bossPreviewNames = nil
-            -- Restore the real Buffs/Debuffs elements (and their anchors/counts)
-            -- that the fake overlay disabled while preview was active.
-            if ns.ReloadFrames then ns.ReloadFrames() end
-        end
-        return true
-    end
-    ns.ResolveFontPath = ResolveFontPath
-
-    -- Trigger the EllesmereUI options module registration now that ns.db is ready
-    if ns._InitEUIModule then
-        ns._InitEUIModule()
-    end
-
-    -- Player Aura Bars build here, the first point ns.db is known to exist,
-    -- in a tick of their own: the container build is insecure work whose
-    -- cost scales with the bar count, so it keeps its own watchdog budget
-    -- instead of riding this execution (login budget split rule).
-    if ns.PAB_CreateBars then C_Timer.After(0, ns.PAB_CreateBars) end
-end
-
--------------------------------------------------------------------------------
---  Register unit frame elements with Unlock Mode. Called synchronously from
---  OnEnable (right after InitializeFrames) so registration lands inside the
---  PLAYER_LOGIN pre-lockdown window on a combat reload -- timers never fire
---  during the loading screen, so a deferred registration would land after
---  combat lockdown re-engaged, leaving anchored unit frames unpositionable
---  until combat dropped.
--------------------------------------------------------------------------------
-local function RegisterUFUnlockElements()
-    if EllesmereUI and EllesmereUI.RegisterUnlockElements then
-        local MK = EllesmereUI.MakeUnlockElement
-        local UNIT_LABELS = {
-            player = "Player", target = "Target", focus = "Focus",
-            pet = "Pet", targettarget = "Target of Target",
-            focustarget = "Focus Target", boss = "Boss Frames",
-            classPower = "Class Resource",
-            playerCastbar = "Player Frame Mini Cast Bar",
-            targetCastbar = "Target Cast Bar",
-            focusCastbar = "Focus Cast Bar",
-        }
-        local elements = {}
-        local orderBase = 100
-
-        local function Rebuild() ns.ReloadFrames() end
-
-        -- Which frame's Visibility governs each mover (the minis follow their
-        -- parent, and so does a class resource bar unlocked from the player frame).
-        local MOVER_VIS_OF = { pet = "player", targettarget = "target",
-                               focustarget = "focus", classPower = "player" }
-        local function MakeUFElement(key, order)
-            return MK({
-                key = key,
-                label = UNIT_LABELS[key] or key,
-                group = "Unit Frames",
-                order = orderBase + order,
-                -- Blizzard Style frames are the stock size: no resize handles or
-                -- Width/Height fields (Frame Scale in the options instead).
-                noResize = (ns.UF_Blizz() and key ~= "classPower" and not key:find("Castbar", 1, true)) or nil,
-                -- Only the look fixes the size: size matches to and from the
-                -- frame stay stored for the EllesmereUI look (the cast bars keep
-                -- following the visible art meanwhile), and spec layouts never
-                -- bank the look's size as the frame's own.
-                sizeFixedByLook = (ns.UF_Blizz() and key ~= "classPower") or nil,
-                -- Visibility "never" keeps the frame built but never on screen, so
-                -- there is nothing to drag. Re-read on each unlock-mode open, so
-                -- lifting it (a spec override, the dropdown) needs no /reload. The
-                -- minis and an unlocked class resource bar have no Visibility of
-                -- their own and ride the frame they follow; Always Show Pet opts out.
-                isHidden = function()
-                    if key == "pet" and db.profile.pet and db.profile.pet.alwaysShow then
-                        return false
-                    end
-                    return ns.VisEffective(db.profile[MOVER_VIS_OF[key] or key]) == "never"
-                end,
-                getFrame = function(k)
-                    if k == "boss" then return frames["boss1"] end
-                    if k == "classPower" then return frames._classPowerBar end
-                    return frames[k]
-                end,
-                getSize = function(k)
-                    if k == "classPower" then
-                        if frames._classPowerBar then
-                            local w = frames._classPowerBar:GetWidth()
-                            local h = frames._classPowerBar:GetHeight()
-                            if w < 10 then w = 120 end
-                            if h < 5 then h = 14 end
-                            return w, h
-                        end
-                        return 120, 14
-                    end
-                    local w, h = GetFrameDimensions((k == "boss") and "boss1" or k)
-                    -- Blizzard Style: sizes (and so size matches) are the
-                    -- visible art, not the stock box's transparent padding.
-                    if ns.UF_Blizz() then
-                        local l, r, t, b = ns.UF_BlizzVis((k == "boss") and frames.boss1 or frames[k])
-                        if l then return w - l - r, h - t - b end
-                    end
-                    return w, h
-                end,
-                -- The size the unit's own settings give (the EllesmereUI look),
-                -- for code that must never take the style's stock size for it.
-                getSettingSize = function(k)
-                    if k == "classPower" then return nil end
-                    return GetFrameDimensions((k == "boss") and "boss1" or k, true)
-                end,
-                -- Blizzard Style: the mover outlines the visible art.
-                getInsets = function(k)
-                    if not ns.UF_Blizz() then return nil end
-                    return ns.UF_BlizzVis((k == "boss") and frames.boss1 or frames[k])
-                end,
-                -- Size matching: what a textured border draws outside the frame
-                -- (nil for a solid border, the stock looks, class resource, boss).
-                getMatchPad = ns.UF_FrameBorderPad,
-                -- Extra height the unlock overlay should extend BELOW the frame.
-                -- Boss frames have a castbar anchored under the frame (not a
-                -- separate movable element like the player/target cast bars), so
-                -- the overlay grows down to wrap it. Other units return 0.
-                getBottomExtra = function(k)
-                    if k ~= "boss" then return 0 end
-                    local b = db.profile.boss
-                    if b and b.showCastbar ~= false then return b.castbarHeight or 14 end
-                    return 0
-                end,
-                -- Blizzard Style: stock frame sizes, so new width/height matches are refused
-                -- and unlock resizes never write frameWidth/healthHeight into the EUI-look settings.
-                matchUnavailable = function()
-                    if ns.UF_Blizz() then
-                        return EllesmereUI.L("Size matching is unavailable with Blizzard Style Unit Frames.")
-                    end
-                end,
-                setWidth = function(k, w)
-                    if k == "classPower" then return end
-                    if ns.UF_Blizz() then return end
-                    if not EllesmereUI._unlockActive and not EllesmereUI._propagatingMatch
-                       and not EllesmereUI._unlockLayerApplying then Rebuild(); return end
-                    local unit = (k == "boss") and "boss1" or k
-                    local s = GetSettingsForUnit(unit)
-                    if not s then return end
-                    local wPStyle = s.portraitStyle or db.profile.portraitStyle or "attached"
-                    local showPortrait = wPStyle ~= "none" and s.showPortrait ~= false
-                    local isAttached = wPStyle == "attached"
-                    if showPortrait and isAttached then
-                        local pSizeAdj = s.portraitSize or 0
-                        if not isAttached then pSizeAdj = pSizeAdj + 10 end
-                        local powerPos = s.powerPosition or "below"
-                        local powerIsAtt = (powerPos == "below" or powerPos == "above")
-                        local ptH = s.healthHeight + (powerIsAtt and (s.powerHeight or 6) or 0)
-                        local adjPH = ptH + pSizeAdj
-                        if adjPH < 8 then adjPH = 8 end
-                        s.frameWidth = math.max(PP.Snap(w - adjPH), 50)
-                    else
-                        s.frameWidth = math.max(PP.Snap(w), 50)
-                    end
-                    Rebuild()
-                end,
-                setHeight = function(k, h)
-                    if k == "classPower" then return end
-                    if ns.UF_Blizz() then return end
-                    if not EllesmereUI._unlockActive and not EllesmereUI._propagatingMatch
-                       and not EllesmereUI._unlockLayerApplying then Rebuild(); return end
-                    local unit = (k == "boss") and "boss1" or k
-                    local s = GetSettingsForUnit(unit)
-                    if not s then return end
-                    local powerPos = s.powerPosition or "below"
-                    local powerIsAtt = (powerPos == "below" or powerPos == "above")
-                    local powerH = powerIsAtt and (s.powerHeight or 6) or 0
-                    local btbPos = s.btbPosition or "bottom"
-                    local btbIsAtt = (btbPos == "top" or btbPos == "bottom")
-                    local btbH = (s.bottomTextBar and btbIsAtt) and (s.bottomTextBarHeight or 16) or 0
-                    s.healthHeight = math.max(PP.Snap(h - powerH - btbH), 8)
-                    Rebuild()
-                end,
-                loadPos = function(k)
-                    local pos = db.profile.positions[k]
-                    if not pos then return nil end
-                    return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
-                end,
-                savePos = function(k, point, relPoint, x, y)
-                    db.profile.positions[k] = { point = point, relPoint = relPoint, x = x, y = y }
-                    if EllesmereUI._unlockActive then return end
-                    if k == "boss" then
-                        local spacing = ns.UF_BossSpacing()
-                        local bossStackDir = db.profile.boss and db.profile.boss.bossStackDirection or "down"
-                        -- boss1 to UIParent; chain 2..5 from the previous boss.
-                        if frames.boss1 then
-                            frames.boss1:ClearAllPoints()
-                            frames.boss1:SetPoint(point, UIParent, relPoint, ns.UF_ScaledOffsets(frames.boss1, x, y))
-                        end
-                        for i = 2, 5 do
-                            local bf = frames["boss" .. i]
-                            local prev = frames["boss" .. (i - 1)]
-                            if bf and prev then
-                                bf:ClearAllPoints()
-                                if bossStackDir == "up" then
-                                    bf:SetPoint("TOPLEFT", prev, "TOPLEFT", 0, spacing)
-                                else
-                                    bf:SetPoint("TOPLEFT", prev, "TOPLEFT", 0, -spacing)
-                                end
-                            end
-                        end
-                    elseif k == "classPower" then
-                        if frames._classPowerBar then
-                            frames._classPowerBar:ClearAllPoints()
-                            frames._classPowerBar:SetPoint(point, UIParent, relPoint, x, y)
-                        end
-                    else
-                        local fr = frames[k]
-                        if fr then
-                            fr:ClearAllPoints()
-                            fr:SetPoint(point, UIParent, relPoint, ns.UF_ScaledOffsets(fr, x, y))
-                        end
-                    end
-                end,
-                clearPos = function(k)
-                    db.profile.positions[k] = nil
-                end,
-                applyPos = function(k)
-                    local pos = db.profile.positions[k]
-                    if not pos then return end
-                    -- Unlock-anchored elements: the anchor system is the position
-                    -- authority. Only bootstrap from the saved standalone position
-                    -- while the frame has no bounds yet (first placement); otherwise
-                    -- leave it alone so the anchor position is never clobbered.
-                    local anchored = EllesmereUI.IsUnlockAnchored
-                        and EllesmereUI.IsUnlockAnchored(k)
-                    local pt = pos.point
-                    local rpt = pos.relPoint or pt
-                    local px, py = pos.x, pos.y
-                    local PPa = EllesmereUI and EllesmereUI.PP
-                    -- Helper: snap (x, y) for a frame using SnapCenterForDim for
-                    -- CENTER anchors and SnapForES otherwise. CENTER snap needs
-                    -- the frame's actual size to handle odd-pixel-dim frames
-                    -- correctly (cy must be integer + 0.5 for odd heights).
-                    local function SnapForFrame(fr, x, y)
-                        if not PPa or not fr or not x or not y then return x, y end
-                        local es = fr:GetEffectiveScale()
-                        local isCenterAnchor = (pt == "CENTER")
-                            and (rpt == "CENTER")
-                        if isCenterAnchor and PPa.SnapCenterForDim then
-                            return PPa.SnapCenterForDim(x, fr:GetWidth() or 0, es),
-                                   PPa.SnapCenterForDim(y, fr:GetHeight() or 0, es)
-                        elseif PPa.SnapForES then
-                            return PPa.SnapForES(x, es), PPa.SnapForES(y, es)
-                        end
-                        return x, y
-                    end
-                    if k == "boss" then
-                        local spacing = ns.UF_BossSpacing()
-                        local bossStackDir = db.profile.boss and db.profile.boss.bossStackDirection or "down"
-                        if frames.boss1 and not (anchored and frames.boss1:GetLeft()) then
-                            local bx, by = SnapForFrame(frames.boss1, ns.UF_ScaledOffsets(frames.boss1, pos.x, pos.y))
-                            frames.boss1:ClearAllPoints()
-                            frames.boss1:SetPoint(pt, UIParent, rpt, bx, by)
-                        end
-                        for i = 2, 5 do
-                            local bf = frames["boss" .. i]
-                            local prev = frames["boss" .. (i - 1)]
-                            if bf and prev then
-                                bf:ClearAllPoints()
-                                if bossStackDir == "up" then
-                                    bf:SetPoint("TOPLEFT", prev, "TOPLEFT", 0, spacing)
-                                else
-                                    bf:SetPoint("TOPLEFT", prev, "TOPLEFT", 0, -spacing)
-                                end
-                            end
-                        end
-                    elseif k == "classPower" then
-                        local cpb = frames._classPowerBar
-                        if cpb and not (anchored and cpb:GetLeft()) then
-                            px, py = SnapForFrame(cpb, px, py)
-                            cpb:ClearAllPoints()
-                            cpb:SetPoint(pt, UIParent, rpt, px, py)
-                        end
-                    else
-                        local fr = frames[k]
-                        if fr and not (anchored and fr:GetLeft()) then
-                            px, py = SnapForFrame(fr, ns.UF_ScaledOffsets(fr, px, py))
-                            fr:ClearAllPoints()
-                            fr:SetPoint(pt, UIParent, rpt, px, py)
-                        end
-                    end
-                end,
-            })
-        end
-
-        -- Core unit frames. Only register a mover for units that actually use
-        -- the EllesmereUI frame; a unit set to Blizzard-default or Hidden has no
-        -- EUI frame to move.
-        local function AddUFElement(u, order)
-            if ns.GetUnitFrameSource(u) == "eui" then
-                elements[#elements + 1] = MakeUFElement(u, order)
-            end
-        end
-        AddUFElement("player", 1)
-        AddUFElement("target", 2)
-        AddUFElement("focus", 3)
-        AddUFElement("pet", 4)
-        AddUFElement("targettarget", 5)
-        AddUFElement("focustarget", 6)
-        if ns.GetUnitFrameSource("boss") == "eui" then
-            local bossElem = MakeUFElement("boss", 7)
-            -- Boss is a stack of 5 chained frames; resize / match actions don't make
-            -- sense on the aggregate element. Boss can still anchor to other elements;
-            -- it just can't be used as an anchor target.
-            bossElem.noResize       = true   -- removes Width/Height Match + resize handles
-            bossElem.noAnchorTarget = true   -- others cannot anchor to boss
-            elements[#elements + 1] = bossElem
-        end
-
-        -- Conditional elements
-        if ns.GetUnitFrameSource("player") == "eui" and db.profile.player.showClassPowerBar and not db.profile.player.lockClassPowerToFrame then
-            elements[#elements + 1] = MakeUFElement("classPower", 9)
-        end
-
-        -- Cast bar elements: standalone registration, no special-case branching
-        local function MakeCastBarElement(cbKey, unitKey, order)
-            local function GetCBFrame()
-                local uf = frames[unitKey]
-                return uf and uf.Castbar and uf.Castbar:GetParent()
-            end
-            local function GetCBSettings()
-                if unitKey == "player" then return db.profile.player end
-                return GetSettingsForUnit(unitKey)
-            end
-            local function GetWidthKey()
-                return unitKey == "player" and "playerCastbarWidth" or "castbarWidth"
-            end
-            local function GetHeightKey()
-                return unitKey == "player" and "playerCastbarHeight" or "castbarHeight"
-            end
-            return MK({
-                key = cbKey,
-                label = UNIT_LABELS[cbKey] or cbKey,
-                group = "Unit Frames",
-                order = orderBase + order,
-                getFrame = function() return GetCBFrame() end,
-                -- Blizzard Style: the holder carries the layout aspect (see
-                -- ns.UF_CastbarAspectTemplate), so the mover cannot anchor to
-                -- it and takes the same screen spot by absolute anchor.
-                detachedMover = (ns.UF_Blizz() and ns.UF_LayoutAspectOK()) or nil,
-                isHidden = function()
-                    -- Live show/hide: mirror the per-unit cast bar enable setting
-                    -- (player defaults off; target/focus default on). The mover is
-                    -- gated on each unlock-mode open, so toggling the setting takes
-                    -- effect without a /reload.
-                    local s = GetCBSettings()
-                    if not s then return true end
-                    if ns.VisEffective(s) == "never" then return true end
-                    if unitKey == "player" then return not s.showPlayerCastbar end
-                    return s.showCastbar == false
-                end,
-                getSize = function()
-                    -- Return stored DB values so cog menu shows what the
-                    -- user typed, not the pixel-snapped frame size.
-                    local s = GetCBSettings()
-                    if s then
-                        local w = s[GetWidthKey()] or 181
-                        local h = s[GetHeightKey()] or 14
-                        return w, h
-                    end
-                    return 100, 14
-                end,
-                -- Classic WoW UI: the vanilla frame's rim outside the holder
-                -- (icon included, the frame wraps both), so a width or height
-                -- match lines up with what is on screen. The EllesmereUI look:
-                -- a Custom Border Style cast border's reach (nil while off).
-                getMatchPad = function()
-                    if ns.UF_Style() ~= "classic" then
-                        return ns.UF_CastBorderPad(unitKey, GetCBSettings())
-                    end
-                    local CF = EllesmereUI.ClassicFrame
-                    if not CF then return nil end
-                    local s = GetCBSettings()
-                    return CF.Pad(CF.ScaleK(s and s[ns.UF_CastClassicKey(unitKey)]), false)
-                end,
-                setWidth = function(_, w)
-                    local s = GetCBSettings()
-                    if not s then return end
-                    local newW = math.max(PP.Snap(w), 30)
-                    s[GetWidthKey()] = newW
-                    local f = GetCBFrame()
-                    -- Stored height, not the live one: a holder on the Blizzard
-                    -- Style aura block reads back a secret rect.
-                    if f then PP.Size(f, newW, s[GetHeightKey()] or 14) end
-                end,
-                setHeight = function(_, h)
-                    if not EllesmereUI._unlockActive and not EllesmereUI._unlockLayerApplying then return end
-                    local s = GetCBSettings()
-                    if not s then return end
-                    local newH = math.max(PP.Snap(h), 5)
-                    s[GetHeightKey()] = newH
-                    local f = GetCBFrame()
-                    if f then PP.Size(f, s[GetWidthKey()] or 181, newH) end
-                    local uf = frames[unitKey]
-                    local cbar = uf and uf.Castbar
-                    if cbar and cbar._blizzCast then
-                        -- Blizzard Style: the icon spans the bar and its text box.
-                        cbar._icoSide = newH
-                        ns.UF_BlizzCastIcon(cbar)
-                    elseif cbar and cbar._blizzFrame and ns.UF_BLIZZ.cast then
-                        -- Classic kit: the vanilla frame's overhangs scale with
-                        -- the height, so the whole cast pass re-runs.
-                        cbar._icoSide = newH
-                        ns.UF_ApplyBlizzCastbar(cbar)
-                    elseif cbar and cbar._iconFrame then
-                        cbar._iconFrame:SetSize(newH, newH)
-                    end
-                end,
-                loadPos = function()
-                    local pos = db.profile.positions[cbKey]
-                    if not pos then return nil end
-                    return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
-                end,
-                savePos = function(_, point, relPoint, x, y)
-                    db.profile.positions[cbKey] = { point = point, relPoint = relPoint, x = x, y = y }
-                    if EllesmereUI._unlockActive then return end
-                    local f = GetCBFrame()
-                    if f then
-                        f:ClearAllPoints()
-                        f:SetPoint(point, UIParent, relPoint, x, y)
-                    end
-                end,
-                clearPos = function()
-                    db.profile.positions[cbKey] = nil
-                end,
-                applyPos = function()
-                    local pos = db.profile.positions[cbKey]
-                    if not pos then return end
-                    local f = GetCBFrame()
-                    if not f then return end
-                    -- Unlock-anchored castbars: the anchor system owns the
-                    -- position (castbars are anchored to their unit frame by
-                    -- default). Only bootstrap while the frame has no bounds.
-                    if EllesmereUI.IsUnlockAnchored and EllesmereUI.IsUnlockAnchored(cbKey)
-                       and f:GetLeft() then
-                        return
-                    end
-                    local pt, rpt = pos.point, pos.relPoint or pos.point
-                    local px, py = pos.x, pos.y
-                    local PPa = EllesmereUI and EllesmereUI.PP
-                    if PPa and px and py then
-                        local es = f:GetEffectiveScale()
-                        local isCenterAnchor = (pt == "CENTER") and (rpt == "CENTER")
-                        if isCenterAnchor and PPa.SnapCenterForDim then
-                            px = PPa.SnapCenterForDim(px, f:GetWidth() or 0, es)
-                            py = PPa.SnapCenterForDim(py, f:GetHeight() or 0, es)
-                        elseif PPa.SnapForES then
-                            px = PPa.SnapForES(px, es)
-                            py = PPa.SnapForES(py, es)
-                        end
-                    end
-                    f:ClearAllPoints()
-                    f:SetPoint(pt, UIParent, rpt, px or 0, py or 0)
-                end,
-            })
-        end
-
-        -- Always register all three cast bars; visibility is gated live via each
-        -- element's isHidden (mirrors the show setting), so toggling a cast bar
-        -- on/off takes effect on the next unlock-mode open -- no /reload needed.
-        if ns.GetUnitFrameSource("player") == "eui" then
-            elements[#elements + 1] = MakeCastBarElement("playerCastbar", "player", 10)
-        end
-        if ns.GetUnitFrameSource("target") == "eui" then
-            elements[#elements + 1] = MakeCastBarElement("targetCastbar", "target", 11)
-        end
-        if ns.GetUnitFrameSource("focus") == "eui" then
-            elements[#elements + 1] = MakeCastBarElement("focusCastbar", "focus", 12)
-        end
-
-        EllesmereUI:RegisterUnlockElements(elements, "EllesmereUIUnitFrames")
-        -- First sighting of each frame's border pad: the login reload ran before
-        -- these elements existed, so without it the first border change after
-        -- login would only be recorded, never re-pushed.
-        if EllesmereUI.MatchPadChanged then
-            local padKeys = ns.UF_PAD_KEYS
-            for i = 1, #padKeys do EllesmereUI.MatchPadChanged(padKeys[i]) end
-        end
-
-        -- Seed default anchor + width-match for castbars so they start anchored to
-        -- their parent frame with matched width out of the box. Only seed if the user
-        -- has NEVER configured this castbar in unlock mode (tracked by
-        -- _castbarUnlockSeeded); once they have, stop overwriting their choices.
-        if EllesmereUIDB then
-            if not EllesmereUIDB.unlockAnchors then EllesmereUIDB.unlockAnchors = {} end
-            if not EllesmereUIDB.unlockWidthMatch then EllesmereUIDB.unlockWidthMatch = {} end
-            if not EllesmereUIDB._castbarUnlockSeeded then EllesmereUIDB._castbarUnlockSeeded = {} end
-            local CB_DEFAULTS = {
-                { cb = "playerCastbar", parent = "player" },
-                { cb = "targetCastbar", parent = "target" },
-                { cb = "focusCastbar",  parent = "focus" },
-            }
-            local cbPositions = db and db.profile and db.profile.positions
-            for _, def in ipairs(CB_DEFAULTS) do
-                if not EllesmereUIDB._castbarUnlockSeeded[def.cb] then
-                    -- Skip seeding if the user already has a saved position
-                    -- (they moved the cast bar freely without anchoring)
-                    local hasPos = cbPositions and cbPositions[def.cb]
-                    if not hasPos then
-                        if not EllesmereUIDB.unlockAnchors[def.cb] then
-                            EllesmereUIDB.unlockAnchors[def.cb] = { target = def.parent, side = "BOTTOM" }
-                        end
-                        if not EllesmereUIDB.unlockWidthMatch[def.cb] then
-                            EllesmereUIDB.unlockWidthMatch[def.cb] = def.parent
-                        end
-                    end
-                    -- Mark as seeded so we never overwrite user changes
-                    EllesmereUIDB._castbarUnlockSeeded[def.cb] = true
-                end
-            end
-        end
-    end
-end
-
-local EllesmereUF = EllesmereUI.Lite.NewAddon("EllesmereUIUnitFrames")
-
-function EllesmereUF:OnInitialize()
-    db = EllesmereUI.Lite.NewDB("EllesmereUIUnitFramesDB", defaults, true)
-
-    ResolveFontPath()
-
-    -- Append SharedMedia textures to runtime tables so SM texture keys resolve
-    EllesmereUI.AppendSharedMediaTextures(
-        healthBarTextureNames,
-        healthBarTextureOrder,
-        nil,
-        healthBarTextures
-    )
-
-    -- Blizzard options panel is registered centrally in EllesmereUI.lua
-end
-
--- Enable-body router. OnEnable runs under the parent addon's lifecycle dispatch, and
--- the engine bills a script handler's whole call tree to the addon whose execution
--- context created the entry frame -- so every frame born inside the build (oUF
--- buttons, event drivers, castbar watchers) would bill the PARENT's CPU row forever.
--- Routing the body through this file-scope frame's PLAYER_LOGIN handler runs the
--- build in this child's context instead. Ordering is safe: the parent's lifecycle
--- frame registered PLAYER_LOGIN first (parent loads before children), so OnEnable has
--- always set the pending flag by the time this frame's handler fires -- within the
--- SAME event dispatch, still inside the combat-reload pre-lockdown window.
-local function EnableBody()
-    -- A profile already on a stock style gets its seeds before the frames
-    -- build (the Style page seeds on the switch); a profile none of them has
-    -- reached yet keeps its own values in the EllesmereUI slot first, so a
-    -- switch back restores them.
-    if ns.UF_Blizz() then
-        local p = db.profile
-        if p.stockCastTextureSeeded == nil and p.classicTextureSeeded == nil
-            and p.stockCombatSeededStyle == nil and EllesmereUI.BankEuiStyleSlot then
-            EllesmereUI.BankEuiStyleSlot(p, ns.UF_StyleSlotKeys())
-        end
-        -- WoW Forever's own seed the same way: the other looks' class
-        -- resource goes to its Forever-only slot first.
-        if ns.UF_Forever() and not p.foreverClassPowerSeeded and p.player then
-            local s = p._foreverStyleSlots
-            if type(s) ~= "table" then s = {}; p._foreverStyleSlots = s end
-            s.eui = { ["player.classPowerStyle"] = p.player.classPowerStyle,
-                      ["player.showClassPowerBar"] = p.player.showClassPowerBar }
-        end
-        ns.UF_SeedStock(p, ns.UF_Style(), ns.UF_Forever())
-    end
-    InitializeFrames()
-    -- Register with unlock mode synchronously: on a combat reload this runs
-    -- inside the pre-lockdown window, so the login position pass can resolve
-    -- and place anchored unit frames before SetPoint gets blocked.
-    RegisterUFUnlockElements()
-    -- The parent's synchronous PLAYER_LOGIN position pass (EUI_UnlockMode) fires BEFORE
-    -- this router drains, so unit frame elements were not yet registered when it ran.
-    -- Re-fire it now -- still inside the same PLAYER_LOGIN dispatch, so anchored unit
-    -- frames are placed within the combat-reload pre-lockdown window. The pass is
-    -- re-entrant by design (CDM and the PEW fallback both re-fire it).
-    if EllesmereUI and EllesmereUI._applySavedPositions then
-        EllesmereUI._applySavedPositions()
-    end
-    C_Timer.After(0, SetupOptionsPanel)
-    C_Timer.After(0, function()
-        EllesmereUI.ApplyColorsToOUF()
-        -- Restore the threat watchers saved enabled (nothing registers when off).
-        ns.SyncPlayerThreat()
-        if ns.SyncThreatPct then ns.SyncThreatPct() end
-    end)
-end
-
-do
-    local loginFired = false
-    local router = CreateFrame("Frame")
-    router:RegisterEvent("PLAYER_LOGIN")
-    -- Backstop only: PLAYER_LOGIN always fires for a startup-loaded addon,
-    -- but if it were ever missed the next world entry drains the flag.
-    router:RegisterEvent("PLAYER_ENTERING_WORLD")
-    router:SetScript("OnEvent", function(self)
-        self:UnregisterEvent("PLAYER_LOGIN")
-        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
-        loginFired = true
-        if ns._eufEnablePending then
-            ns._eufEnablePending = nil
-            EnableBody()
-        end
-    end)
-
-    function EllesmereUF:OnEnable()
-        if loginFired then
-            -- Runtime re-enable long after login: run directly (rare; any
-            -- parent-context billing lasts only until the next reload).
-            EnableBody()
-        else
-            ns._eufEnablePending = true
-        end
-        -- Incompatible addon detection is handled globally by EllesmereUI
-    end
-end
-
--- Called by EUI_UnlockMode.lua's Grow Direction dropdown for barKey ==
--- "PAB_Buffs" / "PAB_Debuffs". Thin delegation to
--- EllesmereUIUnitFrames_PlayerAuraBars.lua's ns.PAB_Get/SetGrowDirection so
--- the settings field names stay defined in exactly one file.
-
-function EllesmereUF:GetGrowDirectionForBar(barKey)
-    return ns.PAB_GetGrowDirection and ns.PAB_GetGrowDirection(barKey)
-end
-
-function EllesmereUF:SetGrowDirectionForBar(barKey, dir)
-    if ns.PAB_SetGrowDirection then
-        ns.PAB_SetGrowDirection(barKey, dir)
-    end
-end
-
--------------------------------------------------------------------------------
---  Boss Frame Range Dimming. Boss units sit outside UnitInRange's group-member
---  domain, so range is measured against a known spell instead: a harm spell for
---  attackable bosses (all specs, first known spell in the class chain wins), or
---  the class baseline heal for friendly bosses (healer specs only). Whole-frame
---  alpha follows db.profile.boss.oorAlpha; 100% means no fade and the check
---  short-circuits. The ticker exists only while a boss frame is shown.
---  (do-block: zero persistent main-chunk locals.)
--------------------------------------------------------------------------------
-do
-    local HARM_CHAIN = {
-        DEATHKNIGHT = { 49576, 47541 },           -- Death Grip, Death Coil
-        DEMONHUNTER = { 185123, 183752, 204021 }, -- Throw Glaive, Consume Magic, Fiery Brand
-        DRUID       = { 8921, 5176, 6795 },       -- Moonfire, Wrath, Growl
-        EVOKER      = { 362969 },                 -- Azure Strike (25yd native)
-        HUNTER      = { 75, 466930, 190925 },     -- Auto Shot, Black Arrow, Harpoon
-        MAGE        = { 116, 133, 44425, 118 },   -- Frostbolt, Fireball, Arcane Barrage, Polymorph
-        MONK        = { 117952, 115546 },         -- Crackling Jade Lightning, Provoke
-        PALADIN     = { 20271, 62124 },           -- Judgment, Hand of Reckoning
-        PRIEST      = { 589, 585, 8092 },         -- Shadow Word: Pain, Smite, Mind Blast
-        ROGUE       = { 36554, 185763, 2094 },    -- Shadowstep, Pistol Shot, Blind
-        SHAMAN      = { 188196, 370 },            -- Lightning Bolt, Purge
-        WARLOCK     = { 234153, 232670, 686, 348, 172, 5782 }, -- Drain Life, Shadow Bolt (both ids), Immolate, Corruption, Fear
-        WARRIOR     = { 355, 100 },               -- Taunt, Charge
-    }
-    local HELP_HEAL = {
-        PRIEST = 2061, PALADIN = 19750, SHAMAN = 8004,
-        DRUID = 8936, MONK = 116670, EVOKER = 361469,
-    }
-
-    local harmSpell, helpSpell
-    local visCount, ticker = 0, nil
-
-    local function Known(sid)
-        if C_SpellBook and C_SpellBook.IsSpellInSpellBook and Enum.SpellBookSpellBank then
-            return C_SpellBook.IsSpellInSpellBook(sid, Enum.SpellBookSpellBank.Player, true)
-        end
-        return IsSpellKnown and IsSpellKnown(sid)
-    end
-
-    local function ResolveRangeSpells()
-        harmSpell, helpSpell = nil, nil
-        local _, pClass = UnitClass("player")
-        for _, sid in ipairs(HARM_CHAIN[pClass] or {}) do
-            if Known(sid) then harmSpell = sid; break end
-        end
-        local spec = GetSpecialization and GetSpecialization()
-        local role = spec and GetSpecializationRole and GetSpecializationRole(spec)
-        if role == "HEALER" then helpSpell = HELP_HEAL[pClass] end
-        -- WoW Forever has no spec roles: a healing class counts as its healing
-        -- spec and range-checks with its best heal in the spellbook.
-        if EllesmereUI.IS_FOREVER then
-            local list = EllesmereUI.FOREVER_HEAL_SPELLS[pClass]
-            for i = 1, (list and #list or 0) do
-                if Known(list[i]) then helpSpell = list[i]; break end
-            end
-        end
-    end
-
-    local function TickOne(f, unit)
-        if not db then return end
-        local oor = (db.profile.boss and db.profile.boss.oorAlpha) or 0.4
-        if oor >= 1 or not UnitExists(unit) then
-            f:SetAlpha(1)
-            return
-        end
-        local spell
-        if UnitCanAttack("player", unit) then
-            spell = harmSpell
-        else
-            spell = helpSpell
-        end
-        if spell then
-            -- Secret-safe: the result may be secret in instances, which
-            -- SetAlphaFromBoolean accepts natively -- but it can also be NIL
-            -- (unit not range-checkable right now / spell momentarily not
-            -- evaluable), which it rejects. issecretvalue runs first so the
-            -- nil check never touches a secret.
-            local inRange = C_Spell.IsSpellInRange(spell, unit)
-            if issecretvalue(inRange) or inRange ~= nil then
-                f:SetAlphaFromBoolean(inRange, 1, oor)
-            else
-                f:SetAlpha(1)
-            end
-        else
-            f:SetAlpha(1)
-        end
-    end
-
-    local function Tick()
-        for i = 1, 5 do
-            local f = frames["boss" .. i]
-            if f and f:IsVisible() then TickOne(f, "boss" .. i) end
-        end
-    end
-
-    local function UpdateTicker()
-        local want = visCount > 0
-        if want and not ticker then
-            ticker = C_Timer.NewTicker(0.4, Tick)
-        elseif not want and ticker then
-            ticker:Cancel()
-            ticker = nil
-        end
-    end
-
-    local hooked = false
-    local function InstallHooks()
-        if hooked or not frames["boss1"] then return end
-        hooked = true
-        for i = 1, 5 do
-            local f = frames["boss" .. i]
-            if f then
-                local unit = "boss" .. i
-                if f:IsVisible() then visCount = visCount + 1 end
-                f:HookScript("OnShow", function(self)
-                    visCount = visCount + 1
-                    TickOne(self, unit)
-                    UpdateTicker()
-                end)
-                f:HookScript("OnHide", function(self)
-                    visCount = math.max(0, visCount - 1)
-                    self:SetAlpha(1)
-                    UpdateTicker()
-                end)
-            end
-        end
-        UpdateTicker()
-    end
-
-    local ev = CreateFrame("Frame")
-    ev:RegisterEvent("PLAYER_LOGIN")
-    ev:RegisterEvent("PLAYER_ENTERING_WORLD")
-    ev:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    ev:SetScript("OnEvent", function()
-        ResolveRangeSpells()
-        InstallHooks()
-    end)
-end
-
--------------------------------------------------------------------------------
---  Player Dispel Overlay (player frame only, health bar only). The 12.1
---  container dispel slots render it (EUI_UnitFrames_AuraContainers.lua); this
---  block keeps what the slots ask this file for: the racial / talent dispel
---  knowledge the RAID_PLAYER_DISPELLABLE token is blind to, and the
---  options-side poke that re-drives the slots after a color or toggle edit.
---  (do-block: zero persistent main-chunk locals.)
--------------------------------------------------------------------------------
-do
-
-    -- RAID_PLAYER_DISPELLABLE only knows class and spec dispels, so it answers no for
-    -- every bleed: nothing a class learns removes one, only the dwarf racial does.
-    -- Without this, "Only Dispellable by You" can never light up for a bleed, for
-    -- anyone. A racial cleans its own caster, so this is the player frame's business
-    -- alone. Bleed only, deliberately: Stoneform also clears poison/disease/curse, but
-    -- a class that dispels those already passes the token, and treating a two-minute
-    -- racial as a dispel would overlay most of what a dwarf ever catches.
-    local RACIAL_DISPEL_TYPES = {
-        bleed = { Dwarf = true },  -- Stoneform
-    }
-    -- The token is equally blind to talent dispels: a shaman's poison removal is
-    -- Poison Cleansing Totem, so Poison never passes for them. Raid Frames applies
-    -- the same rule to its group-wide dispel slots (EUI_RaidFrames_AuraContainers.lua).
-    -- Cached: IsPlayerSpell can lag both addon load and the trait event that
-    -- announces a change; the shaman watcher in EUI_UnitFrames_AuraContainers.lua
-    -- calls UF_RefreshPoisonTotem on trait and spellbook events and reloads the
-    -- dispel slots when it reports a flip.
-    local POISON_CLEANSING_TOTEM = 383013
-    local _, ufPlayerClass = UnitClass("player")
-    local poisonTotemKnown = ufPlayerClass == "SHAMAN"
-        and IsPlayerSpell(POISON_CLEANSING_TOTEM) or false
-    function ns.UF_RefreshPoisonTotem()
-        local known = ufPlayerClass == "SHAMAN"
-            and IsPlayerSpell(POISON_CLEANSING_TOTEM) or false
-        if known == poisonTotemKnown then return false end
-        poisonTotemKnown = known
-        return true
-    end
-    -- Shared with the 12.1 container slots (EUI_UnitFrames_AuraContainers.lua),
-    -- which apply the same rule by choosing which slot style stays visible.
-    function ns.UF_TokenBlindDispel(typeKey)
-        local races = RACIAL_DISPEL_TYPES[typeKey]
-        if races then
-            local _, raceToken = UnitRace("player")
-            return raceToken ~= nil and races[raceToken] == true
-        end
-        if typeKey == "poison" then
-            return poisonTotemKnown
-        end
-        return false
-    end
-
-    ns.UpdatePlayerDispelOverlay = function()
-        -- The container dispel slots own the overlay; poke their fingerprinted
-        -- reload so dropdown/cog edits apply live instead of waiting for the
-        -- next full container pass.
-        if ns.UF_ReloadPlayerDispelSlots then
-            ns.UF_ReloadPlayerDispelSlots()
-        end
-    end
-end
-
--------------------------------------------------------------------------------
---  Party Mode: spinning unit frames. Every EUI unit frame (player, target,
---  focus, pet, target-of-target, focus target, boss) orbits the centre of the
---  screen, so player and target swing round each other like a carousel.
---  Unit frames are secure, so this pauses in combat exactly like the action
---  bar spin. Driver and rest tracking live in the shared engine
---  (EllesmereUI.PartySpin_Create, EllesmereUI_PartyMode.lua).
--------------------------------------------------------------------------------
-do
-    local list = {}
-    local groups = { { pivot = UIParent, frames = list } }
-    EllesmereUI.PartySpin_Create({
-        target = "unitFrames",
-        collect = function()
-            wipe(list)
-            for _, f in pairs(frames) do
-                if type(f) == "table" and f.GetCenter then list[#list + 1] = f end
-            end
-            return groups
-        end,
-    })
-end
-
--- Party Mode visibility axis (Visibility > Party Mode): no game event, so the
--- core fires its own edge (re-fired after combat for the secure frames).
-if EllesmereUI.RegisterVisEdge then
-    EllesmereUI.RegisterVisEdge(function()
-        if ns.UpdateFrameVisibility then ns.UpdateFrameVisibility() end
-    end)
-end
+-- Main-chunk locals the other EUI_UnitFrames_*.lua files re-import by name.
+-- dbSetters: a file that reads db keeps its own local and adds a setter here,
+-- this file first; EllesmereUF:OnInitialize (EUI_UnitFrames_Lifecycle.lua)
+-- assigns its own db, then runs the list.
+ns._internals = {
+    frames = frames, GetSettingsForUnit = GetSettingsForUnit, UnsnapTex = UnsnapTex,
+    CastbarUnlockKey = CastbarUnlockKey, CreatePowerBar = CreatePowerBar,
+    ApplyFramePosition = ApplyFramePosition, GetFrameDimensions = GetFrameDimensions,
+    ReloadFrames = ReloadFrames, ResolveFontPath = ResolveFontPath, ApplyDarkTheme = ApplyDarkTheme,
+    ApplyBlizzCastbarState = ApplyBlizzCastbarState, ApplyUnitFrameCastColor = ApplyUnitFrameCastColor,
+    defaults = defaults, healthBarTextures = healthBarTextures,
+    healthBarTextureNames = healthBarTextureNames, healthBarTextureOrder = healthBarTextureOrder,
+    dbSetters = { function(v) db = v end },
+}
+-- A re-import of a name this table lacks fails where the part file loads,
+-- not later as a nil upvalue inside one of its functions.
+setmetatable(ns._internals, { __index = function(_, k)
+    error("ns._internals has no entry " .. tostring(k), 2)
+end })

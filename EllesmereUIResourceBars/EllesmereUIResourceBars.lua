@@ -3512,7 +3512,7 @@ local function BuildBars()
         -- "Shift Elements if No Resource" checks (IsSpecDisabled +
         -- GetSecondaryResource) plus the master-disable case.
         if sp2.enabled == false or IsSpecDisabled(sp2) or not GetSecondaryResource() then
-            ppExpandDelta = sp2.pipHeight or 20
+            ppExpandDelta = math.max(0, (sp2.pipHeight or 20) + (pp.expandIfNoResourceExtraY or 0))
             ppHeight = ppHeight + ppExpandDelta
             ppDirSign = ResolveExpandDirSign(pp, sp2)
         end
@@ -11811,13 +11811,10 @@ local function OnEvent(self, event, ...)
         end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         -- Route to manual resource trackers (12.0+ secret-value safe)
-        local unit, castGUID, spellID = ...
+        local unit, _, spellID = ...
         if unit == "player" then
             HandleIronfurCast(spellID)
             IP.HandleCast(spellID)
-            if EllesmereUI then
-                EllesmereUI.HandleTipOfTheSpear(event, unit, castGUID, spellID)
-            end
             if cachedSecondary and (cachedSecondary.type == "custom"
                or cachedSecondary.power == "IRONFUR_BAR") then
                 UpdateSecondaryResource()
@@ -11828,9 +11825,6 @@ local function OnEvent(self, event, ...)
         wipe(ironfurTicks)
         ironfurGoEUntil = 0
         IP.hashEndTime = 0
-        if EllesmereUI then
-            EllesmereUI.HandleTipOfTheSpear(event)
-        end
     elseif event == "PLAYER_ENTERING_WORLD" then
         C_Timer.After(0.5, function()
             ERB:ApplyAll()

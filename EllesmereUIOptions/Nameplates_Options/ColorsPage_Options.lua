@@ -116,10 +116,15 @@ local function MakeColorPreviewBar(parentRow, colorType, colorKey, anchorFrame)
             for _, slot in ipairs(barSlots) do
                 local element = DBVal(slot.key) or defaults[slot.key]
                 local sc = (DB() and DB()[slot.key .. "Color"]) or defaults[slot.key .. "Color"]
-                -- A slot in Class / Reaction mode: this bar stands for a hostile NPC,
-                -- so it shows the Hostile name colour, as the plate would.
-                if DBVal(slot.key .. "ClassColor") == true then
+                -- This bar stands for a hostile NPC at the player's level: Hostility /
+                -- Class shows the Hostile name colour, Level Difficulty that level's
+                -- colour, as the plate would.
+                local mode = ns.NP_SlotColorMode(slot.key, DB())
+                if mode == "class" then
                     sc = (DB() and DB().enemyNameHostileColor) or defaults.hostile
+                elseif mode == "level" then
+                    local r, g, b = ns.NP_UnitLevelColor("player")
+                    if r then sc = { r = r, g = g, b = b } end
                 end
                 if element == "healthPercent" or element == "healthPercentNoSign" then
                     pctFS:SetTextColor(sc.r, sc.g, sc.b, 1)
@@ -650,89 +655,6 @@ local function BuildColorsPage(pageName, parent, yOffset)
                   end },
             },
         })
-    end
-
-    -- Enemy Name Text Reaction Color: colors the enemy nameplate NAME TEXT (not the
-    -- health bar) Hostile or Neutral to match the unit's reaction. Off by default. The
-    -- two inline swatches fall back to the Hostile/Neutral defaults until the player sets
-    -- their own, and are dimmed/mouse-disabled while the toggle is off -- same pattern as
-    -- the "Enable Quest Mob Color" inline swatch above.
-    local nameReactionRow
-    nameReactionRow, h = W:DualRow(parent, y,
-        { type="toggle", text="Color Name by Reaction",
-          getValue=function() return DBVal("enemyNameTextReactionColor") == true end,
-          setValue=function(v)
-            DB().enemyNameTextReactionColor = v
-            RefreshAllPlates()
-            EllesmereUI:RefreshPage()
-          end,
-          tooltip="Colors the enemy nameplate name text to match the unit's reaction (Hostile or Neutral) instead of the Enemy Name Text color." },
-        { type="label", text="" });  y = y - h
-
-    -- Inline Neutral/Hostile swatches next to the toggle, dimmed and mouse-disabled while off.
-    if not EllesmereUI._prebuilding then
-        local leftRgn = nameReactionRow._leftRegion
-        -- Also editable while any Core Text slot is in Class / Reaction mode: these are
-        -- the NPC colours that mode paints.
-        local isReactionOff = function()
-            if DBVal("enemyNameTextReactionColor") == true then return false end
-            for _, k in ipairs(ns.textSlotKeys) do
-                if DBVal(k .. "ClassColor") == true and DBVal(k) ~= "none" then return false end
-            end
-            return true
-        end
-
-        local hostileGet = function()
-            local c = (DB() and DB().enemyNameHostileColor) or defaults.hostile
-            return c.r, c.g, c.b
-        end
-        local hostileSet = function(r, g, b)
-            DB().enemyNameHostileColor = { r = r, g = g, b = b }
-            RefreshAllPlates()
-        end
-        local hostileSwatch, updateHostileSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, hostileGet, hostileSet, nil, 20)
-        PP.Point(hostileSwatch, "RIGHT", leftRgn._control, "LEFT", -12, 0)
-
-        local neutralGet = function()
-            local c = (DB() and DB().enemyNameNeutralColor) or defaults.neutral
-            return c.r, c.g, c.b
-        end
-        local neutralSet = function(r, g, b)
-            DB().enemyNameNeutralColor = { r = r, g = g, b = b }
-            RefreshAllPlates()
-        end
-        local neutralSwatch, updateNeutralSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, neutralGet, neutralSet, nil, 20)
-        PP.Point(neutralSwatch, "RIGHT", hostileSwatch, "LEFT", -8, 0)
-
-        -- Two side-by-side unlabeled chips: hover tooltips say which is
-        -- which (the sibling single-swatch rows never needed one).
-        hostileSwatch:HookScript("OnEnter", function(s)
-            EllesmereUI.ShowWidgetTooltip(s, EllesmereUI.L("Hostile Color"))
-        end)
-        hostileSwatch:HookScript("OnLeave", function()
-            EllesmereUI.HideWidgetTooltip()
-        end)
-        neutralSwatch:HookScript("OnEnter", function(s)
-            EllesmereUI.ShowWidgetTooltip(s, EllesmereUI.L("Neutral Color"))
-        end)
-        neutralSwatch:HookScript("OnLeave", function()
-            EllesmereUI.HideWidgetTooltip()
-        end)
-
-        EllesmereUI.RegisterWidgetRefresh(function()
-            local off = isReactionOff()
-            hostileSwatch:SetAlpha(off and 0.15 or 1)
-            hostileSwatch:EnableMouse(not off)
-            updateHostileSwatch()
-            neutralSwatch:SetAlpha(off and 0.15 or 1)
-            neutralSwatch:EnableMouse(not off)
-            updateNeutralSwatch()
-        end)
-        local off = isReactionOff()
-        hostileSwatch:SetAlpha(off and 0.15 or 1)
-        hostileSwatch:EnableMouse(not off)
-        neutralSwatch:SetAlpha(off and 0.15 or 1)
-        neutralSwatch:EnableMouse(not off)
     end
 
     _, h = W:Spacer(parent, y, 20);  y = y - h
