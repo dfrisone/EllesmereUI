@@ -413,14 +413,23 @@ local function ToggleColumn(id)
     Refresh()
 end
 
+-- True while a column is shown or still sorts the list (its data is needed)
+function ns.ListUsesColumn(id)
+    return IndexOf(GetColumns(), id) ~= nil or BP().bagListSortKey == id
+end
+
 local function ShowColumnMenu(owner, id)
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle(L("Columns"))
         for _, cid in ipairs(COLUMN_ORDER) do
-            local def = COLUMNS[cid]
-            root:CreateCheckbox(L(def.menuLabel or def.label),
-                function() return IndexOf(GetColumns(), cid) ~= nil end,
-                function() ToggleColumn(cid) end)
+            -- WoW Forever has no upgrade tracks: Track is offered there only
+            -- to switch off a column an imported profile brought in
+            if cid ~= "track" or not EUI.IS_FOREVER or IndexOf(GetColumns(), cid) then
+                local def = COLUMNS[cid]
+                root:CreateCheckbox(L(def.menuLabel or def.label),
+                    function() return IndexOf(GetColumns(), cid) ~= nil end,
+                    function() ToggleColumn(cid) end)
+            end
         end
         root:CreateDivider()
         local at = IndexOf(GetColumns(), id)

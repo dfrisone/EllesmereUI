@@ -1637,7 +1637,7 @@ function ns.UFO_BuildPowerBarSection(parent, y, ctx)
               refreshAlpha = function()
                   return SVal("powerPercentPowerColor", true) and 0.3 or 1
               end },
-            { tooltip = "Power Colored Fill. Power colors can be adjusted in Global Settings -> Fonts & Colors.",
+            { tooltip = "Power Colored Fill. Power colors can be adjusted in Global Settings -> Colors.",
               hasAlpha = false,
               getValue = function()
                   local _, pToken = UnitPowerType("player")
@@ -1674,7 +1674,7 @@ function ns.UFO_BuildPowerBarSection(parent, y, ctx)
             SSet("powerBgPowerColored", true)
             ReloadAndUpdate(); UpdatePreview(); EllesmereUI:RefreshPage()
         end)
-        bgPwrSw:HookScript("OnEnter", function() EllesmereUI.ShowWidgetTooltip(bgPwrSw, "Power Colored Background. Power colors can be adjusted in Global Settings -> Fonts & Colors.") end)
+        bgPwrSw:HookScript("OnEnter", function() EllesmereUI.ShowWidgetTooltip(bgPwrSw, "Power Colored Background. Power colors can be adjusted in Global Settings -> Colors.") end)
         bgPwrSw:HookScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
         PP.Point(bgPwrSw, "RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
         rgn._lastInline = bgPwrSw

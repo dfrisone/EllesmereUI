@@ -434,13 +434,19 @@ local _openItemPanels = {}
 local _anyItemPanelOpen = false
 -- Unmerge state the CURRENT painted layout was built with; bags OnShow compares against it so a flip while hidden still repaints (closing a mailbox hides both).
 local _paintedPanelOpen = false
--- Returns true when the aggregate state flipped, so the caller can refresh.
+-- Returns true when the aggregate state flipped and the bags' view merges, so
+-- the caller can refresh. A view that does not merge paints the same either
+-- way: its painted state just follows, so neither this nor OnShow repaints.
 local function SetItemPanelOpen(key, open)
     _openItemPanels[key] = open or nil
     local any = next(_openItemPanels) ~= nil
     if any == _anyItemPanelOpen then return false end
     _anyItemPanelOpen = any
-    return true
+    local merges
+    if EUI_Bags.IsListMode() then merges = BP().bagListMergeDuplicates == true
+    else merges = BP().bagMergeDuplicates ~= false end
+    if not merges then _paintedPanelOpen = any end
+    return merges
 end
 
 -- Pre-cache sort fields onto item data tables to avoid API calls in comparator.
@@ -6054,7 +6060,10 @@ function EUI_Bags:RefreshInventory()
                     -- The List view's iLvl column always needs the real level
                     d._giIlvl = isGear and (BP().showItemlevelInBags ~= false or EUI_Bags.IsListMode())
                         and GetItemLevelAtLocation(loc, itemLink) or nil
-                    if isGear and GetUpgradeTrack then
+                    -- Upgrade tracks: the grid's item level colour and rank; the
+                    -- List view only while its Track column shows or sorts.
+                    if isGear and GetUpgradeTrack
+                        and (not EUI_Bags.IsListMode() or ns.ListUsesColumn("track")) then
                         local rankText, trackColor = GetUpgradeTrack(itemLink)
                         if rankText and rankText ~= "" then
                             d._giTrackRank = rankText
@@ -6354,6 +6363,10 @@ function EUI_Bags:RefreshInventory()
     if child then
         child:SetWidth(gridW + gridPadX * 2 + scrollbarPad)
     end
+
+    -- Both views below paint with the current panel state, merging or not
+    -- (slot views and an unmerged list never reach MergeDuplicates)
+    _paintedPanelOpen = _anyItemPanelOpen
 
     -- List display (latched per session): rows replace the grid; the column
     -- header bar takes the top of the scroll area
@@ -6945,22 +6958,50 @@ local function StartAddon()
     ToggleAllBags = SmartToggleBags
     -- Hook ToggleBackpack/ToggleBag via hooksecurefunc (avoids tainting the global)
     hooksecurefunc("ToggleBackpack", SmartToggleBags)
-    hooksecurefunc("ToggleBag", function() SmartToggleBags() end)
 
     -- Hide Blizzard bag frames by reparenting to a hidden container (never write .Show/.Hide onto Blizzard frames -- causes taint).
     local _blizzBagHidden = CreateFrame("Frame")
     _blizzBagHidden:Hide()
 
+    -- WoW Forever's keyring (bag -2) has no place in our bag window, so its
+    -- button keeps opening Blizzard's own keyring window: the one bag frame
+    -- let back out of the hidden container while it shows.
+    local KEYRING = EUI.IS_FOREVER and Enum.BagIndex and Enum.BagIndex.Keyring or nil
+    local function IsKeyringFrame(f)
+        return KEYRING ~= nil and f:IsShown() and f.MatchesBagID ~= nil and f:MatchesBagID(KEYRING)
+    end
+
     local function KillBlizzard()
         for i = 1, 13 do
             local f = _G["ContainerFrame"..i]
-            if f then f:SetParent(_blizzBagHidden) end
+            if f and not IsKeyringFrame(f) then f:SetParent(_blizzBagHidden) end
         end
         if ContainerFrameCombinedBags then
             ContainerFrameCombinedBags:SetParent(_blizzBagHidden)
         end
     end
     KillBlizzard()
+
+    local keyringHooked = setmetatable({}, { __mode = "k" })
+    hooksecurefunc("ToggleBag", function(id)
+        if KEYRING and id == KEYRING then
+            -- Blizzard just opened or closed it; only an open one comes out.
+            local f = ContainerFrameUtil_GetShownFrameForID and ContainerFrameUtil_GetShownFrameForID(KEYRING)
+            if f then
+                f:SetParent(ContainerFrameContainer or UIParent)
+                if not keyringHooked[f] then
+                    keyringHooked[f] = true
+                    -- The frames are shared: once closed (its own shown flag
+                    -- clear, not just a hidden UI), any bag it shows next stays hidden.
+                    f:HookScript("OnHide", function(self)
+                        if not self:IsShown() then self:SetParent(_blizzBagHidden) end
+                    end)
+                end
+            end
+            return
+        end
+        SmartToggleBags()
+    end)
 
     hooksecurefunc("OpenAllBags", function()
         if not EUI_Bags:IsVisible() then ToggleEUI() end

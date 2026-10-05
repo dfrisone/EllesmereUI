@@ -1527,6 +1527,8 @@ end
 local function ToListLayout(layout, startX, listX)
     local ROW_H = ns.ListRowH()
     ns.ListSortSetup()
+    -- Upgrade tracks only while the Track column shows or sorts the list
+    local wantTrack = GetUpgradeTrack and ns.ListUsesColumn("track")
     local out, run = {}, {}
     local function Flush()
         table.sort(run, ns.ListCompare)
@@ -1547,7 +1549,7 @@ local function ToListLayout(layout, startX, listX)
             if d._isGear then
                 d._giIlvl = GetItemLevelAtLocation(ItemLocation:CreateFromBagAndSlot(e.bagID, e.slot), link)
                 -- Track column, same rule as the bags scan
-                if GetUpgradeTrack then
+                if wantTrack then
                     local rankText, trackColor = GetUpgradeTrack(link)
                     if rankText ~= "" then
                         d._giTrackRank, d._giTrackColor = rankText, trackColor

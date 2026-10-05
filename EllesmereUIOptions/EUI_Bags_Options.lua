@@ -738,6 +738,7 @@ initFrame:SetScript("OnEvent", function(self)
                           if _G.EUI_Bags and _G.EUI_Bags.RefreshInventory then _G.EUI_Bags:RefreshInventory() end
                           local bank = _G.EUI_BankFrame
                           if bank and bank.RefreshBank then bank:RefreshBank() end
+                          EllesmereUI:RefreshPage()  -- Quality Icon Border's disabled state
                       end },
                     { type="slider", text="List Text Size", min=8, max=16, step=1,
                       tooltip="Text size of the bag and bank lists.",
@@ -763,6 +764,8 @@ initFrame:SetScript("OnEvent", function(self)
                       end },
                     { type="toggle", text="Quality Icon Border",
                       tooltip="Draw a border in the item's quality color around square icons in the bag and bank lists.",
+                      disabled=function() return db.profile.bagListRoundIcons == true end,
+                      disabledTooltip="Round Icons", requireState="disabled",
                       getValue=function() return db.profile.bagListQualityBorder == true end,
                       setValue=function(v)
                           db.profile.bagListQualityBorder = v and true or false
