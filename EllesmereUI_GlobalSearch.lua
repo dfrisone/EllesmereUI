@@ -244,6 +244,7 @@ local function BuildModuleAliases()
         -- Without the "+", and the module's former name.
         EllesmereUIBlizzardSkin    = { "blizzard skins", "blizz ui enhanced" },
         EllesmereUIQuickdraw       = { "radial", "wheel", "ring menu", "palette", "grid", "arc", "fan", "action wheel", "action palette", "action menu" },
+        EllesmereUILoadoutManager  = { "gear swap", "talent swap", "equipment manager", "loadouts" },
     }
     for folder, list in pairs(EXTRA_ALIASES) do
         if ns.modules and ns.modules[folder] then
@@ -311,7 +312,13 @@ local QUERY_SYNONYMS = {
     { "transparent",     { "fade" } },
     { "hide when",       { "fade" } },
     { "quest",           { "objective", "tracker" } },
+    -- A choice inside a dropdown (dropdown values are not indexed): its row
+    { "compact",         { "bag display", "bank display" } },
 }
+-- WoW Forever's Name Format (first or last names; Forever Essentials > General).
+if EllesmereUI.IS_FOREVER then
+    QUERY_SYNONYMS[#QUERY_SYNONYMS + 1] = { "surname", { "name format" } }
+end
 local SYNONYM_MIN_PREFIX = 3
 
 local function SearchIndex(query, maxResults)
@@ -746,7 +753,7 @@ local function PrebuildJob(job)
     -- restore still runs: the live visit happened at whatever selection the player made
     -- themselves, but an EARLIER variant job may have left the module's selector moved.
     local cacheKey = job.folder .. "::" .. job.page
-    if not (ns.pageCache and ns.pageCache[cacheKey]) then
+    if not (ns.pageCache and ns.pageCache[cacheKey] and not ns.pageCache[cacheKey].stale) then
         local savedMethods = {}
         for _, name in ipairs(_CONTENT_HEADER_METHODS) do
             savedMethods[name] = EllesmereUI[name]
@@ -790,7 +797,7 @@ local function RunPrebuildPass(onComplete)
                 -- cache-restore could pick up instead of the live ones.
                 local cacheKey = folder .. "::" .. page
                 -- A link tab (config.pageLinks) has no page of its own to build.
-                if not (ns.pageCache and ns.pageCache[cacheKey])
+                if not (ns.pageCache and ns.pageCache[cacheKey] and not ns.pageCache[cacheKey].stale)
                    and not (config.pageLinks and config.pageLinks[page]) then
                     -- Selector-driven pages (CDM bar / unit dropdowns) expand to one
                     -- job PER variant so each tick stays one build; the last variant

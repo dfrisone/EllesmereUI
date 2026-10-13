@@ -723,7 +723,7 @@ local function InitBuffBarsPage(PP, DB, Refresh, FONT_PATH, GetCDMOptOutline, Ga
         popup._status:SetText("")
 
         local function SetStatus(text, r, g, b)
-            popup._status:SetText(text)
+            popup._status:SetText(EllesmereUI.L(text))
             popup._status:SetTextColor(r or 1, g or 0.3, b or 0.3, 1)
             if popup._statusTimer then popup._statusTimer:Cancel() end
             if text ~= "" then
@@ -2728,8 +2728,9 @@ local function InitBuffBarsPage(PP, DB, Refresh, FONT_PATH, GetCDMOptOutline, Ga
             prDDBg:SetAllPoints()
             prDDBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
             local prDDBrd = EllesmereUI.MakeBorder(prDD, 1, 1, 1, EllesmereUI.DD_BRD_A, PP)
-            local prDDLbl = EllesmereUI.MakeFont(prDD, 13, nil, 1, 1, 1)
-            prDDLbl:SetAlpha(EllesmereUI.DD_TXT_A)
+            -- Resting alpha on the text colour, the channel PrApplyNormal /
+            -- PrApplyHover write, so a hover and leave land back on it.
+            local prDDLbl = EllesmereUI.MakeFont(prDD, 13, nil, 1, 1, 1, EllesmereUI.DD_TXT_A)
             prDDLbl:SetJustifyH("LEFT")
             prDDLbl:SetWordWrap(false)
             prDDLbl:SetMaxLines(1)

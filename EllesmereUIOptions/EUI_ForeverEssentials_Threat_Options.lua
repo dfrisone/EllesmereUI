@@ -168,18 +168,22 @@ _G._EUI_BuildThreatMeterPage = function(pageName, parent, yOffset)
     local function Swatch(region, sc)
         EllesmereUI.BuildInlineSwatches(region, { sc })
     end
-    local function OffsetCog(region, title, keyX, keyY, disabled, disabledTooltip, rawTooltip)
+    -- head (optional): a row above the offsets; the cog then takes the
+    -- settings icon, as it holds more than a position.
+    local function OffsetCog(region, title, keyX, keyY, disabled, disabledTooltip, rawTooltip, head)
+        local rows = {
+            { type = "slider", label = "X Offset", min = -20, max = 20, step = 1,
+              get = function() return GetStyle(keyX[1], keyX[2]) end,
+              set = function(v) ns.SetStyleValue(keyX[1], keyX[2], v) end },
+            { type = "slider", label = "Y Offset", min = -20, max = 20, step = 1,
+              get = function() return GetStyle(keyY[1], keyY[2]) end,
+              set = function(v) ns.SetStyleValue(keyY[1], keyY[2], v) end },
+        }
+        if head then table.insert(rows, 1, head) end
         EllesmereUI.BuildInlineCog(region, {
-            title = title, icon = EllesmereUI.DIRECTIONS_ICON,
+            title = title, icon = not head and EllesmereUI.DIRECTIONS_ICON or nil,
             disabled = disabled, disabledTooltip = disabledTooltip, rawTooltip = rawTooltip,
-            rows = {
-                { type = "slider", label = "X Offset", min = -20, max = 20, step = 1,
-                  get = function() return GetStyle(keyX[1], keyX[2]) end,
-                  set = function(v) ns.SetStyleValue(keyX[1], keyX[2], v) end },
-                { type = "slider", label = "Y Offset", min = -20, max = 20, step = 1,
-                  get = function() return GetStyle(keyY[1], keyY[2]) end,
-                  set = function(v) ns.SetStyleValue(keyY[1], keyY[2], v) end },
-            },
+            rows = rows,
         })
     end
 
@@ -251,7 +255,7 @@ _G._EUI_BuildThreatMeterPage = function(pageName, parent, yOffset)
               getValue = function() return Get("warnAt") end,
               setValue = function(v) Store("warnAt", v) end },
             Toggle("warnSkipTank", "Not While Tanking",
-                "No warning while you have the tank role, or are in Bear Form or Defensive Stance.",
+                "No warning while you are the tank.",
                 function(v) Store("warnSkipTank", v) end)
         );  y = y - h
     else
@@ -312,8 +316,8 @@ _G._EUI_BuildThreatMeterPage = function(pageName, parent, yOffset)
             if not EllesmereUI._prebuilding then
                 local rows = {
                     Offset("threatPctSize", "Size", 6, 20),
-                    Offset("threatPctXOffset", "X Offset", -100, 100),
-                    Offset("threatPctYOffset", "Y Offset", -100, 100),
+                    Offset("threatPctXOffset", "X Offset", -300, 300),
+                    Offset("threatPctYOffset", "Y Offset", -300, 300),
                 }
                 if not withGap then
                     table.insert(rows, 1, { type = "toggle", label = "Color by Threat",
@@ -592,8 +596,12 @@ _G._EUI_BuildThreatMeterPage = function(pageName, parent, yOffset)
     if not EllesmereUI._prebuilding then
         Swatch(nameRow._leftRegion, AlternativeTo(StyleSwatch("colors", "leftTextColor", "Name Color"),
             "colors", "leftTextUseClassColor"))
-        OffsetCog(nameRow._leftRegion, "Name Position", { "bars", "leftTextOffsetX" }, { "bars", "leftTextOffsetY" },
-            off, "Threat Meter")
+        -- Name Text: the Name Format (a player's first or last name; First and
+        -- Last is the unset default) above the name's offsets.
+        OffsetCog(nameRow._leftRegion, "Name Text", { "bars", "leftTextOffsetX" }, { "bars", "leftTextOffsetY" },
+            off, "Threat Meter", nil,
+            EllesmereUI.NameFormatCogRow(function() return Get("nameFormat") end,
+                function(v) Set("nameFormat", v) end))
         local valueSwatch = AlternativeTo(StyleSwatch("colors", "rightTextColor", "Value Color"),
             "colors", "rightTextUseClassColor")
         valueSwatch.disabled, valueSwatch.disabledTooltip, valueSwatch.rawTooltip = valueOff, valueTip, valueRaw

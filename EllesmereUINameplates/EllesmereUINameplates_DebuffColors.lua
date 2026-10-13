@@ -324,8 +324,19 @@ end
 -- while the slot shows. Strips keep whole physical pixels in scale-1 space as
 -- the plate scales, like the border's own (the PP scale guard); slices sit on
 -- the textured border's own geometry. Built in the creation window only.
-local function MakeBorderInit(b, color)
+-- The copies rank like the tints (a combo over the top single over the rest)
+-- without moving past anything else. On a custom border's MEDIUM strata a copy
+-- stays one level above the border and its sublevel ranks it (the frames that
+-- share that level draw ARTWORK). A Basic copy shares the flattened plate with
+-- the border's OVERLAY 7 strips, under which a lower sublevel sinks, so it keeps
+-- OVERLAY 7 and ranks by frame level (no other plate frame uses those levels).
+local function MakeBorderInit(b, color, sublevel)
     local initialized = setmetatable({}, { __mode = "k" })
+    local rank = 0
+    if not b.config.border.strata then
+        rank = (sublevel == 7 and 2) or (sublevel == 5 and 1) or 0
+        sublevel = 7
+    end
     return function(button)
         if initialized[button] then return end
         initialized[button] = true
@@ -341,7 +352,7 @@ local function MakeBorderInit(b, color)
         if spec.behind ~= nil then
             base = spec.behind and math.max(1, b.level - 1) or (b.level + 1)
         end
-        f:SetFrameLevel(base + spec.up)
+        f:SetFrameLevel(base + spec.up + rank)
         if spec.kind == "strips" then
             f:SetIgnoreParentScale(true)
             f:SetScale(1)
@@ -351,7 +362,7 @@ local function MakeBorderInit(b, color)
             local one = EllesmereUI.PP.perfect / es
             local t = math.max(one, math.floor(spec.px + 0.5) * one)
             local function Strip(p1, y1, p2, y2, width, height)
-                local tx = f:CreateTexture(nil, "OVERLAY", nil, 7)
+                local tx = f:CreateTexture(nil, "OVERLAY", nil, sublevel)
                 tx:SetColorTexture(color.r, color.g, color.b, 1)
                 if tx.SetSnapToPixelGrid then
                     tx:SetSnapToPixelGrid(false)
@@ -370,7 +381,7 @@ local function MakeBorderInit(b, color)
             -- One texture per edge-art slice (the shared cut table's keys).
             local edges = {}
             for key, coords in pairs(EllesmereUI.SECRET_BORDER_UV) do
-                local tx = f:CreateTexture(nil, "OVERLAY", nil, 7)
+                local tx = f:CreateTexture(nil, "OVERLAY", nil, sublevel)
                 tx:SetTexture(spec.path, true, true)
                 tx:SetTexCoord(unpack(coords))
                 tx:SetVertexColor(color.r, color.g, color.b, 1)
@@ -386,7 +397,7 @@ end
 -- What a slot shows while its debuffs are up: the health fill's tint (Color
 -- Nameplate) or the border in the color (Color Border).
 local function ColorInit(b, color, sublevel)
-    if b.config.border then return MakeBorderInit(b, color) end
+    if b.config.border then return MakeBorderInit(b, color, sublevel) end
     return MakeTintInit(b, color, sublevel)
 end
 

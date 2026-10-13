@@ -394,6 +394,14 @@ end
 function ECME:OnInitialize()
     self.db = EllesmereUI.Lite.NewDB("EllesmereUICooldownManagerDB", DEFAULTS, true)
 
+    -- /cd opens Blizzard's Cooldown Manager settings (SlashCmdList.EUIBLIZZCDM)
+    -- only while Quality of Life's "Type /cd to open Blizzard CDM" is on: an
+    -- account-wide key, off by default, read here once the saved variables are
+    -- loaded; a change takes a reload.
+    if EllesmereUIDB and EllesmereUIDB.blizzCDMSlash == true then
+        SLASH_EUIBLIZZCDM1 = "/cd"
+    end
+
     -- Save spec profile before StripDefaults runs on logout
     EllesmereUI.Lite.RegisterPreLogout(function()
         local specKey = ns.GetActiveSpecKey()
